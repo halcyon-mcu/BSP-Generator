@@ -1,0 +1,11 @@
+.venv
+.ruff_cache
+
+.env*
+!.env.example
+
+# Can ignore this to avoid commit clutter.
+# Builds should be mostly reproducible anyway.
+uv.lock
+
+*.pdf

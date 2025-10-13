@@ -1,0 +1,12 @@
+[project]
+name = "bsp-generator"
+version = "0.1.0"
+description = ""
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic[bedrock]>=0.69.0",
+    "boto3>=1.40.50",
+    "pdfplumber>=0.11.7",
+    "python-dotenv>=1.1.1",
+]
