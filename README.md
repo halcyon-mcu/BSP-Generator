@@ -10,6 +10,10 @@ It's highly recommended to use [`uv`](https://docs.astral.sh/uv) for this projec
 
 Fill out the credentials as directed by [.env.example](./.env.example)
 
+## Running
+
+`uv run -m app.main`
+
 ## Materials
 
 https://docs.claude.com/en/api/claude-on-amazon-bedrock

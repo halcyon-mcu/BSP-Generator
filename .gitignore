@@ -8,4 +8,6 @@
 # Builds should be mostly reproducible anyway.
 uv.lock
 
+__pycache__
+
 *.pdf

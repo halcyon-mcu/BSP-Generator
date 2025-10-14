@@ -12,3 +12,6 @@ dependencies = [
     "pyyaml>=6.0.3",
     "types-boto3[full]>=1.40.51",
 ]
+
+[tool.ruff.lint]
+ignore = ["E402"]  # Allow imports after code
