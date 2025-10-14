@@ -6,7 +6,7 @@ import pdfplumber
 import asyncio
 import yaml
 
-load_dotenv()
+_ = load_dotenv()
 
 aws_access_key = os.getenv("AWS_ACCESS_KEY")
 if not aws_access_key:
@@ -17,7 +17,7 @@ if not aws_secret_key:
     raise ValueError("AWS_SECRET_KEY not found in environment variables")
 
 client = boto3.client(
-    "bedrock-runtime",
+    service_name="bedrock-runtime",
     region_name="us-east-2",
     aws_access_key_id=aws_access_key,
     aws_secret_access_key=aws_secret_key,
