@@ -57,7 +57,7 @@ async def main():
         board_info = {
             "name": "MyBoard",
             "description": "A custom board for my project",
-            "gpio": {"mmio_start": gio_info[0], "mmio_end": gio_info[1]},
+            "gpio": {"mmio_start": hex(gio_info[0]), "mmio_end": hex(gio_info[1])},
         }
 
         desired_api = {
