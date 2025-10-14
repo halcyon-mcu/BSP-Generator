@@ -2,10 +2,13 @@ from dotenv import load_dotenv
 
 _ = load_dotenv()
 
+from app.config import VERBOSITY
+
 import pdfplumber
 import asyncio
 import yaml
 import logging
+import textwrap
 
 from .retrieval.gpio import find_gpio_info
 from .prompt import invoke_model, Model
@@ -18,7 +21,7 @@ async def main():
     with pdfplumber.open("./Specsheet.pdf") as pdf:
         gpio_info = await find_gpio_info(pdf)
         if not gpio_info:
-            print("GIO not found in the PDF.")
+            print("Failed to locate GPIO information in the PDF.")
             return
 
         board_info = {
@@ -38,7 +41,25 @@ async def main():
             }
         }
 
-        print("Generating BSP code...")
+        prompt = textwrap.dedent("""
+            You are a professional developer creating a BSP (Board Support Package) for a hardware company building for microcontrollers.
+            Here's information about the board in YAML:
+
+            ```yaml
+            {}```
+
+            Create C code for this BSP with the following api:
+
+            ```yaml
+            {}```
+
+            Ensure the code is well-structured, commented, and adheres to best practices for embedded systems programming.
+            Respond PURELY with the C code, no explanations, extra text, or backticks for a code block.
+        """).format(yaml.dump(board_info), yaml.dump(desired_api))
+
+        if VERBOSITY >= 2:
+            print("Generated prompt:")
+            print(prompt)
 
         resp = await invoke_model(
             model=Model.HAIKU,
@@ -46,7 +67,7 @@ async def main():
             messages=[
                 {
                     "role": "user",
-                    "content": f"You are a professional developer creating a BSP (Board Support Package) for a hardware company building for microcontrollers. Here's information about the board in YAML:\n\n```{yaml.dump(board_info)}```\n. Create C code for this BSP with the following api:\n```{yaml.dump(desired_api)}```\n.",
+                    "content": prompt,
                 }
             ],
         )

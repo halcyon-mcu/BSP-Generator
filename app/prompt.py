@@ -2,6 +2,8 @@ import json
 import os
 import boto3
 
+from app.config import VERBOSITY
+
 aws_access_key = os.getenv("AWS_ACCESS_KEY")
 if not aws_access_key:
     raise ValueError("AWS_ACCESS_KEY not found in environment variables")
