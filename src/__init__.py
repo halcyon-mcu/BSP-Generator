@@ -1,5 +1,5 @@
 from dotenv import load_dotenv
-import boto3, json, os, pdfplumber
+import boto3, json, os, pdfplumber, asyncio
 
 load_dotenv()
 
@@ -19,7 +19,8 @@ client = boto3.client(
 )
 
 
-def find_gio() -> tuple[int, int] | None:
+# This function is left Asynchronous as it may in the future make use of LLMs for finding information.
+async def find_gio() -> tuple[int, int] | None:
     with pdfplumber.open("./Specsheet.pdf") as pdf:
         device_memory_map_found = False
 
@@ -43,8 +44,8 @@ def find_gio() -> tuple[int, int] | None:
                             return (start_addr, end_addr)
 
 
-def main():
-    gio_info = find_gio()
+async def main():
+    gio_info = await find_gio()
     if gio_info:
         print("Found GIO info. Making a basic bsp")
 
@@ -72,4 +73,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
