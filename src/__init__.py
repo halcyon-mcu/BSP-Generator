@@ -1,5 +1,10 @@
 from dotenv import load_dotenv
-import boto3, json, os, pdfplumber, asyncio
+import boto3
+import json
+import os
+import pdfplumber
+import asyncio
+import yaml
 
 load_dotenv()
 
@@ -49,13 +54,27 @@ async def main():
     if gio_info:
         print("Found GIO info. Making a basic bsp")
 
+        board_info = {
+            "name": "MyBoard",
+            "description": "A custom board for my project",
+            "gpio": {"mmio_start": gio_info[0], "mmio_end": gio_info[1]},
+        }
+
+        desired_api = {
+            "gpio": {
+                "init": "void gpio_init(void);",
+                "read": "uint32_t gpio_read(uint32_t pin);",
+                "write": "void gpio_write(uint32_t pin, uint32_t value);",
+            }
+        }
+
         body = {
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": 512,
             "messages": [
                 {
                     "role": "user",
-                    "content": f"You are a professional developer creating a BSP (Board Support Package) for a hardware company building for microcontrollers. The GIO (General Input/Output) address range starts at 0x{gio_info[0]:X} and ends at 0x{gio_info[1]:X}. Please help create the basic structure for this BSP.",
+                    "content": f"You are a professional developer creating a BSP (Board Support Package) for a hardware company building for microcontrollers. Here's information about the board in YAML:\n\n```{yaml.dump(board_info)}```\n. Create C code for this BSP with the following api:\n```{yaml.dump(desired_api)}```\n.",
                 }
             ],
         }
