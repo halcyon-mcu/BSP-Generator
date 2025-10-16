@@ -31,7 +31,10 @@ async def main():
 
     vector_store = Chroma.from_documents(chunks, EmbeddingsModel.TITAN_V2.get_client())
 
-    gpio_stuff = vector_store.similarity_search("gpio", k=5)
+    gpio_stuff = vector_store.similarity_search(
+        "Find information about the memory layout and memory mapping of GPIO. Find information required to implement a BSP's GPIO functionality.",
+        k=5,
+    )
     print("Got ", gpio_stuff)
 
     # gpio_info = await find_gpio_info(pdf)
