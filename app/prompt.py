@@ -50,3 +50,24 @@ async def invoke_model(model: Model, max_tokens: int, messages: list[Message]) -
 
     response_body = json.loads(response["body"].read())
     return response_body["content"][0]["text"]
+
+
+from enum import Enum
+
+
+class EmbeddingsModel(Enum):
+    TITAN_V2 = "titan-v2"
+
+    def get_model_id(self):
+        model_ids = {"titan-v2": "amazon.titan-embed-text-v2:0"}
+
+        return model_ids[self.value]
+
+
+async def invoke_embeddings(model: EmbeddingsModel, text: str) -> list[float]:
+    response = client.invoke_model(
+        modelId=model.get_model_id(), body=json.dumps({"inputText": text})
+    )
+
+    response_body = json.loads(response["body"].read())
+    return response_body["embedding"]

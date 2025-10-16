@@ -11,12 +11,14 @@ import logging
 import textwrap
 
 from .retrieval.gpio import find_gpio_info
-from .prompt import invoke_model, Model
+from .prompt import EmbeddingsModel, invoke_embeddings, invoke_model, Model
 
 
 async def main():
     # Suppress pdfplumber warnings: https://github.com/jsvine/pdfplumber/discussions/529
     logging.getLogger("pdfminer").setLevel(logging.ERROR)
+
+    return
 
     with pdfplumber.open("./Specsheet.pdf") as pdf:
         gpio_info = await find_gpio_info(pdf)
