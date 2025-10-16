@@ -4,11 +4,9 @@ _ = load_dotenv()
 
 from app.config import VERBOSITY
 
-import pdfplumber
 import asyncio
 import yaml
 import logging
-import textwrap
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
@@ -35,7 +33,13 @@ async def main():
         "Find information about the memory layout and memory mapping of GPIO. Find information required to implement a BSP's GPIO functionality.",
         k=5,
     )
-    print("Got ", gpio_stuff)
+
+    gpio_data = []
+    for doc in gpio_stuff:
+        gpio_data.append({"content": doc.page_content, "metadata": doc.metadata})
+
+    print("Got:")
+    print(yaml.dump(gpio_data, default_flow_style=False))
 
     # gpio_info = await find_gpio_info(pdf)
     # if not gpio_info:
