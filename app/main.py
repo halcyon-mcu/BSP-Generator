@@ -10,71 +10,84 @@ import yaml
 import logging
 import textwrap
 
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import Chroma
+from langchain_community.document_loaders import PDFPlumberLoader
+
 from .retrieval.gpio import find_gpio_info
-from .prompt import EmbeddingsModel, invoke_embeddings, invoke_model, Model
+from .prompt import EmbeddingsModel, invoke_model, Model
 
 
 async def main():
     # Suppress pdfplumber warnings: https://github.com/jsvine/pdfplumber/discussions/529
     logging.getLogger("pdfminer").setLevel(logging.ERROR)
 
-    return
+    # todo: replace with our own pdfplumber loader which
+    # needs to support tabular data.
+    loader = PDFPlumberLoader("./Specsheet.pdf")
+    docs = loader.load()
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    chunks = splitter.split_documents(docs)
 
-    with pdfplumber.open("./Specsheet.pdf") as pdf:
-        gpio_info = await find_gpio_info(pdf)
-        if not gpio_info:
-            print("Failed to locate GPIO information in the PDF.")
-            return
+    vector_store = Chroma.from_documents(chunks, EmbeddingsModel.TITAN_V2.get_client())
 
-        board_info = {
-            "name": "MyBoard",
-            "description": "A custom board for my project",
-            "gpio": {
-                "mmio_start": hex(gpio_info.start_address),
-                "mmio_end": hex(gpio_info.end_address),
-            },
-        }
+    gpio_stuff = vector_store.similarity_search("gpio", k=5)
+    print("Got ", gpio_stuff)
 
-        desired_api = {
-            "gpio": {
-                "init": "void gpio_init(void);",
-                "read": "uint32_t gpio_read(uint32_t pin);",
-                "write": "void gpio_write(uint32_t pin, uint32_t value);",
-            }
-        }
+    # gpio_info = await find_gpio_info(pdf)
+    # if not gpio_info:
+    #     print("Failed to locate GPIO information in the PDF.")
+    #     return
 
-        prompt = textwrap.dedent("""
-            You are a professional developer creating a BSP (Board Support Package) for a hardware company building for microcontrollers.
-            Here's information about the board in YAML:
+    # board_info = {
+    #     "name": "MyBoard",
+    #     "description": "A custom board for my project",
+    #     "gpio": {
+    #         "mmio_start": hex(gpio_info.start_address),
+    #         "mmio_end": hex(gpio_info.end_address),
+    #     },
+    # }
 
-            ```yaml
-            {}```
+    # desired_api = {
+    #     "gpio": {
+    #         "init": "void gpio_init(void);",
+    #         "read": "uint32_t gpio_read(uint32_t pin);",
+    #         "write": "void gpio_write(uint32_t pin, uint32_t value);",
+    #     }
+    # }
 
-            Create C code for this BSP with the following api:
+    # prompt = textwrap.dedent("""
+    #     You are a professional developer creating a BSP (Board Support Package) for a hardware company building for microcontrollers.
+    #     Here's information about the board in YAML:
 
-            ```yaml
-            {}```
+    #     ```yaml
+    #     {}```
 
-            Ensure the code is well-structured, commented, and adheres to best practices for embedded systems programming.
-            Respond PURELY with the C code, no explanations, extra text, or backticks for a code block.
-        """).format(yaml.dump(board_info), yaml.dump(desired_api))
+    #     Create C code for this BSP with the following api:
 
-        if VERBOSITY >= 2:
-            print("Generated prompt:")
-            print(prompt)
+    #     ```yaml
+    #     {}```
 
-        resp = await invoke_model(
-            model=Model.HAIKU,
-            max_tokens=512,
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
-        )
+    #     Ensure the code is well-structured, commented, and adheres to best practices for embedded systems programming.
+    #     Respond PURELY with the C code, no explanations, extra text, or backticks for a code block.
+    # """).format(yaml.dump(board_info), yaml.dump(desired_api))
 
-        print("Response from model:", resp)
+    # if VERBOSITY >= 2:
+    #     print("Generated prompt:")
+    #     print(prompt)
+
+    # resp = await invoke_model(
+    #     model=Model.HAIKU,
+    #     max_tokens=512,
+    #     messages=[
+    #         {
+    #             "role": "user",
+    #             "content": prompt,
+    #         }
+    #     ],
+    # )
+
+    # print("Response from model:", resp)
 
 
 if __name__ == "__main__":

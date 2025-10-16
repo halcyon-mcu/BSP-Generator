@@ -1,6 +1,7 @@
 import json
 import os
 import boto3
+from langchain_community.embeddings import BedrockEmbeddings
 
 from app.config import VERBOSITY
 
@@ -17,6 +18,10 @@ client = boto3.client(
     region_name="us-east-2",
     aws_access_key_id=aws_access_key,
     aws_secret_access_key=aws_secret_key,
+)
+
+embeddings_titan_v2 = BedrockEmbeddings(
+    model_id="amazon.titan-embed-text-v2:0", client=client
 )
 
 from enum import Enum
@@ -58,16 +63,10 @@ from enum import Enum
 class EmbeddingsModel(Enum):
     TITAN_V2 = "titan-v2"
 
-    def get_model_id(self):
-        model_ids = {"titan-v2": "amazon.titan-embed-text-v2:0"}
+    def get_client(self) -> BedrockEmbeddings:
+        model_clients = {"titan-v2": embeddings_titan_v2}
+        return model_clients[self.value]
 
-        return model_ids[self.value]
 
-
-async def invoke_embeddings(model: EmbeddingsModel, text: str) -> list[float]:
-    response = client.invoke_model(
-        modelId=model.get_model_id(), body=json.dumps({"inputText": text})
-    )
-
-    response_body = json.loads(response["body"].read())
-    return response_body["embedding"]
+def get_embeddings_client(model: EmbeddingsModel) -> BedrockEmbeddings:
+    return model.get_client()
