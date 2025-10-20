@@ -39,8 +39,13 @@ You are given the following YAML data extracted from a technical specification d
 Extract the GPIO memory map start and end addresses from the data.
 Provide the result in the following JSON format.
 ```json
-{{"start_address": "0x...", "end_address": "0x..."}}
+{{"start_address": "0x...", "end_address": "0x...", "stride": int, "pin_count": int, "gpio_typedef": StructField[]}}
 ```
+Where StructField is defined as:
+```json
+{{"name": "field_name", "type": "uint32_t | uint64_t | uint8_t | uint16_t", "description": "field_description"}}
+```
+Purely respond with the JSON, no explanations or extra text. Do not respond with backticks for code blocks.
         """,
             }
         ],
