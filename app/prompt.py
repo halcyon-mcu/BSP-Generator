@@ -28,10 +28,18 @@ from enum import Enum
 
 
 class Model(Enum):
-    HAIKU = "haiku"
+    HAIKU_3_0 = "haiku3.0"
+    HAIKU_4_5 = "haiku4.5"
+    SONNET_3_5 = "sonnet3.5"
+    SONNET_4_5 = "sonnet4.5"
 
     def get_model_id(self):
-        model_ids = {"haiku": "us.anthropic.claude-3-haiku-20240307-v1:0"}
+        model_ids = {
+            "haiku3.0": "us.anthropic.claude-3-haiku-20240307-v1:0",
+            "sonnet3.5": "us.anthropic.claude-3-5-sonnet-20240620-v1:0",
+            "haiku4.5": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            "sonnet4.5": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        }
 
         return model_ids[self.value]
 

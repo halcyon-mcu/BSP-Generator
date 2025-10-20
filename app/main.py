@@ -2,18 +2,17 @@ from dotenv import load_dotenv
 
 _ = load_dotenv()
 
+from app.prompt import EmbeddingsModel
 from app.config import VERBOSITY
 
 import asyncio
-import yaml
 import logging
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters.character import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_community.document_loaders import PDFPlumberLoader
 
 from .retrieval.gpio import find_gpio_info
-from .prompt import EmbeddingsModel, invoke_model, Model
 
 
 async def main():
@@ -29,19 +28,7 @@ async def main():
 
     vector_store = Chroma.from_documents(chunks, EmbeddingsModel.TITAN_V2.get_client())
 
-    gpio_stuff = vector_store.similarity_search(
-        "Find information about the memory layout and memory mapping of GPIO. Find information required to implement a BSP's GPIO functionality.",
-        k=5,
-    )
-
-    gpio_data = []
-    for doc in gpio_stuff:
-        gpio_data.append({"content": doc.page_content, "metadata": doc.metadata})
-
-    print("Got:")
-    print(yaml.dump(gpio_data, default_flow_style=False))
-
-    # gpio_info = await find_gpio_info(pdf)
+    gpio_info = await find_gpio_info(vector_store)
     # if not gpio_info:
     #     print("Failed to locate GPIO information in the PDF.")
     #     return
