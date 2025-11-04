@@ -1,0 +1,40 @@
+ir_schema_version: "1.1.0"
+peripherals:
+  GIO:
+    base_address: "0xFFF7BC00"
+    registers:
+      # GIO base registers
+      GCR0:   { offset: "0x0000", access: RW, reset: "0x00000001", desc: "Global Control" }
+      INTDET: { offset: "0x0008", access: RW, reset: "0x00000000", desc: "Interrupt Detect" }
+      POL:    { offset: "0x000C", access: RW, reset: "0x00000000", desc: "Interrupt Polarity" }
+      ENASET: { offset: "0x0010", access: RW, reset: "0x00000000", desc: "Interrupt Enable Set" }
+      ENACLR: { offset: "0x0014", access: RW, reset: "0x00000000", desc: "Interrupt Enable Clear" }
+      LVLSET: { offset: "0x0018", access: RW, reset: "0x00000000", desc: "Interrupt Level Set" }
+      LVLCLR: { offset: "0x001C", access: RW, reset: "0x00000000", desc: "Interrupt Level Clear" }
+      FLG:    { offset: "0x0020", access: RC, reset: "0x00000000", desc: "Interrupt Flag" }
+      OFF1:   { offset: "0x0024", access: RW, reset: "0x00000000", desc: "Interrupt Offset 1" }
+      OFF2:   { offset: "0x0028", access: RW, reset: "0x00000000", desc: "Interrupt Offset 2" }
+
+      # GIO Port A (gioPORTA at 0xFFF7BC34 => offsets below are base+0x34)
+      DIR_A:    { offset: "0x0034", access: RW, reset: "0x00000000", desc: "Port A Direction" }
+      DIN_A:    { offset: "0x0038", access: RO, reset: "0x00000000", desc: "Port A Data In" }
+      DOUT_A:   { offset: "0x003C", access: RW, reset: "0x00000000", desc: "Port A Data Out" }
+      DSET_A:   { offset: "0x0040", access: WO, reset: "0x00000000", desc: "Port A Data Set" }
+      DCLR_A:   { offset: "0x0044", access: WO, reset: "0x00000000", desc: "Port A Data Clear" }
+      PDR_A:    { offset: "0x0048", access: RW, reset: "0x00000000", desc: "Port A Open Drain" }
+      PULDIS_A: { offset: "0x004C", access: RW, reset: "0x00000000", desc: "Port A Pull Disable" }
+      PSL_A:    { offset: "0x0050", access: RW, reset: "0x00000000", desc: "Port A Pull Select" }
+
+      # GIO Port B (gioPORTB at 0xFFF7BC54 => base+0x54)
+      DIR_B:    { offset: "0x0054", access: RW, reset: "0x00000000", desc: "Port B Direction" }
+      DIN_B:    { offset: "0x0058", access: RO, reset: "0x00000000", desc: "Port B Data In" }
+      DOUT_B:   { offset: "0x005C", access: RW, reset: "0x00000000", desc: "Port B Data Out" }
+      DSET_B:   { offset: "0x0060", access: WO, reset: "0x00000000", desc: "Port B Data Set" }
+      DCLR_B:   { offset: "0x0064", access: WO, reset: "0x00000000", desc: "Port B Data Clear" }
+      PDR_B:    { offset: "0x0068", access: RW, reset: "0x00000000", desc: "Port B Open Drain" }
+      PULDIS_B: { offset: "0x006C", access: RW, reset: "0x00000000", desc: "Port B Pull Disable" }
+      PSL_B:    { offset: "0x0070", access: RW, reset: "0x00000000", desc: "Port B Pull Select" }
+
+provenance:
+  notes:
+    - "GIO base and port register layouts/addresses from RM46_Hardware_Info.md"

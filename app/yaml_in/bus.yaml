@@ -1,0 +1,40 @@
+ir_schema_version: "1.1.0"
+sources:
+  - name: "OSC"
+    type: external_xtal
+    freq_hz: 16000000
+  - name: "PLL1"
+    type: pll
+    freq_hz: 200000000        # effective output (documentary)
+    tolerance_ppm: 50         # TODO: refine if required
+
+plls:
+  - name: "PLL1_CFG"
+    input: "OSC"
+    mult_range: [1, 200]      # TODO: from TRM
+    div_range:  [1,  32]      # TODO
+    vco_limits_hz: [40000000, 480000000] # TODO
+
+domains:
+  - name: "GCLK"
+    parent: "PLL1"
+    divider: 1
+  - name: "HCLK"
+    parent: "PLL1"
+    divider: 1
+  - name: "VCLK1"
+    parent: "PLL1"
+    divider: 2          # 200 MHz / 2 = 100 MHz
+  - name: "RTI_CLK"
+    parent: "VCLK1"
+    divider: 1
+
+gates:
+  - name: "PERIPH_VCLK1"
+    parent: "VCLK1"
+    peripheral_refs: ["GIO"]
+
+constraints: []
+provenance:
+  notes:
+    - "Clock frequencies and domains per RM46_Hardware_Info.md (GCLK/HCLK 200MHz, VCLK 100MHz)"

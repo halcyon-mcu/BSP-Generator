@@ -3,21 +3,19 @@ import os
 import boto3
 from langchain_aws import BedrockEmbeddings
 
-from app.config import VERBOSITY
+from config import VERBOSITY
 
-aws_access_key = os.getenv("AWS_ACCESS_KEY")
-if not aws_access_key:
-    raise ValueError("AWS_ACCESS_KEY not found in environment variables")
+# aws_access_key = os.getenv("AWS_ACCESS_KEY")
+# if not aws_access_key:
+#     raise ValueError("AWS_ACCESS_KEY not found in environment variables")
 
-aws_secret_key = os.getenv("AWS_SECRET_KEY")
-if not aws_secret_key:
-    raise ValueError("AWS_SECRET_KEY not found in environment variables")
+# aws_secret_key = os.getenv("AWS_SECRET_KEY")
+# if not aws_secret_key:
+#     raise ValueError("AWS_SECRET_KEY not found in environment variables")
 
 client = boto3.client(
     service_name="bedrock-runtime",
-    region_name="us-east-2",
-    aws_access_key_id=aws_access_key,
-    aws_secret_access_key=aws_secret_key,
+    region_name="us-west-2"
 )
 
 embeddings_titan_v2 = BedrockEmbeddings(
@@ -25,7 +23,6 @@ embeddings_titan_v2 = BedrockEmbeddings(
 )
 
 from enum import Enum
-
 
 class Model(Enum):
     HAIKU_3_0 = "haiku3.0"
@@ -60,9 +57,7 @@ async def invoke_model(model: Model, max_tokens: int, messages: list[Message]) -
     }
 
     response = client.invoke_model(modelId=model.get_model_id(), body=json.dumps(body))
-
-    response_body = json.loads(response["body"].read())
-    return response_body["content"][0]["text"]
+    return response
 
 
 from enum import Enum

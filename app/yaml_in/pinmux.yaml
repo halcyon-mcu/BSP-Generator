@@ -1,0 +1,15 @@
+ir_schema_version: "1.1.0"
+package: "LQFP144"   # TODO: confirm exact package for your board
+pins:
+  - pad: "Pxx"       # TODO: real pad ID
+    name: "USER_LED" # TODO: confirm net name (often on HET/GIO pin)
+    defaults:
+      pull: down
+      drive: "default"
+    functions:
+      - af: "GIO"
+        signal: "GIOA[0]"   # TODO: change to actual LED pin (could be HET too)
+constraints: {}
+provenance:
+  notes:
+    - "Placeholder until LED pad/signal are confirmed from TRM or board schematic"

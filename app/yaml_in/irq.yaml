@@ -1,0 +1,13 @@
+ir_schema_version: "1.1.0"
+nvic:
+  vector_base: "0x00000000"
+
+irqs:
+  - name: "GIO_HIGH"     # TODO: replace with correct label & id from VIM table
+    id: 0
+    peripheral_refs: ["GIO"]
+    desc: "GPIO interrupt (placeholder)"
+priorities: {}
+provenance:
+  notes:
+    - "VIM vector base and module address known; channel IDs need TRM cross-reference"
