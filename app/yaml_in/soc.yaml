@@ -2,24 +2,63 @@ ir_schema_version: "1.1.0"
 chip: "RM46L852"
 vendor: "Texas Instruments"
 family: "Hercules RM46"
-revision: "Rev B"   # TODO: confirm silicon rev string convention
+revision: "Rev B"
 
 soc:
   cpu:
     cores:
       - name: "Cortex-R4F"
         arch: "armv7-r"
-        endianness: big      # TODO: confirm project endianness (RM46 supports both)
+        endianness: little
         word_size_bits: 32
         fpu: "VFPv3-D16"     # TODO: confirm FPU config
 
   peripherals:
+    - name: "SYSTEM"
+      type: "system"
+      instance: 1
+      regs_ref: "SYSTEM"
+      irq_ref: []
+      clock_ref: ""
+      x-ext:
+        init:
+          # Power up all peripheral power domains via PCR
+          - reg: "PCR.PSPWRDWNCLR0"
+            op: "set_bits"
+            value: "0xFFFFFFFF"
+          - reg: "PCR.PSPWRDWNCLR1"
+            op: "set_bits"
+            value: "0xFFFFFFFF"
+          - reg: "PCR.PSPWRDWNCLR2"
+            op: "set_bits"
+            value: "0xFFFFFFFF"
+          - reg: "PCR.PSPWRDWNCLR3"
+            op: "set_bits"
+            value: "0xFFFFFFFF"
+
+          # Enable peripheral access via global gate in CLKCNTL (bit 8)
+          - reg: "SYSTEM.CLKCNTL"
+            op: "set_bits"
+            value: "0x00000100"
+
+    - name: "PCR"
+      type: "pcr"
+      instance: 0
+      regs_ref: "PCR"         
+      clock_ref: "SYSCLK"     
+      x-ext: {}
+
     - name: "GIO"
       type: "gpio"
       instance: 1
       regs_ref: "GIO"
       irq_ref: []            # GIO interrupt numbers not listed in md; add when known
       clock_ref: "VCLK1"
+      x-ext: 
+        init:
+          - reg: "GIO.GCR0"
+            op: "set_bits"
+            value: "0x00000001"
 
 provenance:
   notes:

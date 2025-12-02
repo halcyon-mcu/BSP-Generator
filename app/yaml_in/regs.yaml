@@ -1,10 +1,84 @@
 ir_schema_version: "1.1.0"
+
 peripherals:
+  SYSTEM:
+    base_address: "0xFFFFFF00"
+    desc: "System Control Registers (systemREG1)"
+    registers:
+      # SYSPC1–10 live in 0x0000–0x0078; you can add individual ones later if needed.
+
+      SSWPLL1:    { offset: "0x0024", access: RW, reset: "0x00000000", desc: "Software-Controlled PLL Register 1" }
+      SSWPLL2:    { offset: "0x0028", access: RW, reset: "0x00000000", desc: "Software-Controlled PLL Register 2" }
+      SSWPLL3:    { offset: "0x002C", access: RW, reset: "0x00000000", desc: "Software-Controlled PLL Register 3" }
+
+      CSDIS:      { offset: "0x0030", access: RW, reset: "0x00000000", desc: "Clock Source Disable Register" }
+      CSDISSET:   { offset: "0x0034", access: RW, reset: "0x00000000", desc: "Clock Source Disable Set Register" }
+      CSDISCLR:   { offset: "0x0038", access: RW, reset: "0x00000000", desc: "Clock Source Disable Clear Register" }
+
+      CDDIS:      { offset: "0x003C", access: RW, reset: "0x00000000", desc: "Clock Domain Disable Register" }
+      CDDISSET:   { offset: "0x0040", access: RW, reset: "0x00000000", desc: "Clock Domain Disable Set Register" }
+      CDDISCLR:   { offset: "0x0044", access: RW, reset: "0x00000000", desc: "Clock Domain Disable Clear Register" }
+
+      GHVSRC:     { offset: "0x0048", access: RW, reset: "0x00000000", desc: "GCLK, HCLK, VCLK Source Register" }
+      VCLKASRC:   { offset: "0x004C", access: RW, reset: "0x00000000", desc: "VCLKA Source Register" }
+      RCLKSRC:    { offset: "0x0050", access: RW, reset: "0x00000000", desc: "RTI Clock Source Register" }
+      CSVSTAT:    { offset: "0x0054", access: RW, reset: "0x00000000", desc: "Clock Source Valid Status Register" }
+
+      MSTGCR:     { offset: "0x0058", access: RW, reset: "0x00000000", desc: "Master Clock Global Control Register" }
+      MINITGCR:   { offset: "0x005C", access: RW, reset: "0x00000000", desc: "Mini-Clock Global Control Register" }
+      MSINENA:    { offset: "0x0060", access: RW, reset: "0x00000000", desc: "Memory Self-Init Enable Register" }
+      MSTFAIL:    { offset: "0x0064", access: RW, reset: "0x00000000", desc: "Master Self-Test Fail Register" }
+      MSTCGSTAT:  { offset: "0x0068", access: RW, reset: "0x00000000", desc: "Master Clock Global Status Register" }
+      MINISTAT:   { offset: "0x006C", access: RW, reset: "0x00000000", desc: "Mini-Clock Status Register" }
+
+      PLLCTL1:    { offset: "0x0070", access: RW, reset: "0x00000000", desc: "PLL Control Register 1" }
+      PLLCTL2:    { offset: "0x0074", access: RW, reset: "0x00000000", desc: "PLL Control Register 2" }
+
+      DIEIDL:     { offset: "0x007C", access: R,  reset: "0x00000000", desc: "Device ID Low Register" }
+      DIEIDH:     { offset: "0x0080", access: R,  reset: "0x00000000", desc: "Device ID High Register" }
+
+      VRCTL:      { offset: "0x0084", access: RW, reset: "0x00000000", desc: "Voltage Regulator Control Register" }
+      LPOMONCTL:  { offset: "0x0088", access: RW, reset: "0x00000000", desc: "LPO Monitor Control Register" }
+      CLKTEST:    { offset: "0x008C", access: RW, reset: "0x00000000", desc: "Clock Test Register" }
+
+      DFTCTRLREG1: { offset: "0x0090", access: RW, reset: "0x00000000", desc: "DFT Control Register 1" }
+      DFTCTRLREG2: { offset: "0x0094", access: RW, reset: "0x00000000", desc: "DFT Control Register 2" }
+
+      GPREG1:     { offset: "0x00A0", access: RW, reset: "0x00000000", desc: "General Purpose Register 1" }
+      BTRMSEL:    { offset: "0x00A4", access: RW, reset: "0x00000000", desc: "Boot ROM Selection Register" }
+
+      RAMGCR:     { offset: "0x00C0", access: RW, reset: "0x00000000", desc: "RAM Global Control Register" }
+      BMMCR1:     { offset: "0x00C4", access: RW, reset: "0x00000000", desc: "Backup Memory Map Config Register 1" }
+      BMMCR2:     { offset: "0x00C8", access: RW, reset: "0x00000000", desc: "Backup Memory Map Config Register 2" }
+      CPURSTCR:   { offset: "0x00CC", access: RW, reset: "0x00000000", desc: "CPU Reset Control Register" }
+
+      CLKCNTL:    { offset: "0x00D0", access: RW, reset: "0x00000000", desc: "Clock Control Register (bit 8: peripheral enable)" }
+      ECPCNTL:    { offset: "0x00D4", access: RW, reset: "0x00000000", desc: "ECP Control Register" }
+
+      DEVCR1:     { offset: "0x00DC", access: RW, reset: "0x00000000", desc: "Device Control Register 1" }
+      SYSECR:     { offset: "0x00E0", access: RW, reset: "0x00000000", desc: "System Exception Control Register" }
+      SYSESR:     { offset: "0x00E4", access: RW, reset: "0x00000000", desc: "System Exception Status Register" }
+      SYSTASR:    { offset: "0x00E8", access: RW, reset: "0x00000000", desc: "System Technical Advisory Status Register" }
+      GBLSTAT:    { offset: "0x00EC", access: RW, reset: "0x00000000", desc: "Global Status Register" }
+
+      DEV:        { offset: "0x00F0", access: R,  reset: "0x00000000", desc: "Device Identification Register" }
+      SSIVEC:     { offset: "0x00F4", access: RW, reset: "0x00000000", desc: "SSI Vector Register" }
+      SSIF:       { offset: "0x00F8", access: RW, reset: "0x00000000", desc: "SSI Flag Register" }
+
+  PCR:
+    base_address: "0xFFFFE000"
+    desc: "Peripheral Control and Power-Down Controller"
+    registers:
+      PSPWRDWNCLR0: { offset: "0x00A0", access: RW, reset: "0x00000000", desc: "Peripheral Select Power-Down Clear Register 0" }
+      PSPWRDWNCLR1: { offset: "0x00A4", access: RW, reset: "0x00000000", desc: "Peripheral Select Power-Down Clear Register 1" }
+      PSPWRDWNCLR2: { offset: "0x00A8", access: RW, reset: "0x00000000", desc: "Peripheral Select Power-Down Clear Register 2" }
+      PSPWRDWNCLR3: { offset: "0x00AC", access: RW, reset: "0x00000000", desc: "Peripheral Select Power-Down Clear Register 3" }
+
   GIO:
     base_address: "0xFFF7BC00"
     registers:
       # GIO base registers
-      GCR0:   { offset: "0x0000", access: RW, reset: "0x00000001", desc: "Global Control" }
+      GCR0:   { offset: "0x0000", access: RW, reset: "0x00000000", desc: "Global Control" }
       INTDET: { offset: "0x0008", access: RW, reset: "0x00000000", desc: "Interrupt Detect" }
       POL:    { offset: "0x000C", access: RW, reset: "0x00000000", desc: "Interrupt Polarity" }
       ENASET: { offset: "0x0010", access: RW, reset: "0x00000000", desc: "Interrupt Enable Set" }
