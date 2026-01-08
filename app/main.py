@@ -1,11 +1,12 @@
 import argparse
 import asyncio
 import inspect
+import os
 from pathlib import Path
 
 from config import YAMLS_DIR, TARGET_FILES, FACTS_CANON, PATTERN_SNIPS
 
-from modules.file_io import split_and_write_files, write_makefile, write_manifest
+from modules.file_io import split_and_write_files, write_makefile, write_manifest, write_doxyfile, run_doxygen
 from modules.utils import _read, extract_text_from_bedrock_response, _now_tag
 from modules.prompt import (
     invoke_model,
@@ -105,7 +106,7 @@ def main():
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=6000,
+        default=12000,
     )
     parser.add_argument(
         "--targets",
@@ -277,5 +278,23 @@ def main():
         print("[warn] No files split. See _artifacts/ for raw outputs and preamble.")
 
 
+    print(f"\n [info] Creating documentation with Doxygen")
+    docs_dir = out_dir / "docs"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        doxy_path = write_doxyfile(docs_dir)
+        run_doxygen(out_dir, doxy_path)
+    except Exception as e:
+        print(f"[error] Doxygen generation failed: {e}")
+
+    else:
+        print(f"[ok] Documentation generated in {docs_dir / 'html'}.")
+
+        if (docs_dir / "html" / "index.html").exists():
+            print(f"[info] Docs index located at {os.path.abspath(docs_dir / 'html' / 'index.html')}.")
+
+
+
 if __name__ == "__main__":
     main()
+    

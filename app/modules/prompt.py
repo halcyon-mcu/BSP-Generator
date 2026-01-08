@@ -115,9 +115,8 @@ ASSEMBLY / LINKER NOTES:
 
 
 def build_user_prompt(soc_yaml: str, regs_yaml: str) -> str:
-
     return """
-    You are generating minimal, portable C11 BSP driver files for a SINGLE TI RM46 (Cortex-R4) peripheral.
+    You are generating portable C11 BSP driver files for a SINGLE TI RM46 (Cortex-R4) peripheral.
 
 You MUST obey the global FACTS POLICY, HARD OUTPUT CONTRACT, and CODING RULES from the system prompt.
 
@@ -195,6 +194,45 @@ Naming in the FACTS MIRROR is up to you, but should be clear and stable, for exa
 
 You MUST NOT invent numeric values; if something is needed but not provided, put a TODO entry in the mirror and STOP (do not emit files), as per the system prompt.
 
+When choosing which constants to mirror, you MUST:
+- First inspect the FULL register list under peripherals.<regs_ref>.registers.
+- Decide which registers will be used by your driver API based on their names and descriptions.
+- Mirror all numeric values required to implement that API (base + offsets + masks/values from x-ext.init and from any obvious bitfields you need).
+
+DRIVER FUNCTION DISCOVERY (REQUIRED)
+------------------------------------
+You MUST derive the public API from the register map, not from a fixed template.
+
+For this peripheral:
+
+- Inspect ALL register names and descriptions and classify them into roles, for example:
+  - configuration / mode / control (e.g., GCR, CTRL, FORMAT)
+  - data input/output (e.g., DAT, TX, RX, BUF, DOUT, DIN)
+  - status / error / flags (e.g., STAT, FLG, ERR)
+  - interrupt enable/disable and status (e.g., INTENA, INTENASET, INTENACLR, LVL, LVLSET, LVLCLR, INTFLG)
+  - timer/counter/compare/capture (e.g., CNT, CMP, PERIOD)
+  - DMA / trigger / event control (if present)
+- For each role with clearly meaningful registers, design 1–3 thin wrapper functions that:
+  - Perform obvious operations such as:
+    * configure / set mode
+    * enable / disable a feature or channel
+    * start / stop a peripheral or timer
+    * set / get a value (data, period, baud, etc.)
+    * clear status or interrupt flags
+    * query status / error conditions
+  - Hide raw bit-manipulation behind named functions where reasonable.
+- Prefer including MORE small, simple wrapper functions rather than too few. Do NOT leave obviously useful registers without any API coverage, unless the semantics are unclear.
+- If a register appears to have unclear or highly specialized semantics from its name/desc, you MAY omit it from the API and briefly note this in a comment in the C file.
+
+You MUST also use soc.peripherals[*].type to shape the API:
+- type: "uart" → include send/receive, status, and configuration helpers appropriate to the registers.
+- type: "spi" or "mibspi" → include transfer/config helpers (mode, frame size, chip-select, etc.) appropriate to the registers.
+- type: "i2c" → include start/stop, address, read/write, and status/flag helpers as supported by the registers.
+- type: "timer" → include configure/start/stop, set period, read counter, and interrupt/flag helpers as supported.
+- type: "adc" → include channel/configuration, start conversion, read result, status/flag helpers as supported.
+- type: "can" → include init/config, transmit, receive, and status/flag helpers as supported.
+If the type is not recognized, design a generic but reasonably complete low-level API around the available control/data/status/interrupt registers.
+
 OUTPUT CONTRACT (PERIPHERAL-SPECIFIC)
 -------------------------------------
 After the FACTS MIRROR (and respecting the global HARD OUTPUT CONTRACT), you MUST emit exactly TWO files:
@@ -244,11 +282,14 @@ Header file (<periph>.h):
     void <lowercase_name>_init(void);
   For example, for "GIO" → void gio_init(void);
 
-- You MAY add a minimal, obvious API surface if appropriate, but keep it small and based ONLY on registers present in regs.yaml.
+- You MUST design a reasonably complete, low-level but ergonomic API surface based ONLY on registers present in regs.yaml:
+  - Use the DRIVER FUNCTION DISCOVERY rules above.
+  - Every clearly meaningful control/data/status/interrupt feature should have at least one public function that exercises it.
+  - Keep functions thin (mostly one or a few register accesses), but cover the full obvious feature set of the peripheral.
 
 For GPIO-like peripherals (type "gpio" or name "GIO") you MUST:
 - Expose port as an argument rather than generating separate functions for each port.
-- For example, prefer:
+- For example, you MUST at least provide:
     void gio_set_dir(uint32_t port, uint32_t pin, uint32_t output);
     void gio_set(uint32_t port, uint32_t pin);
     void gio_clear(uint32_t port, uint32_t pin);
@@ -257,6 +298,13 @@ For GPIO-like peripherals (type "gpio" or name "GIO") you MUST:
   where port is an integer or enum mapping to Port A/B/etc.
 - Internally, map (port, pin) to the correct DIR/DSET/DCLR/DOUT/DIN registers using the offsets from regs.yaml and the FACTS MIRROR.
 - DO NOT create separate public APIs like gio_set_a() and gio_set_b(); always route through a port parameter.
+- In addition to the basic pin-level APIs above, if the register map exposes features such as:
+    - pull-up / pull-down enable/disable,
+    - open-drain control,
+    - input qualification / debounce,
+    - polarity / inversion,
+    - interrupt enable/disable, level, and flags,
+  you MUST add corresponding configuration/status helpers that wrap those registers.
 
 Source file (<periph>.c):
 
@@ -277,6 +325,7 @@ Source file (<periph>.c):
 
 - Implement:
     void <lowercase_name>_init(void);
+    // plus ALL public API functions declared in the header.
 
 The init function MUST:
 - Apply all operations from soc.x-ext.init[], in order.
@@ -295,7 +344,8 @@ The init function MUST:
   - Stack setup, data/bss init, or vector table work.
   Those are handled by other files (start.s, entry.c, system.c).
 
-- You MAY add small, obvious utility functions (for example, write or read a GPIO pin) if they’re straightforward to derive from the registers given, but you MUST NOT invent new register addresses or bit meanings.
+- You MUST implement all declared public functions, and each function MUST touch at least one hardware register (read or write) using FACTS MIRROR constants.
+- When selecting which registers to use, consider the entire register block; err on the side of using all clearly purposeful (non-reserved) registers in at least one helper, unless their semantics are unclear.
 
 IF REQUIRED DATA IS MISSING
 ---------------------------
@@ -317,6 +367,7 @@ soc.yaml fragment for this peripheral:
 regs.yaml fragment for this peripheral:
 %s
     """ % (soc_yaml, regs_yaml)
+
 
 def build_system_init_prompt(soc_yaml: str, regs_yaml: str):
     return """
