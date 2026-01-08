@@ -109,6 +109,117 @@ peripherals:
       PULDIS_B: { offset: "0x006C", access: RW, reset: "0x00000000", desc: "Port B Pull Disable" }
       PSL_B:    { offset: "0x0070", access: RW, reset: "0x00000000", desc: "Port B Pull Select" }
 
+  SCI:
+    base_address: "0xFFF7E400"
+    desc: "SCI Control Registers"
+    registers:
+      SCIGCR0:        { offset: "0x0000", access: RW, reset: "0x00000000", desc: "SCI Global Control Register 0" }
+      SCIGCR1:        { offset: "0x0004", access: RW, reset: "0x00000000", desc: "SCI Global Control Register 1" }
+      SCIGCR2:        { offset: "0x0008", access: RW, reset: "0x00000000", desc: "SCI Global Control Register 2" }
+
+      SCISETINT:      { offset: "0x000C", access: RW, reset: "0x00000000", desc: "SCI Set Interrupt Register" }
+      SCICLEARINT:    { offset: "0x0010", access: RW, reset: "0x00000000", desc: "SCI Clear Interrupt Register" }
+      SCISETINTLVL:   { offset: "0x0014", access: RW, reset: "0x00000000", desc: "SCI Set Interrupt Level Register" }
+      SCICLEARINTLVL: { offset: "0x0018", access: RW, reset: "0x00000000", desc: "SCI Clear Interrupt Level Register" }
+
+      SCIFLR:         { offset: "0x001C", access: RC, reset: "0x00000000", desc: "SCI Flag Register" }
+      SCIINTVECT0:    { offset: "0x0020", access: RO, reset: "0x00000000", desc: "SCI Interrupt Vector Offset 0 (INT0)" }
+      SCIINTVECT1:    { offset: "0x0024", access: RO, reset: "0x00000000", desc: "SCI Interrupt Vector Offset 1 (INT1)" }
+
+      SCIFORMAT:      { offset: "0x0028", access: RW, reset: "0x00000000", desc: "SCI Format Control Register" }
+      BRS:            { offset: "0x002C", access: RW, reset: "0x00000000", desc: "Baud Rate Selection Register" }
+
+      SCIED:          { offset: "0x0030", access: RO, reset: "0x00000000", desc: "SCI Receiver Emulation Data Buffer" }
+      SCIRD:          { offset: "0x0034", access: RO, reset: "0x00000000", desc: "SCI Receiver Data Buffer" }
+      SCITD:          { offset: "0x0038", access: RW, reset: "0x00000000", desc: "SCI Transmit Data Buffer" }
+
+      SCIPIO0:        { offset: "0x003C", access: RW, reset: "0x00000000", desc: "SCI Pin I/O Control Register 0" }
+      SCIPIO1:        { offset: "0x0040", access: RW, reset: "0x00000000", desc: "SCI Pin I/O Control Register 1" }
+      SCIPIO2:        { offset: "0x0044", access: RO, reset: "0x00000000", desc: "SCI Pin I/O Control Register 2" }
+      SCIPIO3:        { offset: "0x0048", access: RW, reset: "0x00000000", desc: "SCI Pin I/O Control Register 3" }
+      SCIPIO4:        { offset: "0x004C", access: RW, reset: "0x00000000", desc: "SCI Pin I/O Control Register 4" }
+      SCIPIO5:        { offset: "0x0050", access: RW, reset: "0x00000000", desc: "SCI Pin I/O Control Register 5" }
+      SCIPIO6:        { offset: "0x0054", access: RW, reset: "0x00000000", desc: "SCI Pin I/O Control Register 6" }
+      SCIPIO7:        { offset: "0x0058", access: RW, reset: "0x00000000", desc: "SCI Pin I/O Control Register 7" }
+      SCIPIO8:        { offset: "0x005C", access: RW, reset: "0x00000000", desc: "SCI Pin I/O Control Register 8" }
+
+
+  LIN:
+    base_address: "0xFFF7E400"
+    registers:
+      # LIN registers (same module block). Keep for completeness / future-proofing.
+      LINCOMP:        { offset: "0x0060", access: RW, reset: "0x00000000", desc: "LIN Compare Register" }
+      LINRD:          { offset: "0x0064", access: RO, reset: "0x00000000", desc: "LIN Receive Data Register" }
+      LINTD:          { offset: "0x0068", access: RW, reset: "0x00000000", desc: "LIN Transmit Data Register" }
+      LINRDA:         { offset: "0x006C", access: RO, reset: "0x00000000", desc: "LIN Receive Data Register (auto-baud)" }
+      LINTDA:         { offset: "0x0070", access: RW, reset: "0x00000000", desc: "LIN Transmit Data Register (auto-baud)" }
+      LINID:          { offset: "0x0074", access: RW, reset: "0x00000000", desc: "LIN ID Register" }
+      LINBRS:         { offset: "0x0078", access: RW, reset: "0x00000000", desc: "LIN Baud Rate Selection Register" }
+
+      # Note: Some maps include IODFTCTRL at 0x0090 (gap between 0x0078 and 0x0090 is normal)
+      IODFTCTRL:      { offset: "0x0090", access: RW, reset: "0x00000000", desc: "I/O DFT Control Register" }
+
+  VIM:
+    base_address: "0xFFFFFE00"
+    desc: "Vectored Interrupt Manager (VIM) Control Registers"
+    registers:
+      # Parity-related VIM regs live at base 0xFFFFFD00 per TRM; keep separate peripheral for clarity.
+      IRQINDEX:    { offset: "0x0000", access: RO, reset: "0x00000000", desc: "IRQ Index Offset Vector Register" }
+      FIQINDEX:    { offset: "0x0004", access: RO, reset: "0x00000000", desc: "FIQ Index Offset Vector Register" }
+
+      FIRQPR0:     { offset: "0x0010", access: RW, reset: "0x00000000", desc: "FIQ/IRQ Program Control Register 0" }
+      FIRQPR1:     { offset: "0x0014", access: RW, reset: "0x00000000", desc: "FIQ/IRQ Program Control Register 1" }
+      FIRQPR2:     { offset: "0x0018", access: RW, reset: "0x00000000", desc: "FIQ/IRQ Program Control Register 2" }
+      FIRQPR3:     { offset: "0x001C", access: RW, reset: "0x00000000", desc: "FIQ/IRQ Program Control Register 3" }
+
+      INTREQ0:     { offset: "0x0020", access: RO, reset: "0x00000000", desc: "Pending Interrupt Read Location Register 0" }
+      INTREQ1:     { offset: "0x0024", access: RO, reset: "0x00000000", desc: "Pending Interrupt Read Location Register 1" }
+      INTREQ2:     { offset: "0x0028", access: RO, reset: "0x00000000", desc: "Pending Interrupt Read Location Register 2" }
+      INTREQ3:     { offset: "0x002C", access: RO, reset: "0x00000000", desc: "Pending Interrupt Read Location Register 3" }
+
+      REQENASET0:  { offset: "0x0030", access: RW, reset: "0x00000000", desc: "Interrupt Enable Set Register 0" }
+      REQENASET1:  { offset: "0x0034", access: RW, reset: "0x00000000", desc: "Interrupt Enable Set Register 1" }
+      REQENASET2:  { offset: "0x0038", access: RW, reset: "0x00000000", desc: "Interrupt Enable Set Register 2" }
+      REQENASET3:  { offset: "0x003C", access: RW, reset: "0x00000000", desc: "Interrupt Enable Set Register 3" }
+
+      REQENACLR0:  { offset: "0x0040", access: RW, reset: "0x00000000", desc: "Interrupt Enable Clear Register 0" }
+      REQENACLR1:  { offset: "0x0044", access: RW, reset: "0x00000000", desc: "Interrupt Enable Clear Register 1" }
+      REQENACLR2:  { offset: "0x0048", access: RW, reset: "0x00000000", desc: "Interrupt Enable Clear Register 2" }
+      REQENACLR3:  { offset: "0x004C", access: RW, reset: "0x00000000", desc: "Interrupt Enable Clear Register 3" }
+
+      WAKENASET0:  { offset: "0x0050", access: RW, reset: "0x00000000", desc: "Wake-up Enable Set Register 0" }
+      WAKENASET1:  { offset: "0x0054", access: RW, reset: "0x00000000", desc: "Wake-up Enable Set Register 1" }
+      WAKENASET2:  { offset: "0x0058", access: RW, reset: "0x00000000", desc: "Wake-up Enable Set Register 2" }
+      WAKENASET3:  { offset: "0x005C", access: RW, reset: "0x00000000", desc: "Wake-up Enable Set Register 3" }
+
+      WAKENACLR0:  { offset: "0x0060", access: RW, reset: "0x00000000", desc: "Wake-up Enable Clear Register 0" }
+      WAKENACLR1:  { offset: "0x0064", access: RW, reset: "0x00000000", desc: "Wake-up Enable Clear Register 1" }
+      WAKENACLR2:  { offset: "0x0068", access: RW, reset: "0x00000000", desc: "Wake-up Enable Clear Register 2" }
+      WAKENACLR3:  { offset: "0x006C", access: RW, reset: "0x00000000", desc: "Wake-up Enable Clear Register 3" }
+
+      IRQVECREG:   { offset: "0x0070", access: RO, reset: "0x00000000", desc: "IRQ Interrupt Vector Register" }
+      FIQVECREG:   { offset: "0x0074", access: RO, reset: "0x00000000", desc: "FIQ Interrupt Vector Register" }
+      CAPEVT:      { offset: "0x0078", access: RO, reset: "0x00000000", desc: "Capture Event Register" }
+
+      # CHANCTRL0..31 occupy 0x0080..0x00FC (one per channel). Model the base + note range.
+      CHANCTRL0:   { offset: "0x0080", access: RW, reset: "0x00000000", desc: "VIM Interrupt Control Register (Channel 0)" }
+      CHANCTRL1:   { offset: "0x0084", access: RW, reset: "0x00000000", desc: "VIM Interrupt Control Register (Channel 1)" }
+      # ...
+      CHANCTRL31:  { offset: "0x00FC", access: RW, reset: "0x00000000", desc: "VIM Interrupt Control Register (Channel 31)" }
+
+  VIM_PARITY:
+    base_address: "0xFFFFFD00"
+    desc: "VIM parity-related registers"
+    registers:
+      PARFLG:    { offset: "0x00EC", access: RW, reset: "0x00000000", desc: "Interrupt Vector Table Parity Flag Register" }
+      PARCTL:    { offset: "0x00F0", access: RW, reset: "0x00000000", desc: "Interrupt Vector Table Parity Control Register" }
+      ADDERR:    { offset: "0x00F4", access: RO, reset: "0x00000000", desc: "Address Parity Error Register" }
+      FBPARERR:  { offset: "0x00F8", access: RO, reset: "0x00000000", desc: "Fall-Back Address Parity Error Register" }
+
+  
+
+
+
 provenance:
   notes:
     - "GIO base and port register layouts/addresses from RM46_Hardware_Info.md"

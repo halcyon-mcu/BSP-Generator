@@ -18,7 +18,7 @@ soc:
       type: "system"
       instance: 1
       regs_ref: "SYSTEM"
-      irq_ref: []
+      irq_ref: ["SYSTEM_SSI"]
       clock_ref: ""
       x-ext:
         init:
@@ -52,13 +52,125 @@ soc:
       type: "gpio"
       instance: 1
       regs_ref: "GIO"
-      irq_ref: []            # GIO interrupt numbers not listed in md; add when known
+      irq_ref: ["GIO_A", "GIO_B"]
       clock_ref: "VCLK1"
       x-ext: 
         init:
           - reg: "GIO.GCR0"
             op: "set_bits"
             value: "0x00000001"
+
+    - name: "SCI"
+      type: "sci"
+      instance: 1
+      regs_ref: "SCI"
+      irq_ref: ["SCI_LVL0", "SCI_LVL1"]          
+      clock_ref: "VCLK1"
+      x-ext:
+        init:
+          # SCI initialization sequence per TRM Section 28
+          # Step 1: Enable SCI by setting RESET bit to 1
+          - reg: "SCI.SCIGCR0"
+            op: "set_bits"
+            value: "0x00000001"
+          
+          # Step 2: Clear SWnRST bit to 0 before configuration
+          - reg: "SCI.SCIGCR1"
+            op: "clear_bits"
+            value: "0x00000080"      # SWnRST bit
+          
+          # Step 3: Configure frame format in SCIGCR1 (if needed - add specific bits here)
+          
+          # Step 4: Set RX FUNC and TX FUNC bits for SCI pin functionality
+          - reg: "SCI.SCIPIO0"
+            op: "set_bits"
+            value: "0x00000006"      # RX FUNC (bit 1) | TX FUNC (bit 2)
+          
+          # Step 5: Configure baud rate (BRS register - value depends on target baud)
+          # - reg: "SCI.BRS"
+          #   op: "write"
+          #   value: "0x000000XX"    # Calculate based on VCLK1 and desired baud
+          
+          # Step 6: Set CLOCK bit to select internal clock
+          - reg: "SCI.SCIGCR1"
+            op: "set_bits"
+            value: "0x01000000"      # CLOCK bit
+          
+          # Step 7: Set CONT bit for emulation mode behavior
+          - reg: "SCI.SCIGCR1"
+            op: "set_bits"
+            value: "0x00020000"      # CONT bit
+          
+          # Step 8: Enable RX and TX (set RXENA and TXENA bits)
+          - reg: "SCI.SCIGCR1"
+            op: "set_bits"
+            value: "0x03000000"      # RXENA (bit 24) | TXENA (bit 25)
+          
+          # Step 9: Set SWnRST bit to 1 to bring SCI out of reset
+          - reg: "SCI.SCIGCR1"
+            op: "set_bits"
+            value: "0x00000080"      # SWnRST bit
+            
+        interrupts:
+          # Table 29-1: values returned by SCIINTVECT0/1
+          # Note: Offset 1 is highest priority; larger is lower priority.
+          vect_offsets:
+            1:  { name: "WAKEUP",         desc: "Wakeup" }
+            3:  { name: "PARITY_ERROR",   desc: "Parity error" }
+            6:  { name: "FRAME_ERROR",    desc: "Frame error" }
+            7:  { name: "BREAK_DETECT",   desc: "Break detect error" }
+            9:  { name: "OVERRUN_ERROR",  desc: "Overrun error" }
+            11: { name: "RECEIVE",        desc: "Receive" }
+            12: { name: "TRANSMIT",       desc: "Transmit" }
+          reserved_offsets: [[0,0],[2,2],[4,5],[8,8],[10,10],[13,15]]
+
+    - name: "LIN"
+      type: "lin"
+      instance: 1
+      regs_ref: "LIN"
+      irq_ref: ["LIN_LVL0", "LIN_LVL1"]           
+      clock_ref: "VCLK1"
+      x-ext: {}
+
+    - name: "VIM"
+      type: "vim"
+      instance: 1
+      regs_ref: "VIM"
+      irq_ref: []
+      clock_ref: "HCLK"
+      x-ext:
+        vector_table:
+          base_address: "0xFFF82000"
+          entries: 128
+          reserved_channels: [127]
+          
+        init:
+          # 1) (Optional) Enable VIM vector-table parity BEFORE writing the vector table
+          #    TRM: parity bits are auto-updated when parity is enabled and the table is written afterward.
+          - reg: "VIM_PARITY.PARCTL"
+            op: "set_bits"
+            value: "<PARITY_ENABLE_MASK>"
+
+          # 2) Initialize the entire VIM interrupt vector table in VIM RAM
+          #    TRM: after reset the vector table (and parity bits) is not initialized.
+          #    This must be done BEFORE enabling any corresponding interrupt channels.
+          - mem: "<VIM_VECTOR_TABLE_BASE>"
+            op: "memset32"
+            count: "<VIM_VECTOR_TABLE_ENTRIES>"
+            value: "<DEFAULT_ISR_ADDRESS>"
+
+          # 3) Install ISR addresses for the channels you will use (overwrite defaults)
+          #    Do this AFTER parity enable (if used) and AFTER the default table init.
+          - mem: "<VIM_VECTOR_TABLE_BASE>"
+            op: "write_mem32"
+            index: "<CHANNEL_ID>"
+            value: "<ISR_ADDRESS>"
+
+          # 4) Only AFTER vector-table initialization: enable the required VIM interrupt channels
+          - reg: "VIM.REQENASET<k>"
+            op: "set_bits"
+            value: "<CHANNEL_ENABLE_MASK>"
+
 
 provenance:
   notes:
