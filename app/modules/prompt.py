@@ -1,11 +1,23 @@
 import json
 import os
+import sys
+import threading
+import time
 import boto3
+from botocore.config import Config
 from langchain_aws import BedrockEmbeddings
+
+# Configure boto3 client with increased timeout
+config = Config(
+    read_timeout=300,  # 5 minutes (default is 60 seconds)
+    connect_timeout=10,
+    retries={'max_attempts': 3}
+)
 
 client = boto3.client(
     service_name="bedrock-runtime",
     region_name="us-east-2",
+    config=config,
 )
 
 # ---------------- Prompt builders (hardened) ----------------
@@ -114,7 +126,7 @@ ASSEMBLY / LINKER NOTES:
 
 
 
-def build_user_prompt(soc_yaml: str, regs_yaml: str) -> str:
+def build_user_prompt(soc_yaml: str, regs_yaml: str, irq_yaml: str = None) -> str:
     return """
     You are generating portable C11 BSP driver files for a SINGLE TI RM46 (Cortex-R4) peripheral.
 
@@ -129,43 +141,52 @@ Generate exactly TWO files for one peripheral:
 The peripheral is described by:
 - A single peripheral entry from soc.yaml
 - The corresponding register block from regs.yaml
+- (Optional) the referenced interrupt entries from irq.yaml (only if soc.irq_ref is non-empty)
 
 You must:
 - Mirror ALL numeric constants you use (addresses, offsets, masks, bit values) in the FACTS MIRROR first.
 - Use ONLY those mirrored constants in the C code.
 - Implement a peripheral-specific init function that performs ALL required LOCAL initialization (for example, for GIO/GPIO: set GCR0).
-- Assume global/system-level init (CLKCNTL, PCR, etc.) is handled in a separate system.c/system_init() and MUST NOT be duplicated here.
+- Assume global/system-level init (CLKCNTL, PCR, system clocks, VIM vector table init, CPU IRQ enable, etc.) is handled in separate system code and MUST NOT be duplicated here.
 - Ensure BOTH generated files end with a single trailing newline.
+
+SYSTEM / INTERRUPT CONTROLLER ASSUMPTIONS
+-----------------------------------------
+- RM46 does NOT use an NVIC. Interrupts are managed by the VIM interrupt controller.
+- VIM driver code is generated separately (system-level) and provides this API:
+
+    int vim_register_isr(uint32_t channel_id, void (*isr)(void));
+    int vim_enable_channel(uint32_t channel_id);
+    int vim_disable_channel(uint32_t channel_id);
+
+- Peripheral drivers MUST NOT initialize the VIM vector table or globally enable CPU IRQs.
+- Peripheral drivers MAY register their ISR(s) and enable/disable their VIM channels using the VIM API ABOVE, but ONLY if irq.yaml IDs are provided.
 
 INPUT SHAPES
 ------------
-You are given two YAML fragments:
+You are given up to three YAML fragments:
 
 1) soc.yaml fragment (only this peripheral):
 
-Conceptual schema:
-
   soc.peripherals[*]:
-    - name: string          # e.g., "GIO"
-    - type: string          # normalized type: gpio|uart|spi|i2c|adc|timer|can|...
-    - instance: integer     # 1..N
-    - regs_ref: string      # key into regs.yaml: peripherals.<regs_ref>
-    - irq_ref: [string...]  # (optional) keys into irq.yaml
-    - clock_ref: string     # domain/gate name from bus.yaml
-    - x-ext: object         # extension for codegen metadata
+    - name: string
+    - type: string          # gpio|uart|spi|i2c|adc|timer|can|...
+    - instance: integer
+    - regs_ref: string
+    - irq_ref: [string...]
+    - clock_ref: string
+    - x-ext: object
 
 For this task, the ONLY x-ext field you must interpret is:
 
   x-ext.init:
     - A list of register operations that must be applied in the peripheral's init function.
     - Each entry has:
-        reg:   "<REGS_REF>.<REGISTER>"   # e.g., "GIO.GCR0"
+        reg:   "<REGS_REF>.<REGISTER>"
         op:    "set_bits" | "clear_bits" | "write"
-        value: "0x........"              # hex string
+        value: "0x........"
 
 2) regs.yaml fragment (only this peripheral):
-
-Conceptual schema:
 
   peripherals:
     <regs_ref>:
@@ -178,195 +199,315 @@ Conceptual schema:
           reset:  "0x........"
           desc:   "..."
 
+3) irq.yaml fragment (optional):
+
+  irqs:
+    - name: string
+      id: integer
+      peripheral_refs: [string...]
+      desc: string
+
+If soc.irq_ref is non-empty but irq.yaml is NOT provided:
+- You MUST NOT invent interrupt IDs.
+- ISR helpers must accept uint32_t channel_id OR return an error.
+
 FACTS MIRROR REQUIREMENTS
 -------------------------
-Before emitting any files, you MUST populate the FACTS MIRROR with every numeric constant you will use, pulled directly from the YAML:
+Before emitting any files, you MUST populate the FACTS MIRROR with every numeric constant you will use, pulled directly from YAML.
 
-- Base address of this peripheral (peripherals.<regs_ref>.base_address)
-- Offsets of every register you reference
-- Any masks/values from x-ext.init[*].value
+You MUST NOT invent numeric values.
 
-Naming in the FACTS MIRROR is up to you, but should be clear and stable, for example:
+If required numeric data is missing for any register access:
+- Add TODO entries to the FACTS MIRROR
+- STOP after the FACTS MIRROR (do NOT emit files)
 
-  GIO_BASE = 0xFFF7BC00
-  GIO_GCR0_OFFSET = 0x0000
-  GIO_GCR0_INIT_MASK = 0x00000001
-
-You MUST NOT invent numeric values; if something is needed but not provided, put a TODO entry in the mirror and STOP (do not emit files), as per the system prompt.
-
-When choosing which constants to mirror, you MUST:
-- First inspect the FULL register list under peripherals.<regs_ref>.registers.
-- Decide which registers will be used by your driver API based on their names and descriptions.
-- Mirror all numeric values required to implement that API (base + offsets + masks/values from x-ext.init and from any obvious bitfields you need).
+This STRICTLY includes specific bits in registers. Do not invent these. If they are missing, STOP after the FACTS MIRROR.
 
 DRIVER FUNCTION DISCOVERY (REQUIRED)
-------------------------------------
+-----------------------------------
 You MUST derive the public API from the register map, not from a fixed template.
 
-For this peripheral:
+- Inspect ALL register names/descriptions and classify them into roles:
+  - configuration / control
+  - data I/O
+  - status / flags / errors
+  - interrupt enable / disable / status
+  - timers / counters
+  - DMA / triggers / events
+  - test / diagnostic / loopback / DFT
 
-- Inspect ALL register names and descriptions and classify them into roles, for example:
-  - configuration / mode / control (e.g., GCR, CTRL, FORMAT)
-  - data input/output (e.g., DAT, TX, RX, BUF, DOUT, DIN)
-  - status / error / flags (e.g., STAT, FLG, ERR)
-  - interrupt enable/disable and status (e.g., INTENA, INTENASET, INTENACLR, LVL, LVLSET, LVLCLR, INTFLG)
-  - timer/counter/compare/capture (e.g., CNT, CMP, PERIOD)
-  - DMA / trigger / event control (if present)
-- For each role with clearly meaningful registers, design 1–3 thin wrapper functions that:
-  - Perform obvious operations such as:
-    * configure / set mode
-    * enable / disable a feature or channel
-    * start / stop a peripheral or timer
-    * set / get a value (data, period, baud, etc.)
-    * clear status or interrupt flags
-    * query status / error conditions
-  - Hide raw bit-manipulation behind named functions where reasonable.
-- Prefer including MORE small, simple wrapper functions rather than too few. Do NOT leave obviously useful registers without any API coverage, unless the semantics are unclear.
-- If a register appears to have unclear or highly specialized semantics from its name/desc, you MAY omit it from the API and briefly note this in a comment in the C file.
+- For each role with meaningful registers, design 1–3 thin wrapper functions.
+- Prefer MORE small wrappers over large ones.
+- If semantics are unclear, MAY omit but MUST document omission in comments.
 
-You MUST also use soc.peripherals[*].type to shape the API:
-- type: "uart" → include send/receive, status, and configuration helpers appropriate to the registers.
-- type: "spi" or "mibspi" → include transfer/config helpers (mode, frame size, chip-select, etc.) appropriate to the registers.
-- type: "i2c" → include start/stop, address, read/write, and status/flag helpers as supported by the registers.
-- type: "timer" → include configure/start/stop, set period, read counter, and interrupt/flag helpers as supported.
-- type: "adc" → include channel/configuration, start conversion, read result, status/flag helpers as supported.
-- type: "can" → include init/config, transmit, receive, and status/flag helpers as supported.
-If the type is not recognized, design a generic but reasonably complete low-level API around the available control/data/status/interrupt registers.
+BLOCKING / POLL-WAIT REQUIREMENTS (MANDATORY)
+---------------------------------------------
+If the peripheral exposes ANY registers that:
+- indicate readiness / availability / completion (status, flags, busy bits), AND
+- support data movement or state transitions,
+
+then you MUST implement at least ONE blocking (poll-wait) API that:
+
+1) Polls on one or more hardware status bits
+2) Includes a bounded timeout (cycle counter or iteration count)
+3) Returns success/failure (or bytes transferred)
+4) NEVER spins forever
+
+You MUST:
+- Implement a reusable internal wait helper (static function)
+- Use only register bits discovered from regs.yaml
+- Document which status bits are polled and why
+
+Interrupt-driven or DMA APIs MAY also be provided, but do NOT replace blocking APIs.
+
+INTERRUPT SUPPORT REQUIREMENTS (WHEN irq_ref IS PRESENT)
+--------------------------------------------------------
+If soc.peripherals[*].irq_ref is non-empty:
+
+- Add ISR registration helpers.
+- Do NOT initialize vector tables or enable global IRQs.
+
+At minimum, provide:
+  typedef void (*<periph>_isr_t)(void);
+  int <periph>_register_isr(uint32_t channel_id, <periph>_isr_t isr);
+  int <periph>_enable_irq(uint32_t channel_id);
+  int <periph>_disable_irq(uint32_t channel_id);
+
+Use vim_* APIs exclusively.
+
+INTERNAL TEST / LOOPBACK / DFT SUPPORT (MANDATORY WHEN PRESENT)
+--------------------------------------------------------------
+If regs.yaml contains registers whose name or description indicates:
+- loopback
+- test
+- diagnostic
+- DFT
+- self-test
+- internal routing
+
+then you MUST:
+
+1) Expose a public configuration API to enable/disable that functionality
+2) Implement at least ONE helper function demonstrating its use
+3) Prefer a self-test that exercises data-path registers using the blocking APIs
+
+If no such registers exist, do nothing.
 
 OUTPUT CONTRACT (PERIPHERAL-SPECIFIC)
 -------------------------------------
-After the FACTS MIRROR (and respecting the global HARD OUTPUT CONTRACT), you MUST emit exactly TWO files:
+After the FACTS MIRROR, emit exactly TWO files:
 
   ===== FILE: <periph>.h =====
-  ...header content...
-
   ===== FILE: <periph>.c =====
-  ...source content...
 
 Where:
-- <periph> SHOULD be derived from soc.peripherals[*].name, lowercased:
-  - name: "GIO"     → files: "gio.h" and "gio.c"
-  - name: "MIBSPI1" → files: "mibspi1.h" and "mibspi1.c"
-- Do NOT emit any other files.
-- Add provenance comments above each register access in the C file:
+- <periph> is soc.peripherals[*].name lowercased
+- No other files may be emitted
+
+Add provenance comments above each register access:
   // [prov] regs.yaml:<PERIPH>.<REGISTER>
 
-CODING RULES (REMINDERS)
-------------------------
-These reinforce the system prompt for this specific task:
-
-- C standard = C11, but code must be ISO C90-compatible in style:
-  - Declare all local variables at the start of a block.
-  - Do NOT use: for (int i = 0; ...).
-    Instead:
-      int i;
-      for (i = 0; i < n; ++i) { ... }
-- Public headers MUST NOT include vendor headers or vendor-specific types.
-- Use only standard integer types (`uint32_t`, etc.) from <stdint.h>.
-- Use ONLY values listed in the FACTS MIRROR for:
-  - Base addresses
-  - Register offsets
-  - Masks/values for writes
-- For register access in the C file, you may use a macro like:
+CODING RULES
+------------
+- C11, but ISO C90-compatible style
+- Declare locals at block start
+- Public headers MUST NOT include vendor headers
+- Use <stdint.h>
+- Use ONLY FACTS MIRROR constants
+- You may define:
     #define REG32(addr) (*(volatile uint32_t *)(addr))
-  and then REG32(BASE + OFFSET) inside functions.
-- Ensure each generated file ends with a trailing newline.
+- Each file must end with a trailing newline
 
 DRIVER DESIGN REQUIREMENTS
 --------------------------
-Header file (<periph>.h):
+Header (<periph>.h):
+- include guard
+- declare: void <periph>_init(void);
+- expose derived low-level APIs
+- expose blocking APIs when required
+- expose test/loopback APIs when present
+- declare ISR helpers when irq_ref present
 
-- Provide a standard include guard.
-- Include <stdint.h> if needed.
-- Declare at least:
-    void <lowercase_name>_init(void);
-  For example, for "GIO" → void gio_init(void);
-
-- You MUST design a reasonably complete, low-level but ergonomic API surface based ONLY on registers present in regs.yaml:
-  - Use the DRIVER FUNCTION DISCOVERY rules above.
-  - Every clearly meaningful control/data/status/interrupt feature should have at least one public function that exercises it.
-  - Keep functions thin (mostly one or a few register accesses), but cover the full obvious feature set of the peripheral.
-
-For GPIO-like peripherals (type "gpio" or name "GIO") you MUST:
-- Expose port as an argument rather than generating separate functions for each port.
-- For example, you MUST at least provide:
-    void gio_set_dir(uint32_t port, uint32_t pin, uint32_t output);
-    void gio_set(uint32_t port, uint32_t pin);
-    void gio_clear(uint32_t port, uint32_t pin);
-    void gio_toggle(uint32_t port, uint32_t pin);
-    uint32_t gio_read(uint32_t port, uint32_t pin);
-  where port is an integer or enum mapping to Port A/B/etc.
-- Internally, map (port, pin) to the correct DIR/DSET/DCLR/DOUT/DIN registers using the offsets from regs.yaml and the FACTS MIRROR.
-- DO NOT create separate public APIs like gio_set_a() and gio_set_b(); always route through a port parameter.
-- In addition to the basic pin-level APIs above, if the register map exposes features such as:
-    - pull-up / pull-down enable/disable,
-    - open-drain control,
-    - input qualification / debounce,
-    - polarity / inversion,
-    - interrupt enable/disable, level, and flags,
-  you MUST add corresponding configuration/status helpers that wrap those registers.
-
-Source file (<periph>.c):
-
-- Include:
-    #include <stdint.h>
-    #include "<periph>.h"
-
-- Define macros for:
-  - Base address, using FACTS MIRROR value:
-      #define GIO_BASE 0xFFF7BC00u
-  - Register offsets for any registers you touch:
-      #define GIO_GCR0_OFFSET 0x0000u
-      #define GIO_DIR_A_OFFSET 0x0034u
-      ...
-
-- Optionally define convenience macros/helpers:
-    #define REG32(addr) (*(volatile uint32_t *)(addr))
-
-- Implement:
-    void <lowercase_name>_init(void);
-    // plus ALL public API functions declared in the header.
-
-The init function MUST:
-- Apply all operations from soc.x-ext.init[], in order.
-  For each entry:
-  - reg: "<REGS_REF>.<REGISTER>"
-  - op: "set_bits"  → REG32(BASE + OFFSET) |= VALUE;
-  - op: "clear_bits"→ REG32(BASE + OFFSET) &= ~VALUE;
-  - op: "write"     → REG32(BASE + OFFSET)  = VALUE;
-- Use only the base address and offsets from regs.yaml (reflected via FACTS MIRROR).
-- Emit a provenance comment on each access, for example:
-    // [prov] regs.yaml:GIO.GCR0
-    REG32(GIO_BASE + GIO_GCR0_OFFSET) |= GIO_GCR0_INIT_MASK;
-
-- Do NOT perform:
-  - SYSTEM-level initialization (CLKCNTL, PCR, etc.).
-  - Stack setup, data/bss init, or vector table work.
-  Those are handled by other files (start.s, entry.c, system.c).
-
-- You MUST implement all declared public functions, and each function MUST touch at least one hardware register (read or write) using FACTS MIRROR constants.
-- When selecting which registers to use, consider the entire register block; err on the side of using all clearly purposeful (non-reserved) registers in at least one helper, unless their semantics are unclear.
+Source (<periph>.c):
+- include <stdint.h> and "<periph>.h"
+- define base + offsets macros from FACTS MIRROR
+- implement init applying x-ext.init in order
+- clear/read flags as required
+- implement all declared functions
+- each function must touch hardware OR VIM API
 
 IF REQUIRED DATA IS MISSING
 ---------------------------
-If the YAML does not contain enough information to:
-- Determine the peripheral's base address, or
-- Determine the offsets and masks for x-ext.init registers
-
-then:
-- Add TODO entries to the FACTS MIRROR describing what is missing.
-- STOP after the FACTS MIRROR (do NOT emit any FILE blocks), as per the global FACTS POLICY.
+If YAML lacks required numeric data:
+- Populate FACTS MIRROR with TODOs
+- STOP after FACTS MIRROR
+- Do NOT emit FILE blocks
 
 INPUTS
 ------
-Below are the concrete YAML fragments for this call.
-
-soc.yaml fragment for this peripheral:
+soc.yaml fragment:
 %s
 
-regs.yaml fragment for this peripheral:
+regs.yaml fragment:
 %s
-    """ % (soc_yaml, regs_yaml)
+
+(optional) irq.yaml fragment:
+%s
+
+ """ % (soc_yaml, regs_yaml, "" if irq_yaml is None else irq_yaml)
+
+def build_vim_prompt(soc_yaml, regs_yaml, irq_yaml):
+    
+    return """
+    You are generating the SYSTEM-LEVEL VIM (Vectored Interrupt Manager) interrupt controller driver for TI RM46 (Cortex-R4).
+
+You MUST obey the global FACTS POLICY, HARD OUTPUT CONTRACT, and CODING RULES from the system prompt.
+
+TASK OVERVIEW
+-------------
+Generate exactly TWO files:
+1) vim.h
+2) vim.c
+
+The VIM driver is system-level and MUST:
+- Initialize the VIM interrupt vector table in VIM RAM (vectored mode support)
+- Provide APIs to register ISRs and enable/disable channels
+- Never depend on vendor headers
+- Use only constants from YAML inputs (mirrored in FACTS MIRROR)
+
+It MUST NOT:
+- Initialize other peripherals (PCR/SYSTEM clocks etc.)
+- Implement peripheral-specific ISRs
+- Assume an RTOS
+
+INPUT SHAPES
+------------
+You are given these YAML fragments:
+
+1) soc.yaml fragment containing ONLY the VIM peripheral entry (and optional x-ext metadata):
+  soc.peripherals[*]:
+    - name: "VIM"
+    - type: "vim"
+    - regs_ref: "VIM"
+    - x-ext: may include:
+        vector_table:
+          base_address: "0xFFF82000"
+          entries: 128
+          entry_size_bytes: 4
+          phantom_entry: 0
+          reserved_channels: [127]
+
+2) regs.yaml fragment containing VIM register blocks:
+  peripherals:
+    VIM:
+      base_address: "0xFFFFFE00"
+      registers: { IRQINDEX, FIQINDEX, FIRQPR0..3, REQENASET0..3, REQENACLR0..3, ... CHANCTRL0..31, ... }
+    (optional) VIM_PARITY:
+      base_address: "0xFFFFFD00"
+      registers: { PARCTL, PARFLG, ADDERR, FBPARERR }
+
+3) irq.yaml fragment containing ALL interrupt request assignments for this SoC:
+  irqs:
+    - name: string
+      id: integer    # VIM channel number 0..126
+      peripheral_refs: [...]
+      desc: string
+
+VIM VECTOR TABLE FACTS
+----------------------
+- VIM vector table is in RAM at a fixed base address provided in soc.yaml x-ext.vector_table (or otherwise provided explicitly).
+- The table is 128 entries x 32-bit.
+- Entry 0 is phantom.
+- Channel N uses entry (N + 1).
+- Channel 127 is reserved/invalid.
+
+FACTS MIRROR REQUIREMENTS
+-------------------------
+Before emitting any files, you MUST populate the FACTS MIRROR with every numeric constant you will use, pulled directly from YAML:
+
+- VIM base address
+- VIM_PARITY base address (if you use it)
+- Offsets for every VIM register you access
+- Vector table base address
+- Entry count (e.g., 128)
+- Reserved channel numbers (e.g., 127)
+- Any masks/values used for register writes (must come from YAML; do NOT invent)
+
+If required numeric values are not provided, add TODOs and STOP after the FACTS MIRROR.
+
+REQUIRED PUBLIC API (vim.h)
+---------------------------
+You MUST implement these public APIs:
+
+- typedef void (*vim_isr_t)(void);
+
+- void vim_init(void);
+  Initializes the VIM for vectored interrupts:
+  - (optional) enables parity before vector table init, ONLY if VIM_PARITY.PARCTL is provided in regs.yaml
+  - initializes ALL vector table entries to a default handler
+  - does NOT enable any specific interrupt channel by default
+
+- int vim_register_isr(uint32_t channel_id, vim_isr_t isr);
+  Stores the ISR address into the vector table entry for channel_id.
+  Must reject invalid channel_id (>= entries-1 OR reserved channels).
+
+- int vim_enable_channel(uint32_t channel_id);
+  Enables the channel in REQENASET registers.
+
+- int vim_disable_channel(uint32_t channel_id);
+  Disables the channel in REQENACLR registers.
+
+OPTIONAL (if register map supports it):
+- int vim_set_fiq(uint32_t channel_id, int enable_fiq);
+  Uses FIRQPR registers to route a channel to FIQ instead of IRQ.
+
+DEFAULT ISR BEHAVIOR
+--------------------
+You MUST implement a static default handler:
+- void vim_default_isr(void);
+The vector table is initialized to this handler.
+
+IMPLEMENTATION REQUIREMENTS (vim.c)
+-----------------------------------
+- Use REG32 macro for register access.
+- Use only FACTS MIRROR constants for addresses/offsets.
+- Vector table writes are memory writes:
+    VIM_VECTOR_BASE + 4*(channel_id + 1)
+
+- Do NOT use dynamic allocation.
+- C90 style variable declarations.
+
+PROVENANCE COMMENTS
+-------------------
+- For each register access, include:
+  // [prov] regs.yaml:VIM.<REGISTER>
+- For vector table memory writes, include:
+  // [prov] soc.yaml:VIM.x-ext.vector_table (base/entries)
+
+OUTPUT CONTRACT
+---------------
+After the FACTS MIRROR, emit exactly TWO files:
+
+  ===== FILE: vim.h =====
+  ...
+
+  ===== FILE: vim.c =====
+  ...
+
+Do NOT emit any other files.
+
+INPUTS
+------
+soc.yaml fragment for VIM:
+%s
+
+regs.yaml fragment for VIM:
+%s
+
+irq.yaml fragment (full list):
+%s
+
+    """ % (soc_yaml, regs_yaml, irq_yaml)
 
 
 def build_system_init_prompt(soc_yaml: str, regs_yaml: str):
@@ -950,5 +1091,36 @@ async def invoke_model(model: Model, max_tokens: int, messages: list[Message]) -
         "messages": messages,
     }
 
-    response = client.invoke_model(modelId=model.get_model_id(), body=json.dumps(body))
-    return response
+    # Start progress indicator
+    stop_spinner = threading.Event()
+    spinner_thread = threading.Thread(target=_show_progress, args=(stop_spinner,))
+    spinner_thread.daemon = True
+    spinner_thread.start()
+
+    try:
+        response = client.invoke_model(modelId=model.get_model_id(), body=json.dumps(body))
+        return response
+    finally:
+        # Stop the spinner
+        stop_spinner.set()
+        spinner_thread.join(timeout=1)
+        # Clear the spinner line
+        sys.stdout.write('\r' + ' ' * 50 + '\r')
+        sys.stdout.flush()
+
+
+def _show_progress(stop_event):
+    """Display a simple progress indicator while waiting for API response."""
+    spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+    idx = 0
+    start_time = time.time()
+    
+    while not stop_event.is_set():
+        elapsed = int(time.time() - start_time)
+        minutes, seconds = divmod(elapsed, 60)
+        spinner = spinner_chars[idx % len(spinner_chars)]
+        sys.stdout.write(f'\r{spinner} Waiting for response... ({minutes:02d}:{seconds:02d})')
+        sys.stdout.flush()
+        idx += 1
+        time.sleep(0.1)
+

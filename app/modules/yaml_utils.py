@@ -200,6 +200,7 @@ def make_regs_slice_for_refs(
     regs_data: Dict[str, Any],
     refs: List[str],
 ) -> Dict[str, Any]:
+    
     """
     Build a minimal regs.yaml-like dict containing only the requested
     register blocks.
@@ -211,7 +212,9 @@ def make_regs_slice_for_refs(
           "REF2": { ... }
         }
       }
+
     """
+
     out: Dict[str, Any] = {}
     if "ir_schema_version" in regs_data:
         out["ir_schema_version"] = regs_data["ir_schema_version"]
@@ -397,6 +400,7 @@ def build_system_slices_for_prompt(
 def build_peripheral_slices_for_prompt(
     soc_data: Dict[str, Any],
     regs_data: Dict[str, Any],
+    irq_data: Dict[str, Any],
     peripheral_name: str,
 ) -> Tuple[str, str]:
     """
@@ -422,5 +426,76 @@ def build_peripheral_slices_for_prompt(
         )
     regs_slice = make_regs_slice_for_refs(regs_data, [regs_ref])
 
-    return dump_yaml_str(soc_slice), dump_yaml_str(regs_slice)
+    # Search for additional regs_ref in x-ext (e.g., for VIM parity, GPIO expander peripherals)
+    x_ext = p.get("x-ext", {})
+    if isinstance(x_ext, dict):
+        # Recursively search through x-ext dictionary values for regs_ref fields
+        def find_regs_refs(obj, found_refs):
+            """Recursively find all regs_ref values in nested dict/list structures."""
+            if isinstance(obj, dict):
+                if "regs_ref" in obj:
+                    ref = str(obj["regs_ref"])
+                    if ref and ref != regs_ref:
+                        found_refs.add(ref)
+                for value in obj.values():
+                    find_regs_refs(value, found_refs)
+            elif isinstance(obj, list):
+                for item in obj:
+                    find_regs_refs(item, found_refs)
+        
+        additional_refs = set()
+        find_regs_refs(x_ext, additional_refs)
+        
+        # Add all found regs blocks to the regs slice
+        for ext_regs_ref in additional_refs:
+            extra_regs_slice = make_regs_slice_for_refs(regs_data, [ext_regs_ref])
+            if "peripherals" not in regs_slice:
+                regs_slice["peripherals"] = {}
+            regs_slice["peripherals"].update(extra_regs_slice.get("peripherals", {}))
 
+    irq_slice = ""
+
+    irq_refs = p.get("irq_ref", [])
+    if irq_refs and isinstance(irq_refs, list):
+        irq_slice = make_irq_slices_for_refs(irq_data, irq_refs)
+
+    return dump_yaml_str(soc_slice), dump_yaml_str(regs_slice), dump_yaml_str(irq_slice)
+
+
+def make_irq_slices_for_refs(irq_yaml, refs: List[str]) -> Dict[str, Any]:
+    """
+    Build a minimal irq.yaml-like dict containing only the requested
+    IRQ blocks.
+
+    irq.yaml has irqs as a list where each item has a 'name' field.
+    We filter to only include IRQs whose 'name' matches one of the refs.
+
+      {
+        "ir_schema_version": "...",
+        "interrupt_controller": { ... },
+        "irqs": [
+          { "name": "REF1", ... },
+          { "name": "REF2", ... }
+        ]
+      }
+    """
+    out: Dict[str, Any] = {}
+    if "ir_schema_version" in irq_yaml:
+        out["ir_schema_version"] = irq_yaml["ir_schema_version"]
+    
+    if "interrupt_controller" in irq_yaml:
+        out["interrupt_controller"] = irq_yaml["interrupt_controller"]
+
+    irqs_in = irq_yaml.get("irqs", [])
+    refs_set = {r.upper() for r in refs}
+    irqs_out: List[Dict[str, Any]] = []
+    
+    if isinstance(irqs_in, list):
+        for irq_entry in irqs_in:
+            if isinstance(irq_entry, dict):
+                name = str(irq_entry.get("name", "")).upper()
+                if name in refs_set:
+                    irqs_out.append(irq_entry)
+    
+    out["irqs"] = irqs_out
+    return out

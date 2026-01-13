@@ -64,7 +64,7 @@ soc:
       type: "sci"
       instance: 1
       regs_ref: "SCI"
-      irq_ref: ["SCI_LVL0", "SCI_LVL1"]          
+      irq_ref: ["SCI_LVL0", "SCI_LVL1", "LIN_LVL0", "LIN_LVL1"]          
       clock_ref: "VCLK1"
       x-ext:
         init:
@@ -124,14 +124,6 @@ soc:
             12: { name: "TRANSMIT",       desc: "Transmit" }
           reserved_offsets: [[0,0],[2,2],[4,5],[8,8],[10,10],[13,15]]
 
-    - name: "LIN"
-      type: "lin"
-      instance: 1
-      regs_ref: "LIN"
-      irq_ref: ["LIN_LVL0", "LIN_LVL1"]           
-      clock_ref: "VCLK1"
-      x-ext: {}
-
     - name: "VIM"
       type: "vim"
       instance: 1
@@ -142,34 +134,14 @@ soc:
         vector_table:
           base_address: "0xFFF82000"
           entries: 128
+          entry_size_bytes: 4
+          phantom_entry: 0
           reserved_channels: [127]
           
-        init:
-          # 1) (Optional) Enable VIM vector-table parity BEFORE writing the vector table
-          #    TRM: parity bits are auto-updated when parity is enabled and the table is written afterward.
-          - reg: "VIM_PARITY.PARCTL"
-            op: "set_bits"
-            value: "<PARITY_ENABLE_MASK>"
-
-          # 2) Initialize the entire VIM interrupt vector table in VIM RAM
-          #    TRM: after reset the vector table (and parity bits) is not initialized.
-          #    This must be done BEFORE enabling any corresponding interrupt channels.
-          - mem: "<VIM_VECTOR_TABLE_BASE>"
-            op: "memset32"
-            count: "<VIM_VECTOR_TABLE_ENTRIES>"
-            value: "<DEFAULT_ISR_ADDRESS>"
-
-          # 3) Install ISR addresses for the channels you will use (overwrite defaults)
-          #    Do this AFTER parity enable (if used) and AFTER the default table init.
-          - mem: "<VIM_VECTOR_TABLE_BASE>"
-            op: "write_mem32"
-            index: "<CHANNEL_ID>"
-            value: "<ISR_ADDRESS>"
-
-          # 4) Only AFTER vector-table initialization: enable the required VIM interrupt channels
-          - reg: "VIM.REQENASET<k>"
-            op: "set_bits"
-            value: "<CHANNEL_ENABLE_MASK>"
+        parity:
+          regs_ref: "VIM_PARITY"  
+          enable_reg: "VIM_PARITY.PARCTL"
+          enable_value: "0x00000001"
 
 
 provenance:

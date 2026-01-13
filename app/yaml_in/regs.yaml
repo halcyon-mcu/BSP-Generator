@@ -122,7 +122,49 @@ peripherals:
       SCISETINTLVL:   { offset: "0x0014", access: RW, reset: "0x00000000", desc: "SCI Set Interrupt Level Register" }
       SCICLEARINTLVL: { offset: "0x0018", access: RW, reset: "0x00000000", desc: "SCI Clear Interrupt Level Register" }
 
-      SCIFLR:         { offset: "0x001C", access: RC, reset: "0x00000000", desc: "SCI Flag Register" }
+      SCIFLR:
+        offset: "0x001C"
+        access: RW
+        reset: "0x00000000"
+        desc: "SCI Flags Register"
+        fields:
+          - { name: BE,     bit: 31, access: RW, reset: 0, desc: "Bit error flag", modes: [LIN], write_behavior: W1C }
+          - { name: PBE,    bit: 30, access: RW, reset: 0, desc: "Physical bus error flag", modes: [LIN], write_behavior: W1C }
+          - { name: CE,     bit: 29, access: RW, reset: 0, desc: "Checksum error flag", modes: [LIN], write_behavior: W1C }
+          - { name: ISFE,   bit: 28, access: RW, reset: 0, desc: "Inconsistent synch field error flag", modes: [LIN], write_behavior: W1C }
+          - { name: NRE,    bit: 27, access: RW, reset: 0, desc: "No-response error flag", modes: [LIN], write_behavior: W1C }
+
+          - { name: FE,     bit: 26, access: RW, reset: 0, desc: "Framing error flag", modes: [SCI, LIN], write_behavior: W1C }
+          - { name: OE,     bit: 25, access: RW, reset: 0, desc: "Overrun error flag", modes: [SCI, LIN], write_behavior: W1C }
+          - { name: PE,     bit: 24, access: RW, reset: 0, desc: "Parity error flag (disabled if parity off)", modes: [SCI, LIN], write_behavior: W1C }
+
+          - { name: RESERVED_23_16, msb: 23, lsb: 16, access: RO, reset: 0, desc: "Reserved" }
+
+          - { name: ID_RX_FLAG, bit: 14, access: RW, reset: 0, desc: "Identifier on receive flag", modes: [LIN], write_behavior: W1C }
+          - { name: ID_TX_FLAG, bit: 13, access: RW, reset: 0, desc: "Identifier on transmit flag", modes: [LIN], write_behavior: W1C }
+
+          - { name: RXWAKE, bit: 12, access: RW, reset: 0, desc: "Receiver wakeup detect flag", modes: [SCI] }
+
+          - { name: TX_EMPTY, bit: 11, access: RW, reset: 1, desc: "Transmitter empty flag", modes: [SCI, LIN] }
+
+          - { name: TXWAKE, bit: 10, access: RW, reset: 0, desc: "Transmitter wakeup method select", modes: [SCI], write_constraint: SCI_ONLY }
+
+          - { name: RXRDY, bit: 9, access: RW, reset: 0, desc: "Receiver ready flag", modes: [SCI, LIN], write_behavior: W1C }
+          - { name: TXRDY, bit: 8, access: RW, reset: 1, desc: "Transmitter buffer ready flag", modes: [SCI, LIN] }
+
+          - { name: TOA3WUS, bit: 7, access: RW, reset: 0, desc: "Timeout after three wakeup signals flag", modes: [LIN], write_behavior: W1C }
+          - { name: TOAWUS,  bit: 6, access: RW, reset: 0, desc: "Timeout after wakeup signal flag", modes: [LIN], write_behavior: W1C }
+
+          - { name: RESERVED_5, bit: 5, access: RO, reset: 0, desc: "Reserved" }
+
+          - { name: TIMEOUT, bit: 4, access: RW, reset: 0, desc: "LIN bus idle timeout flag", modes: [LIN], write_behavior: W1C }
+          - { name: BUSY,    bit: 3, access: RW, reset: 0, desc: "Bus busy flag", modes: [SCI, LIN] }
+
+          - { name: IDLE, bit: 2, access: RO, reset: 0, desc: "SCI receiver in idle state", modes: [SCI] }
+
+          - { name: WAKEUP, bit: 1, access: RW, reset: 0, desc: "Wakeup flag", modes: [LIN], write_behavior: W1C }
+          - { name: BRKDT,  bit: 0, access: RW, reset: 0, desc: "SCI break-detect flag", modes: [SCI], write_behavior: W1C }
+
       SCIINTVECT0:    { offset: "0x0020", access: RO, reset: "0x00000000", desc: "SCI Interrupt Vector Offset 0 (INT0)" }
       SCIINTVECT1:    { offset: "0x0024", access: RO, reset: "0x00000000", desc: "SCI Interrupt Vector Offset 1 (INT1)" }
 
@@ -143,10 +185,6 @@ peripherals:
       SCIPIO7:        { offset: "0x0058", access: RW, reset: "0x00000000", desc: "SCI Pin I/O Control Register 7" }
       SCIPIO8:        { offset: "0x005C", access: RW, reset: "0x00000000", desc: "SCI Pin I/O Control Register 8" }
 
-
-  LIN:
-    base_address: "0xFFF7E400"
-    registers:
       # LIN registers (same module block). Keep for completeness / future-proofing.
       LINCOMP:        { offset: "0x0060", access: RW, reset: "0x00000000", desc: "LIN Compare Register" }
       LINRD:          { offset: "0x0064", access: RO, reset: "0x00000000", desc: "LIN Receive Data Register" }

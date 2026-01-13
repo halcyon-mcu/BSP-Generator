@@ -17,13 +17,16 @@ from modules.prompt import (
     build_linker_prompt,          # linker script
     build_entry_prompt,           # entry.c
     build_start_asm_prompt,       # start.s
+    build_vim_prompt,             # VIM driver
 )
 from modules.user import prompt_user_for_peripherals
 
 from modules.yaml_utils import (
+    dump_yaml_str,
     load_soc_yaml,
     load_regs_yaml,
     load_memmap_yaml,
+    load_irq_yaml,
     build_system_slices_for_prompt,
     build_peripheral_slices_for_prompt,
     build_memmap_slice_for_prompt,
@@ -106,17 +109,17 @@ def main():
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=12000,
+        default=20000,
     )
     parser.add_argument(
         "--targets",
         nargs="+",
         default=["all"],
-        choices=["all", "startup", "entry", "system", "linker", "peripherals"],
+        choices=["all", "startup", "entry", "system", "linker", "vim", "peripherals"],
         help=(
             "Which components to generate. "
             "Choices: all, startup (start.s), entry (entry.c), "
-            "system (system.c/h), linker (linker.cmd), peripherals (drivers). "
+            "system (system.c/h), linker (linker.cmd), vim (VIM driver), peripherals (drivers). "
             "Default: all."
         ),
     )
@@ -127,6 +130,7 @@ def main():
     generate_entry = "all" in targets or "entry" in targets
     generate_system = "all" in targets or "system" in targets
     generate_linker = "all" in targets or "linker" in targets
+    generate_vim = "all" in targets or "vim" in targets
     generate_peripherals = "all" in targets or "peripherals" in targets
 
     # Root for this run: output_<timestamp>
@@ -141,10 +145,12 @@ def main():
     # Load structured YAMLs for slicing
     soc_path = Path(args.yamlpath) / "soc.yaml"
     regs_path = Path(args.yamlpath) / "regs.yaml"
+    irq_path = Path(args.yamlpath) / "irq.yaml"
     memmap_path = Path(args.yamlpath) / "memmap.yaml"
 
     soc_data = load_soc_yaml(soc_path)
     regs_data = load_regs_yaml(regs_path)
+    irq_data = load_irq_yaml(irq_path)
     memmap_data = load_memmap_yaml(memmap_path)
 
     # Let the user choose which peripherals to generate drivers for (if requested)
@@ -242,20 +248,38 @@ def main():
     else:
         print("[info] Skipping linker.cmd generation due to --targets.")
 
-    # 5) Per-peripheral drivers (one call per selected peripheral)
+    # 5) VIM driver
+    if generate_vim:
+        vim_soc_slice, vim_regs_slice, _ = build_peripheral_slices_for_prompt(
+            soc_data, regs_data, irq_data, "VIM"
+        )
+        vim_user_prompt = build_vim_prompt(
+            vim_soc_slice, vim_regs_slice, dump_yaml_str(irq_data)
+        )
+        vim_text = _invoke_with_prompts(
+            tag="vim_driver",
+            system_prompt=system_prompt,
+            user_prompt=vim_user_prompt,
+            model_enum=model_enum,
+            max_tokens=args.max_tokens,
+            artifacts_dir=artifacts,
+        )
+        if vim_text:
+            all_written += split_and_write_files(vim_text, out_dir)
+
+    # 6) Per-peripheral drivers (one call per selected peripheral)
     if generate_peripherals and chosen_peripherals:
         for periph in chosen_peripherals:
             name = str(periph.get("name", "UNKNOWN"))
             tag = f"periph_{name.lower()}"
 
             # Build YAML slices for THIS peripheral (soc + regs)
-            soc_slice_str, regs_slice_str = build_peripheral_slices_for_prompt(
-                soc_data, regs_data, name
+            soc_slice_str, regs_slice_str, irq_slice_str = build_peripheral_slices_for_prompt(
+                soc_data, regs_data, irq_data, name
             )
 
             # Reuse build_user_prompt for per-peripheral driver generation
-            periph_user_prompt = build_user_prompt(soc_slice_str, regs_slice_str)
-
+            periph_user_prompt = build_user_prompt(soc_slice_str, regs_slice_str, irq_slice_str)
             text = _invoke_with_prompts(
                 tag=tag,
                 system_prompt=system_prompt,
