@@ -1,0 +1,3 @@
+# start with making a prompt that somehow reads already generated information 
+# and generates a test to validate what was already generated
+
