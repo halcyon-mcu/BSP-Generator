@@ -1,0 +1,3 @@
+===== FACTS MIRROR =====
+; No numeric register values are required for start.s
+===== END FACTS MIRROR =====

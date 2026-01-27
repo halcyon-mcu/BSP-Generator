@@ -1,0 +1,70 @@
+SCI Register Map Summary (Base: 0xFFF7E400)
+============================================
+
+Offset | Register       | Access | Description
+-------|----------------|--------|-------------------------------------------
+0x00   | SCIGCR0        | RW     | Global Control Register 0 (module reset)
+0x04   | SCIGCR1        | RW     | Global Control Register 1 (mode, enables)
+0x08   | SCIGCR2        | RW     | Global Control Register 2 (checksum, power)
+0x0C   | SCISETINT      | RW     | Set Interrupt Register
+0x10   | SCICLEARINT    | RW     | Clear Interrupt Register
+0x14   | SCISETINTLVL   | RW     | Set Interrupt Level Register
+0x18   | SCICLEARINTLVL | RW     | Clear Interrupt Level Register
+0x1C   | SCIFLR         | RW     | Flags Register (status, errors)
+0x20   | SCIINTVECT0    | RO     | Interrupt Vector Offset 0
+0x24   | SCIINTVECT1    | RO     | Interrupt Vector Offset 1
+0x28   | SCIFORMAT      | RW     | Format Control Register (char length)
+0x2C   | BRS            | RW     | Baud Rate Selection Register (prescaler)
+0x30   | SCIED          | RO     | Receiver Emulation Data Buffer
+0x34   | SCIRD          | RO     | Receiver Data Buffer (read received byte)
+0x38   | SCITD          | RW     | Transmit Data Buffer (write byte to send)
+0x3C   | SCIPIO0        | RW     | Pin I/O Control Register 0 (pin function)
+0x40   | SCIPIO1        | RW     | Pin I/O Control Register 1 (pin direction)
+0x44   | SCIPIO2        | RO     | Pin I/O Control Register 2 (pin input)
+0x48   | SCIPIO3        | RW     | Pin I/O Control Register 3 (pin output)
+0x4C   | SCIPIO4        | RW     | Pin I/O Control Register 4 (pin set)
+0x50   | SCIPIO5        | RW     | Pin I/O Control Register 5 (pin clear)
+0x54   | SCIPIO6        | RW     | Pin I/O Control Register 6 (open drain)
+0x58   | SCIPIO7        | RW     | Pin I/O Control Register 7 (pull disable)
+0x5C   | SCIPIO8        | RW     | Pin I/O Control Register 8 (pull select)
+0x60   | LINCOMPARE     | RW     | LIN Compare Register (synch break)
+0x64   | LINRD0         | RO     | LIN Receive Buffer 0 (bytes 0-3)
+0x68   | LINRD1         | RO     | LIN Receive Buffer 1 (bytes 4-7)
+0x6C   | LINMASK        | RW     | LIN Mask Register (RX/TX ID masks)
+0x70   | LINID          | RW     | LIN Identification Register (ID bytes)
+0x74   | LINTD0         | RW     | LIN Transmit Buffer 0 (bytes 0-3)
+0x78   | LINTD1         | RW     | LIN Transmit Buffer 1 (bytes 4-7)
+0x7C   | MBRS           | RW     | Maximum Baud Rate Selection Register
+0x90   | IODFTCTRL      | RW     | Input/Output Error Enable Register (DFT)
+
+Key Fields:
+- SCIGCR0.RESET: Module reset bit
+- SCIGCR1.TXENA: Transmit enable
+- SCIGCR1.RXENA: Receive enable
+- SCIGCR1.LOOP_BACK: Internal loopback enable
+- SCIGCR1.SWnRST: Software reset (active low)
+- SCIFLR.TXRDY: Transmitter ready flag
+- SCIFLR.RXRDY: Receiver ready flag
+- SCIFLR.TX_EMPTY: Transmitter empty flag
+- SCIFLR.BUSY: SCI busy flag
+- SCIFLR.PE, OE, FE: Parity, overrun, framing error flags
+- SCIFORMAT.CHAR: Character length control (0-7 for 1-8 bits)
+- BRS.PRESCALER_P: Prescaler value for baud rate
+- SCIRD.RD: Received data byte
+- SCITD.TD: Transmit data byte
+- IODFTCTRL.LPB_ENA: IODFT loopback enable
+
+Interrupt Vector Offsets (from x-ext.interrupts.vect_offsets):
+- Offset 1: WAKEUP
+- Offset 3: PARITY_ERROR
+- Offset 6: FRAME_ERROR
+- Offset 7: BREAK_DETECT
+- Offset 9: OVERRUN_ERROR
+- Offset 11: RECEIVE
+- Offset 12: TRANSMIT
+
+Interrupt Channels (from irq.yaml):
+- SCI_LVL0: VIM channel 64
+- SCI_LVL1: VIM channel 74
+- LIN_LVL0: VIM channel 13
+- LIN_LVL1: VIM channel 27

@@ -1,0 +1,100 @@
+SCI Driver Example Scenarios
+=============================
+
+EXAMPLE 1: BASIC POLLING TRANSMIT/RECEIVE
+------------------------------------------
+See: sci_polling_example.c
+
+1. Initialize SCI (sci_init)
+2. Configure format: 8 bits, no parity, 1 stop bit
+3. Set baud rate to 9600
+4. Enable TX and RX
+5. Transmit "Hello" (5 bytes)
+6. Receive 5 bytes (assuming external loopback or another device)
+7. Verify received data matches transmitted data
+
+EXAMPLE 2: INTERRUPT-DRIVEN ECHO
+---------------------------------
+See: sci_interrupt_example.c
+
+1. Initialize SCI
+2. Configure format and baud rate
+3. Enable TX and RX
+4. Register ISR for level 0 (receive interrupt)
+5. Enable RX interrupt and set to level 0
+6. Enable VIM channel for level 0
+7. In ISR:
+   - Check if RXRDY is set
+   - Read byte from SCIRD
+   - Echo byte back via SCITD
+   - Clear RXRDY flag
+
+EXAMPLE 3: LOOPBACK SELF-TEST
+------------------------------
+See: sci_loopback_example.c
+
+1. Initialize SCI
+2. Configure format and baud rate
+3. Enable TX and RX
+4. Call sci_loopback_test()
+   - Function enables internal loopback
+   - Transmits test pattern (0x55, 0xAA, 0x0F, 0xF0)
+   - Receives data back
+   - Verifies data matches
+   - Disables loopback
+5. Check return value (0 = success, -1 = failure)
+
+EXAMPLE 4: CUSTOM BAUD RATE CALCULATION
+----------------------------------------
+If the standard sci_set_baudrate() function does not meet your needs,
+you can manually compute and write the BRS register:
+
+  uint32_t vclk_hz = clock_get_hz(CLOCKREF_VCLK);
+  uint32_t desired_baudrate = 9600;
+  uint32_t p = (vclk_hz / (desired_baudrate * 16)) - 1;
+  REG32(BRS) = (p & 0x00FFFFFF);
+
+For fractional baud rates, compute M and U fields:
+  uint32_t brs_val = ((u & 0x7) << 28) | ((m & 0xF) << 24) | (p & 0xFFFFFF);
+  REG32(BRS) = brs_val;
+
+EXAMPLE 5: ERROR HANDLING
+--------------------------
+After each receive operation, check for errors:
+
+  uint32_t flags = sci_get_flags();
+  if (flags & (1u << SCIFLR_PE_BIT)) {
+      // Parity error detected
+      sci_clear_flags(1u << SCIFLR_PE_BIT);
+  }
+  if (flags & (1u << SCIFLR_OE_BIT)) {
+      // Overrun error detected
+      sci_clear_flags(1u << SCIFLR_OE_BIT);
+  }
+  if (flags & (1u << SCIFLR_FE_BIT)) {
+      // Framing error detected
+      sci_clear_flags(1u << SCIFLR_FE_BIT);
+  }
+
+EXAMPLE 6: IODFT ANALOG LOOPBACK
+---------------------------------
+To test the analog TX/RX paths:
+
+1. Connect TX pin to RX pin externally (wire loopback)
+2. sci_enable_iodft_loopback()
+3. sci_write_byte('T')
+4. sci_read_byte(&ch)
+5. Verify ch == 'T'
+6. sci_disable_iodft_loopback()
+
+This tests the full analog signal path including drivers and receivers.
+
+EXAMPLE 7: LIN MODE (ADVANCED)
+-------------------------------
+To use LIN mode (not fully tested in this driver):
+
+1. sci_init()
+2. Set SCIGCR1.LIN_MODE bit
+3. Configure LINCOMPARE, LINMASK, LINID registers
+4. Use LINTD0/LINTD1 for multi-byte transmit buffers
+5. Use LINRD0/LINRD1 for multi-byte receive buffers

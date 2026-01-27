@@ -1,0 +1,66 @@
+===== FACTS MIRROR =====
+(no numeric facts required for entry.c)
+===== END FACTS MIRROR =====
+
+===== FILE: entry.c =====
+/**
+ * @file entry.c
+ * @brief C reset handler for RM46 – initializes .data, .bss, and calls system_init() then main().
+ */
+
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+/* Linker-defined symbols marking section boundaries */
+extern uint32_t start_of_data;
+extern uint32_t end_of_data;
+extern uint32_t start_of_data_in_flash;
+extern uint32_t start_of_bss;
+extern uint32_t end_of_bss;
+
+/* System initialization routine (provided by BSP) */
+extern void system_init(void);
+
+/* User application entry point */
+extern int main(void);
+
+/**
+ * @brief C-level reset handler called from startup assembly.
+ * @ingroup BSP_System
+ *
+ * This function:
+ * - Copies the .data section from flash to RAM.
+ * - Zeros the .bss section in RAM.
+ * - Calls system_init() to configure clocks and peripherals.
+ * - Calls main() to start the application.
+ * - Enters an infinite loop if main() returns (to avoid undefined behavior).
+ *
+ * @note This function is typically invoked by the assembly Reset_Handler
+ *       after minimal hardware setup (e.g. stack pointer initialization).
+ */
+void Reset_Handler_C(void)
+{
+    size_t data_size;
+    size_t bss_size;
+
+    /* Initialize .data section: copy from flash to RAM */
+    data_size = (size_t)(&end_of_data - &start_of_data) * sizeof(uint32_t);
+    memcpy(&start_of_data, &start_of_data_in_flash, data_size);
+
+    /* Initialize .bss section: zero all uninitialized data */
+    bss_size = (size_t)(&end_of_bss - &start_of_bss) * sizeof(uint32_t);
+    memset(&start_of_bss, 0, bss_size);
+
+    /* Initialize system clocks and peripherals */
+    system_init();
+
+    /* Jump to user application */
+    main();
+
+    /* If main() returns, loop forever to avoid undefined behavior */
+    for (;;)
+    {
+        /* Intentionally empty */
+    }
+}

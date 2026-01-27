@@ -1,0 +1,61 @@
+===== FACTS MIRROR =====
+(no numeric facts required for assembly startup code)
+===== END FACTS MIRROR =====
+
+===== FILE: start.s =====
+;------------------------------------------------------------------------------
+; start.s
+;
+; Minimal startup assembly for TI RM46 (Cortex-R4) using TI ARM CGT assembler.
+;
+; This file defines:
+;   - An interrupt vector table section (.intvecs) with initial SP and Reset_Handler.
+;   - A Reset_Handler that sets the stack pointer and jumps to Reset_Handler_C.
+;------------------------------------------------------------------------------
+
+;------------------------------------------------------------------------------
+; Vector Table Section
+;------------------------------------------------------------------------------
+    .sect   ".intvecs"
+    .align  4
+
+    .long   end_of_stack      ; 0x00: initial stack pointer
+    .long   Reset_Handler     ; 0x04: reset vector
+    .long   Reset_Handler     ; 0x08: undefined instruction
+    .long   Reset_Handler     ; 0x0C: supervisor call (SVC)
+    .long   Reset_Handler     ; 0x10: prefetch abort
+    .long   Reset_Handler     ; 0x14: data abort
+    .long   0                 ; 0x18: reserved
+    .long   Reset_Handler     ; 0x1C: IRQ
+    .long   Reset_Handler     ; 0x20: FIQ
+
+;------------------------------------------------------------------------------
+; Code Section
+;------------------------------------------------------------------------------
+    .sect   ".text"
+    .align  4
+
+    .global  Reset_Handler
+    .ref     Reset_Handler_C
+    .ref     end_of_stack
+
+;------------------------------------------------------------------------------
+; Reset_Handler
+;
+; Entry point after reset. Loads the stack pointer from the linker-defined
+; symbol end_of_stack, then branches to the C entry function Reset_Handler_C.
+; If Reset_Handler_C returns, loops forever.
+;------------------------------------------------------------------------------
+Reset_Handler:
+    LDR   SP, stack_addr
+    BL    Reset_Handler_C
+
+Reset_Loop:
+    B     Reset_Loop
+
+stack_addr:
+    .long end_of_stack
+
+;------------------------------------------------------------------------------
+; End of start.s
+;------------------------------------------------------------------------------

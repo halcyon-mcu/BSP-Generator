@@ -1,0 +1,53 @@
+;******************************************************************************
+; start.s
+;
+; Minimal startup code for TI RM46 (Cortex-R4) using TI ARM CGT assembler.
+;
+; Defines the interrupt vector table (.intvecs) and Reset_Handler (.text).
+; Reset_Handler loads the stack pointer from the linker symbol end_of_stack,
+; then branches to the C function Reset_Handler_C.
+;******************************************************************************
+
+;------------------------------------------------------------------------------
+; Interrupt Vector Table
+;------------------------------------------------------------------------------
+    .sect   ".intvecs"
+    .align  4
+
+    .long   end_of_stack      ; 0x00: Initial stack pointer (from linker)
+    .long   Reset_Handler     ; 0x04: Reset vector
+    .long   Reset_Handler     ; 0x08: Undefined instruction
+    .long   Reset_Handler     ; 0x0C: Supervisor call (SVC)
+    .long   Reset_Handler     ; 0x10: Prefetch abort
+    .long   Reset_Handler     ; 0x14: Data abort
+    .long   0                 ; 0x18: Reserved
+    .long   Reset_Handler     ; 0x1C: IRQ
+    .long   Reset_Handler     ; 0x20: FIQ
+
+;------------------------------------------------------------------------------
+; Reset Handler
+;------------------------------------------------------------------------------
+    .sect   ".text"
+    .align  4
+
+    .global Reset_Handler
+    .ref    Reset_Handler_C
+    .ref    end_of_stack
+
+Reset_Handler:
+    ; Load stack pointer from linker-defined symbol
+    LDR   SP, stack_addr
+
+    ; Branch to C entry point
+    BL    Reset_Handler_C
+
+    ; If Reset_Handler_C returns, loop forever
+Reset_Loop:
+    B     Reset_Loop
+
+stack_addr:
+    .long end_of_stack
+
+;******************************************************************************
+; End of start.s
+;******************************************************************************

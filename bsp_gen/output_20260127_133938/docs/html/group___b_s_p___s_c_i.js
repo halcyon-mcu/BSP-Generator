@@ -1,0 +1,43 @@
+var group___b_s_p___s_c_i =
+[
+    [ "sci_frame_config_t", "structsci__frame__config__t.html", [
+      [ "char_length", "structsci__frame__config__t.html#a97d71bdfcb6c278b0ef8a24012e93b4c", null ],
+      [ "parity_en", "structsci__frame__config__t.html#a19e5e8697cda170962213a36e4d66d5e", null ],
+      [ "parity_odd", "structsci__frame__config__t.html#a10408a21c709416a38fc62411884ee72", null ],
+      [ "stop_bits", "structsci__frame__config__t.html#a31f8f27ebeaf0049749dc57d73222141", null ]
+    ] ],
+    [ "sci_isr_t", "group___b_s_p___s_c_i.html#ga9449c4d3fa863ff79f668a6d12460914", null ],
+    [ "sci_error_t", "group___b_s_p___s_c_i.html#gaed583b68907b9edda1e75eed2d61d998", [
+      [ "SCI_ERR_NONE", "group___b_s_p___s_c_i.html#ggaed583b68907b9edda1e75eed2d61d998a4dd4505bb0ad3391350c0624b7faddd1", null ],
+      [ "SCI_ERR_FRAMING", "group___b_s_p___s_c_i.html#ggaed583b68907b9edda1e75eed2d61d998a25f863e2b390911c2f596bd0d6c20786", null ],
+      [ "SCI_ERR_OVERRUN", "group___b_s_p___s_c_i.html#ggaed583b68907b9edda1e75eed2d61d998a6b4befb55073034b690d8f0fb54eca2a", null ],
+      [ "SCI_ERR_PARITY", "group___b_s_p___s_c_i.html#ggaed583b68907b9edda1e75eed2d61d998a551c0f612449db38ccbe60120b758f33", null ],
+      [ "SCI_ERR_TIMEOUT", "group___b_s_p___s_c_i.html#ggaed583b68907b9edda1e75eed2d61d998a5e4188a93fd96c7f8f0a155cb8e3be96", null ]
+    ] ],
+    [ "sci_configure_baud", "group___b_s_p___s_c_i.html#ga0279eb29526a4ff306bf809468476705", null ],
+    [ "sci_configure_frame", "group___b_s_p___s_c_i.html#ga832f9a02fbd739e9ad7e11f5c40523ff", null ],
+    [ "sci_disable_analog_loopback", "group___b_s_p___s_c_i.html#gaf7aaf8b84da0454faa4f316fdfcf817a", null ],
+    [ "sci_disable_irq_lvl0", "group___b_s_p___s_c_i.html#gaab82c44a95bbb46164f3a42e54bb687a", null ],
+    [ "sci_disable_irq_lvl1", "group___b_s_p___s_c_i.html#ga6d9d0aa14534b7af3a901398d0c4d73d", null ],
+    [ "sci_disable_loopback", "group___b_s_p___s_c_i.html#ga4fef954eb4cf884f9dd6b9aec50634b1", null ],
+    [ "sci_disable_rx_interrupt", "group___b_s_p___s_c_i.html#gad3b5c75d2e827ffbcdc0e1fc649f9f95", null ],
+    [ "sci_disable_tx_interrupt", "group___b_s_p___s_c_i.html#gadb06c76984aaf3564ce41857c16e3110", null ],
+    [ "sci_enable_analog_loopback", "group___b_s_p___s_c_i.html#gabeee260bce59217966dd35aeb630673d", null ],
+    [ "sci_enable_irq_lvl0", "group___b_s_p___s_c_i.html#ga65e294ed7f9937d8ada536514885cbcf", null ],
+    [ "sci_enable_irq_lvl1", "group___b_s_p___s_c_i.html#gac25aea83e63f97f4e14ca49385d5be56", null ],
+    [ "sci_enable_loopback", "group___b_s_p___s_c_i.html#ga0702e205c1f7d34fefdad89faa30d5af", null ],
+    [ "sci_enable_rx_interrupt_lvl0", "group___b_s_p___s_c_i.html#ga4ef7eb2b83a8424418485399c3589994", null ],
+    [ "sci_enable_rx_interrupt_lvl1", "group___b_s_p___s_c_i.html#ga04cca332d1ec7acd4d1204fa680d7b73", null ],
+    [ "sci_enable_tx_interrupt_lvl0", "group___b_s_p___s_c_i.html#ga322630083e90f58cab9be7a851741fb3", null ],
+    [ "sci_enable_tx_interrupt_lvl1", "group___b_s_p___s_c_i.html#ga69d87f2e9d7cea4072a0c377c5167aa4", null ],
+    [ "sci_get_and_clear_errors", "group___b_s_p___s_c_i.html#gad12f76816f4061e0f6a5a555e3368ca7", null ],
+    [ "sci_init", "group___b_s_p___s_c_i.html#gabb34553ebf2d296b6d14cad6ac810351", null ],
+    [ "sci_is_rx_ready", "group___b_s_p___s_c_i.html#gac07ff573e8e78ec722a0b6819aca540c", null ],
+    [ "sci_is_tx_empty", "group___b_s_p___s_c_i.html#gaf7dd6702c0a2f5f94a94e022c213c303", null ],
+    [ "sci_is_tx_ready", "group___b_s_p___s_c_i.html#ga47a9e75c226c62c6096419f4fed737b0", null ],
+    [ "sci_receive_byte", "group___b_s_p___s_c_i.html#gae7177c270dc38e0ea2ec9d687e9bbf82", null ],
+    [ "sci_register_isr_lvl0", "group___b_s_p___s_c_i.html#gaefcffc4d0eb9136f0f60d53ac06eb133", null ],
+    [ "sci_register_isr_lvl1", "group___b_s_p___s_c_i.html#gab7d0fbe9f284d7cd95ef957a9853a914", null ],
+    [ "sci_self_test", "group___b_s_p___s_c_i.html#ga1a1bbfe5fd1de00fac65623abf78316e", null ],
+    [ "sci_transmit_byte", "group___b_s_p___s_c_i.html#gabe2d13bcf7150b8df498c77b9a070d1c", null ]
+];

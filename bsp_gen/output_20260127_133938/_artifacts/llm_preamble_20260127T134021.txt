@@ -1,0 +1,6 @@
+===== FACTS MIRROR =====
+FLASH.origin = 0x00000000
+FLASH.length = 0x00150000
+RAM.origin = 0x08000000
+RAM.length = 0x00030000
+===== END FACTS MIRROR =====

@@ -1,0 +1,3 @@
+===== FACTS MIRROR =====
+(no numeric facts required for entry.c)
+===== END FACTS MIRROR =====

@@ -4,11 +4,11 @@ import inspect
 import os
 from pathlib import Path
 
-from config import YAMLS_DIR, TARGET_FILES, FACTS_CANON, PATTERN_SNIPS
+from .config import YAMLS_DIR, TARGET_FILES, FACTS_CANON, PATTERN_SNIPS
 
-from modules.file_io import split_and_write_files, write_makefile, write_manifest, write_doxyfile, run_doxygen
-from modules.utils import _read, extract_text_from_bedrock_response, _now_tag
-from modules.prompt import (
+from .modules.file_io import split_and_write_files, write_makefile, write_manifest, write_doxyfile, run_doxygen
+from .modules.utils import _read, extract_text_from_bedrock_response, _now_tag
+from .modules.prompt import (
     build_clock_prompt,
     invoke_model,
     Model,
@@ -21,9 +21,9 @@ from modules.prompt import (
     build_vim_prompt,             # VIM driver
     _progress,                    # global progress tracker
 )
-from modules.user import prompt_user_for_peripherals
+from .modules.user import prompt_user_for_peripherals
 
-from modules.yaml_utils import (
+from .modules.yaml_utils import (
     dump_yaml_str,
     load_bus_yaml,
     load_soc_yaml,
@@ -259,7 +259,7 @@ async def main():
     )
     parser.add_argument(
         "--yamlpath",
-        default="yaml_in",
+        default=str(YAMLS_DIR),
         help="Origin directory for YAML files used in code generation",
     )
     parser.add_argument(

@@ -1,0 +1,3 @@
+===== FACTS MIRROR =====
+(no numeric facts required for assembly startup code)
+===== END FACTS MIRROR =====

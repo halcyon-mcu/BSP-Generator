@@ -1,7 +1,10 @@
 from pathlib import Path
 
+# Get the directory where this config file is located
+APP_DIR = Path(__file__).parent
+
 # ---------------- Config ----------------
-YAMLS_DIR = Path("app/yamls_in")
+YAMLS_DIR = APP_DIR / "yaml_in"
 TARGET_FILES = [
     "drivers/gpio.h",
     "drivers/gpio.c",

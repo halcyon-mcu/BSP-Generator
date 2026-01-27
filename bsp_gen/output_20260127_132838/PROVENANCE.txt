@@ -1,0 +1,48 @@
+SCI Driver Provenance
+======================
+
+This driver was generated from the following YAML schema fragments:
+
+soc.yaml (SCI peripheral entry):
+- name: SCI
+- type: sci
+- instance: 1
+- regs_ref: SCI
+- irq_ref: [SCI_LVL0, SCI_LVL1, LIN_LVL0, LIN_LVL1]
+- clock_ref: VCLK
+- x-ext.init: (7 register operations)
+- x-ext.interrupts: (vector offsets and reserved ranges)
+
+regs.yaml (SCI register block):
+- base_address: 0xFFF7E400
+- 42 registers with offsets, access modes, reset values, and field descriptions
+
+irq.yaml (interrupt IDs):
+- SCI_LVL0: id=64
+- SCI_LVL1: id=74
+- LIN_LVL0: id=13
+- LIN_LVL1: id=27
+
+All numeric constants (base address, offsets, bit positions, masks, IRQ IDs) are sourced
+exclusively from the YAML fragments above and mirrored in the FACTS MIRROR block.
+
+No constants were invented or derived from external sources.
+
+Register accesses are annotated with provenance comments of the form:
+  // [prov] regs.yaml:<PERIPH>.<REGISTER>
+
+Clock service API:
+- clock_enable(clock_ref_t ref)
+- clock_get_hz(clock_ref_t ref)
+
+VIM service API:
+- vim_register_isr(uint32_t channel_id, void (*isr)(void))
+- vim_enable_channel(uint32_t channel_id)
+- vim_disable_channel(uint32_t channel_id)
+
+Toolchain:
+- TI ARM CGT (armcl) for Cortex-R4
+- C11 standard with ISO C90-compatible style
+- No vendor-specific headers or types in public headers
+
+Generated on: 2025-01-17

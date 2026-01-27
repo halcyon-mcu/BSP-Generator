@@ -1,0 +1,3 @@
+===== FACTS MIRROR =====
+(no numeric facts required for minimal start.s; all symbols are linker-defined or code labels)
+===== END FACTS MIRROR =====

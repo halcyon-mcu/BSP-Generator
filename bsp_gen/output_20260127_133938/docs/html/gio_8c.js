@@ -1,0 +1,27 @@
+var gio_8c =
+[
+    [ "gio_clear_bits", "group___b_s_p___g_i_o.html#gafe390924ae1b275a16fb868eb0217af6", null ],
+    [ "gio_clear_int_flags", "group___b_s_p___g_i_o.html#ga52275cb9577dfa6ff6909fe0aa08542c", null ],
+    [ "gio_disable_int", "group___b_s_p___g_i_o.html#gace7dec285988f2e6be87ab6a4cc873b5", null ],
+    [ "gio_disable_vim_channel", "group___b_s_p___g_i_o.html#gafd43a91f797f00e06ad72e25df873f29", null ],
+    [ "gio_enable_int", "group___b_s_p___g_i_o.html#gad041b6d4bfd016ec65078f536f3aaa2d", null ],
+    [ "gio_enable_vim_channel", "group___b_s_p___g_i_o.html#gab0399be14d81cbb4eb6977fd2069d8c4", null ],
+    [ "gio_init", "group___b_s_p___g_i_o.html#ga85de419f80a8b21aae86752289d3f0c8", null ],
+    [ "gio_read_emu1", "group___b_s_p___g_i_o.html#gab5611ffc24f84b4ade5e435d1cdfa9e9", null ],
+    [ "gio_read_emu2", "group___b_s_p___g_i_o.html#ga608ba1418ed32d38032c6204e4667ccc", null ],
+    [ "gio_read_int_flags", "group___b_s_p___g_i_o.html#gaf5c3aa56c603417b2bd2d9b2723face5", null ],
+    [ "gio_read_offset1", "group___b_s_p___g_i_o.html#gaa6ec73a9dc40097fcb83a5b413a02e5f", null ],
+    [ "gio_read_offset2", "group___b_s_p___g_i_o.html#gada80cc82b6f79c4bb567b84cc56ddb78", null ],
+    [ "gio_read_port", "group___b_s_p___g_i_o.html#ga3fb8426f66ea15c951a7db6bc07e3197", null ],
+    [ "gio_register_isr", "group___b_s_p___g_i_o.html#gacc2977d1c53d6252132c6ca1bceb9cbd", null ],
+    [ "gio_set_bits", "group___b_s_p___g_i_o.html#gacf5182641de046c06284927ef044c9c2", null ],
+    [ "gio_set_direction", "group___b_s_p___g_i_o.html#ga7f2afbcb5e588bddce779dd191442b69", null ],
+    [ "gio_set_int_detect", "group___b_s_p___g_i_o.html#gaa73cbee9d94f15155c0da7d050d058e2", null ],
+    [ "gio_set_int_polarity", "group___b_s_p___g_i_o.html#ga065cbf7431e18aa7aa698390bd5ad59c", null ],
+    [ "gio_set_int_priority", "group___b_s_p___g_i_o.html#gaca910ee01ba279747c454d4aacad69da", null ],
+    [ "gio_set_open_drain", "group___b_s_p___g_i_o.html#gaa4530cb7a6e4c428e39f4af5ea16b036", null ],
+    [ "gio_set_pull_enable", "group___b_s_p___g_i_o.html#gaad5b911957838d0fdf0a7b456eb2d249", null ],
+    [ "gio_set_pull_select", "group___b_s_p___g_i_o.html#ga19f7295f11663aac110cbedafbfc8f82", null ],
+    [ "gio_toggle_bits", "group___b_s_p___g_i_o.html#ga5d96a2aa1dee17ebd1090eb17eb97cf5", null ],
+    [ "gio_write_port", "group___b_s_p___g_i_o.html#gab08e71163c74e9e242c16cb1dc6ed380", null ]
+];

@@ -1,0 +1,32 @@
+SCI Driver Changelog
+====================
+
+Version 1.0.0 (Initial Release)
+-------------------------------
+- Initial implementation of SCI/LIN driver for TI RM46.
+- Supports SCI mode with configurable frame format, baud rate, parity, and stop bits.
+- Provides blocking transmit and receive APIs with bounded timeout.
+- Includes interrupt support for level 0 and level 1 via VIM.
+- Implements internal loopback mode and IODFT analog loopback for testing.
+- Provides sci_loopback_test() function for automated self-test.
+- Example code for polling, interrupt-driven, and loopback modes.
+- Comprehensive Doxygen documentation for all public APIs.
+- Fully compliant with C11 / ISO C90 coding rules.
+- Uses only values from FACTS MIRROR; no invented constants.
+- All register accesses include provenance comments.
+- Clock service integration for VCLK enable and baud rate calculation.
+- VIM integration for interrupt registration and enable/disable.
+
+Known Limitations:
+- LIN mode is not fully tested; LIN-specific features are exposed but not documented.
+- Fractional baud rate divider (M, U fields) not implemented; uses integer prescaler only.
+- DMA support not implemented (SCISETINT/SCICLEARINT DMA bits are exposed but not used).
+- Multi-buffer mode (MBUF_MODE) not tested.
+
+Future Enhancements:
+- Add LIN mode example and documentation.
+- Implement fractional baud rate calculation for higher precision.
+- Add DMA support for high-throughput applications.
+- Add multi-buffer mode support for improved throughput.
+- Add support for wakeup and sleep modes.
+- Add support for timeout and wakeup interrupts.

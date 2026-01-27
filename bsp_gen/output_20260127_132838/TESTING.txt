@@ -1,0 +1,58 @@
+SCI Driver Testing Notes
+=========================
+
+LOOPBACK SELF-TEST
+------------------
+The sci_loopback_test() function performs a simple self-test by:
+1. Enabling internal loopback mode (LOOP_BACK bit in SCIGCR1).
+2. Transmitting a 4-byte test pattern (0x55, 0xAA, 0x0F, 0xF0).
+3. Receiving the same pattern back via the loopback path.
+4. Verifying that all bytes match.
+5. Restoring the original loopback state.
+
+If any step fails (timeout or data mismatch), the function returns -1.
+
+IODFT ANALOG LOOPBACK
+---------------------
+The sci_enable_iodft_loopback() function enables the LPB_ENA bit in IODFTCTRL,
+which routes the TX signal through the physical pins back to RX. This is useful
+for testing the analog driver and receiver paths, but requires external pin
+connections or a suitable test fixture.
+
+POLLING MODE
+------------
+The sci_write() and sci_read() functions use bounded timeouts (SCI_TIMEOUT = 100000 iterations)
+to prevent infinite loops. In a real system, adjust this value based on the CPU clock and
+expected baud rate.
+
+INTERRUPT MODE
+--------------
+The driver supports two interrupt levels (level 0 and level 1) via the VIM.
+Use sci_register_isr_lvl0() and sci_register_isr_lvl1() to install handlers,
+then enable the desired interrupts using sci_enable_interrupt() and sci_enable_irq_lvl0()
+or sci_enable_irq_lvl1().
+
+The SCIINTVECT0 and SCIINTVECT1 registers provide vector offsets for ISR identification
+(see x-ext.interrupts.vect_offsets in soc.yaml). The driver reads these in the ISR if needed.
+
+For production code, replace the simple echo example with application-specific logic.
+
+ERROR HANDLING
+--------------
+The driver exposes sci_get_flags() and sci_clear_flags() to read and clear error flags
+(framing error, overrun error, parity error, etc.). Check SCIFLR after each operation
+and clear error flags as appropriate.
+
+BAUD RATE CALCULATION
+---------------------
+The sci_set_baudrate() function computes the prescaler P using:
+    P = (VCLK_Hz / (baudrate * 16)) - 1
+
+For fractional baud rates, adjust the M and U fields in the BRS register. The current
+implementation uses M=0 and U=0 for simplicity.
+
+LIN MODE
+--------
+The driver provides access to LIN-specific registers (LINCOMPARE, LINMASK, LINID, etc.).
+To use LIN mode, set the LIN_MODE bit in SCIGCR1 and configure the LIN-specific parameters
+as required by the LIN specification. Refer to the RM46 Technical Reference Manual for details.

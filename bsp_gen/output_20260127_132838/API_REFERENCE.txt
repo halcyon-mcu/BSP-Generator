@@ -1,0 +1,152 @@
+SCI Driver API Reference
+=========================
+
+INITIALIZATION
+--------------
+void sci_init(void)
+  - Enables VCLK clock via clock_enable(CLOCKREF_VCLK).
+  - Resets the SCI module (SCIGCR0.RESET).
+  - Configures pin functions (SCIPIO0).
+  - Brings the module out of reset (SCIGCR1.SWnRST).
+  - Must be called first before any other SCI functions.
+
+CONFIGURATION
+-------------
+void sci_configure_format(uint32_t char_length, sci_parity_t parity, sci_stop_bits_t stop_bits)
+  - Sets character length (1-8 bits), parity (none/odd/even), and stop bits (1 or 2).
+  - Writes to SCIGCR1 and SCIFORMAT registers.
+
+void sci_set_baudrate(uint32_t baudrate)
+  - Computes prescaler P = (VCLK_Hz / (baudrate * 16)) - 1.
+  - Writes to BRS register.
+  - Requires clock service to retrieve VCLK frequency.
+
+ENABLE / DISABLE
+----------------
+void sci_enable_tx(void)
+void sci_disable_tx(void)
+void sci_enable_rx(void)
+void sci_disable_rx(void)
+  - Enable or disable transmitter and receiver (SCIGCR1.TXENA, SCIGCR1.RXENA).
+
+DATA TRANSFER (BLOCKING)
+-------------------------
+int sci_write_byte(uint8_t data)
+  - Transmits a single byte (blocking with timeout).
+  - Returns 0 on success, -1 on timeout.
+  - Waits for TXRDY flag, writes to SCITD, waits for TX_EMPTY.
+
+int sci_read_byte(uint8_t *data)
+  - Receives a single byte (blocking with timeout).
+  - Returns 0 on success, -1 on timeout or null pointer.
+  - Waits for RXRDY flag, reads from SCIRD.
+
+int sci_write(const uint8_t *buf, uint32_t len)
+  - Transmits multiple bytes (blocking).
+  - Returns number of bytes successfully transmitted (0..len), or -1 on error.
+
+int sci_read(uint8_t *buf, uint32_t len)
+  - Receives multiple bytes (blocking).
+  - Returns number of bytes successfully received (0..len), or -1 on error.
+
+STATUS
+------
+int sci_tx_ready(void)
+  - Returns 1 if TXRDY is set, 0 otherwise.
+
+int sci_rx_ready(void)
+  - Returns 1 if RXRDY is set, 0 otherwise.
+
+int sci_tx_empty(void)
+  - Returns 1 if TX_EMPTY is set, 0 otherwise.
+
+int sci_is_busy(void)
+  - Returns 1 if BUSY flag is set, 0 otherwise.
+
+uint32_t sci_get_flags(void)
+  - Returns the current value of SCIFLR register.
+
+void sci_clear_flags(uint32_t flags)
+  - Clears specified error flags in SCIFLR (write 1 to clear).
+
+LOOPBACK / TEST
+---------------
+void sci_enable_loopback(void)
+void sci_disable_loopback(void)
+  - Enable/disable internal digital loopback (SCIGCR1.LOOP_BACK).
+
+void sci_enable_iodft_loopback(void)
+void sci_disable_iodft_loopback(void)
+  - Enable/disable IODFT analog loopback (IODFTCTRL.LPB_ENA).
+
+int sci_loopback_test(void)
+  - Performs automated loopback self-test.
+  - Transmits 4-byte pattern, receives it back, verifies.
+  - Returns 0 on success, -1 on failure (timeout or mismatch).
+
+INTERRUPT SUPPORT
+-----------------
+void sci_enable_interrupt(uint32_t int_flag)
+void sci_disable_interrupt(uint32_t int_flag)
+  - Enable/disable specific interrupt (writes to SCISETINT/SCICLEARINT).
+  - int_flag is the bit position (e.g. 9 for RX_INT, 8 for TX_INT).
+
+void sci_set_interrupt_level(uint32_t int_flag, uint32_t level)
+  - Set interrupt to level 0 or level 1 (writes to SCISETINTLVL/SCICLEARINTLVL).
+  - level = 0 for level 0, 1 for level 1.
+
+int sci_register_isr_lvl0(sci_isr_t isr)
+int sci_register_isr_lvl1(sci_isr_t isr)
+  - Registers ISR callback for SCI level 0 or level 1 interrupt.
+  - Calls vim_register_isr() with VIM channel 64 (lvl0) or 74 (lvl1).
+  - Returns 0 on success, non-zero on failure.
+
+int sci_enable_irq_lvl0(void)
+int sci_enable_irq_lvl1(void)
+int sci_disable_irq_lvl0(void)
+int sci_disable_irq_lvl1(void)
+  - Enable/disable SCI interrupt channels in VIM.
+  - Calls vim_enable_channel() or vim_disable_channel().
+  - Returns 0 on success, non-zero on failure.
+
+TYPES
+-----
+typedef void (*sci_isr_t)(void)
+  - ISR callback type.
+
+typedef enum sci_parity_t
+  - SCI_PARITY_NONE = 0
+  - SCI_PARITY_ODD  = 1
+  - SCI_PARITY_EVEN = 2
+
+typedef enum sci_stop_bits_t
+  - SCI_STOP_BITS_1 = 0
+  - SCI_STOP_BITS_2 = 1
+
+CONSTANTS
+---------
+SCI_BASE = 0xFFF7E400
+SCI_TIMEOUT = 100000 (polling timeout iterations)
+
+IRQ_SCI_LVL0_ID = 64 (VIM channel for SCI level 0)
+IRQ_SCI_LVL1_ID = 74 (VIM channel for SCI level 1)
+IRQ_LIN_LVL0_ID = 13 (VIM channel for LIN level 0)
+IRQ_LIN_LVL1_ID = 27 (VIM channel for LIN level 1)
+
+TYPICAL USAGE SEQUENCE
+----------------------
+1. sci_init()
+2. sci_configure_format(8, SCI_PARITY_NONE, SCI_STOP_BITS_1)
+3. sci_set_baudrate(115200)
+4. sci_enable_tx()
+5. sci_enable_rx()
+6. sci_write_byte('A') / sci_read_byte(&ch)
+
+For interrupt-driven:
+7. sci_register_isr_lvl0(my_isr)
+8. sci_set_interrupt_level(9, 0) // RX_INT to level 0
+9. sci_enable_interrupt(9)
+10. sci_enable_irq_lvl0()
+
+For loopback test:
+7. sci_loopback_test()

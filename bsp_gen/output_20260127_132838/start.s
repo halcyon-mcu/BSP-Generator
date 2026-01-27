@@ -1,0 +1,65 @@
+;******************************************************************************
+; start.s
+;
+; Minimal startup code for TI Hercules RM46 (Cortex-R4) using TI ARM CGT.
+;
+; This file defines:
+;   - The .intvecs section containing the ARM exception vector table.
+;   - The Reset_Handler entry point that initializes SP and branches to C.
+;
+; Build target: TI ARM CGT (armcl) in Code Composer Studio (CCS).
+;******************************************************************************
+
+;------------------------------------------------------------------------------
+; External references
+;------------------------------------------------------------------------------
+    .ref     Reset_Handler_C    ; C entry point (defined in entry.c)
+    .ref     end_of_stack        ; Linker symbol for top of stack
+
+;------------------------------------------------------------------------------
+; Global symbols
+;------------------------------------------------------------------------------
+    .global  Reset_Handler
+
+;==============================================================================
+; Exception Vector Table
+;==============================================================================
+    .sect   ".intvecs"
+    .align  4
+
+    .long   end_of_stack        ; 0x00: Initial stack pointer value
+    .long   Reset_Handler       ; 0x04: Reset vector
+    .long   Reset_Handler       ; 0x08: Undefined instruction
+    .long   Reset_Handler       ; 0x0C: Supervisor call (SVC)
+    .long   Reset_Handler       ; 0x10: Prefetch abort
+    .long   Reset_Handler       ; 0x14: Data abort
+    .long   0                   ; 0x18: Reserved
+    .long   Reset_Handler       ; 0x1C: IRQ
+    .long   Reset_Handler       ; 0x20: FIQ
+
+;==============================================================================
+; Reset Handler
+;==============================================================================
+    .sect   ".text"
+    .align  4
+
+Reset_Handler:
+    ; Load the stack pointer from the linker-provided symbol end_of_stack.
+    LDR   SP, stack_addr
+
+    ; Branch with link to the C entry point Reset_Handler_C.
+    BL    Reset_Handler_C
+
+    ; If Reset_Handler_C returns, loop forever.
+Reset_Loop:
+    B     Reset_Loop
+
+;------------------------------------------------------------------------------
+; Literal pool for stack address
+;------------------------------------------------------------------------------
+stack_addr:
+    .long end_of_stack
+
+;******************************************************************************
+; End of start.s
+;******************************************************************************

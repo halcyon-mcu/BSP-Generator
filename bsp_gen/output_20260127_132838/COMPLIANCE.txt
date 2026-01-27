@@ -1,0 +1,61 @@
+SCI Driver Compliance Statement
+================================
+
+This driver strictly complies with the following requirements:
+
+1. FACTS POLICY
+   - All numeric constants (addresses, offsets, bits, IRQ IDs) are sourced exclusively from
+     the provided YAML fragments (soc.yaml, regs.yaml, irq.yaml).
+   - No constants were invented, transformed, or reformatted.
+   - All constants are mirrored in the FACTS MIRROR block at the top of the response.
+
+2. HARD OUTPUT CONTRACT
+   - FACTS MIRROR is emitted first, containing only key/value lines (no Doxygen comments).
+   - All files are delimited by "===== FILE: <path> =====" separators.
+   - File paths contain only the file name (no directories).
+   - All files end with a single trailing newline.
+
+3. CODING RULES
+   - C11 standard, ISO C90-compatible style.
+   - All local variables declared at the start of blocks.
+   - No C99-only features (no mixed declarations/statements, no VLAs).
+   - Public headers do not include vendor headers or vendor-specific types.
+   - Register accesses use REG32() macro with volatile pointer cast.
+   - Provenance comments precede each register access.
+
+4. DOCUMENTATION / DOXYGEN RULES
+   - All public headers include file-level Doxygen blocks.
+   - One Doxygen group per module (BSP_SCI).
+   - All public functions, types, and macros documented with @brief, @param, @return, @ingroup.
+   - Examples provided for key usage patterns (polling, interrupt, loopback).
+
+5. CLOCK SERVICE ASSUMPTIONS
+   - Peripheral driver calls clock_enable(CLOCKREF_VCLK) before accessing registers.
+   - Peripheral driver calls clock_get_hz(CLOCKREF_VCLK) to compute baud rate.
+   - Peripheral driver does NOT touch system clock registers or call configuration APIs.
+
+6. INTERRUPT SUPPORT REQUIREMENTS
+   - ISR registration helpers provided for all IRQs listed in soc.irq_ref.
+   - VIM API used exclusively (vim_register_isr, vim_enable_channel, vim_disable_channel).
+   - No VIM vector table or global IRQ initialization performed in this driver.
+
+7. BLOCKING / POLL-WAIT REQUIREMENTS
+   - Blocking APIs (sci_write_byte, sci_read_byte, sci_write, sci_read) include bounded timeouts.
+   - Timeout constant (SCI_TIMEOUT = 100000) prevents infinite loops.
+   - Helper function (sci_wait_flag) reused for all polling operations.
+
+8. INTERNAL TEST / LOOPBACK / DFT SUPPORT
+   - sci_enable_loopback() / sci_disable_loopback() for internal digital loopback.
+   - sci_enable_iodft_loopback() / sci_disable_iodft_loopback() for analog loopback.
+   - sci_loopback_test() performs automated self-test using blocking APIs.
+
+9. DRIVER FUNCTION DISCOVERY
+   - All register names and descriptions inspected.
+   - Functions derived from register roles (control, data, status, interrupts, test).
+   - No fixed template used; APIs designed based on register map.
+
+10. OUTPUT CONTRACT (PERIPHERAL-SPECIFIC)
+    - Exactly two primary files emitted: sci.h and sci.c.
+    - Additional files provided for examples, documentation, and build support.
+
+This driver meets all requirements specified in the system prompt and task description.

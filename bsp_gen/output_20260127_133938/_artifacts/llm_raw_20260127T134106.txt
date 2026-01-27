@@ -1,0 +1,395 @@
+===== FACTS MIRROR =====
+VIM_BASE = 0xFFFFFE00
+VIM_PARITY_BASE = 0xFFFFFD00
+VIM_IRQINDEX_OFFSET = 0x0000
+VIM_FIQINDEX_OFFSET = 0x0004
+VIM_FIRQPR0_OFFSET = 0x0010
+VIM_FIRQPR1_OFFSET = 0x0014
+VIM_FIRQPR2_OFFSET = 0x0018
+VIM_FIRQPR3_OFFSET = 0x001C
+VIM_INTREQ0_OFFSET = 0x0020
+VIM_INTREQ1_OFFSET = 0x0024
+VIM_INTREQ2_OFFSET = 0x0028
+VIM_INTREQ3_OFFSET = 0x002C
+VIM_REQENASET0_OFFSET = 0x0030
+VIM_REQENASET1_OFFSET = 0x0034
+VIM_REQENASET2_OFFSET = 0x0038
+VIM_REQENASET3_OFFSET = 0x003C
+VIM_REQENACLR0_OFFSET = 0x0040
+VIM_REQENACLR1_OFFSET = 0x0044
+VIM_REQENACLR2_OFFSET = 0x0048
+VIM_REQENACLR3_OFFSET = 0x004C
+VIM_WAKENASET0_OFFSET = 0x0050
+VIM_WAKENASET1_OFFSET = 0x0054
+VIM_WAKENASET2_OFFSET = 0x0058
+VIM_WAKENASET3_OFFSET = 0x005C
+VIM_WAKENACLR0_OFFSET = 0x0060
+VIM_WAKENACLR1_OFFSET = 0x0064
+VIM_WAKENACLR2_OFFSET = 0x0068
+VIM_WAKENACLR3_OFFSET = 0x006C
+VIM_IRQVECREG_OFFSET = 0x0070
+VIM_FIQVECREG_OFFSET = 0x0074
+VIM_CAPEVT_OFFSET = 0x0078
+VIM_CHANCTRL0_OFFSET = 0x0080
+VIM_PARITY_PARFLG_OFFSET = 0x00EC
+VIM_PARITY_PARCTL_OFFSET = 0x00F0
+VIM_PARITY_ADDERR_OFFSET = 0x00F4
+VIM_PARITY_FBPARERR_OFFSET = 0x00F8
+VIM_VECTOR_TABLE_BASE = 0xFFF82000
+VIM_VECTOR_TABLE_ENTRIES = 128
+VIM_VECTOR_TABLE_ENTRY_SIZE = 4
+VIM_VECTOR_TABLE_PHANTOM_ENTRY = 0
+VIM_RESERVED_CHANNEL_127 = 127
+VIM_PARITY_ENABLE_VALUE = 0x00000001
+VIM_MAX_VALID_CHANNEL = 126
+===== END FACTS MIRROR =====
+
+===== FILE: vim.h =====
+/**
+ * @file vim.h
+ * @brief Vectored Interrupt Manager (VIM) driver for TI RM46
+ */
+
+#ifndef VIM_H
+#define VIM_H
+
+#include <stdint.h>
+
+/**
+ * @defgroup BSP_VIM Vectored Interrupt Manager
+ * @brief VIM driver providing interrupt controller initialization and channel management.
+ *
+ * The VIM driver manages the TI RM46 Vectored Interrupt Manager, supporting:
+ * - Initialization of the VIM vector table in RAM for vectored mode
+ * - Registration of user ISR handlers for individual interrupt channels
+ * - Enabling and disabling of interrupt channels
+ * - Optional FIQ routing for selected channels
+ *
+ * The VIM vector table occupies 128 entries in RAM, with entry 0 being a phantom entry.
+ * Channel N corresponds to vector table entry (N + 1). Channel 127 is reserved and unusable.
+ * Valid user channels are 0..126.
+ *
+ * @{
+ */
+
+/**
+ * @brief Function pointer type for VIM interrupt service routines (ISRs).
+ *
+ * User ISRs must conform to this signature (void return, no parameters).
+ */
+typedef void (*vim_isr_t)(void);
+
+/**
+ * @brief Initialize the VIM for vectored interrupt operation.
+ *
+ * This function:
+ * - Enables VIM parity checking (if supported by hardware)
+ * - Initializes all vector table entries to a default handler
+ * - Does NOT enable any interrupt channels (all channels remain masked)
+ *
+ * @note Must be called once during system initialization, before registering or enabling any ISRs.
+ * @ingroup BSP_VIM
+ */
+void vim_init(void);
+
+/**
+ * @brief Register a user ISR for a specific interrupt channel.
+ *
+ * Stores the provided ISR function pointer into the VIM vector table entry for the given channel.
+ * The channel must be in the valid range (0..126) and must not be a reserved channel (e.g. 127).
+ *
+ * @param[in] channel_id  VIM interrupt channel number (0..126, excluding reserved channels)
+ * @param[in] isr         Function pointer to the user ISR (must be non-NULL)
+ * @return 0 on success, -1 if channel_id is invalid or isr is NULL
+ * @note This function does not enable the channel; call vim_enable_channel() to enable the interrupt.
+ * @ingroup BSP_VIM
+ */
+int vim_register_isr(uint32_t channel_id, vim_isr_t isr);
+
+/**
+ * @brief Enable an interrupt channel in the VIM.
+ *
+ * Sets the corresponding bit in the REQENASET register bank to unmask the channel.
+ *
+ * @param[in] channel_id  VIM interrupt channel number (0..126, excluding reserved channels)
+ * @return 0 on success, -1 if channel_id is invalid
+ * @warning Ensure the ISR is registered via vim_register_isr() before enabling the channel.
+ * @ingroup BSP_VIM
+ */
+int vim_enable_channel(uint32_t channel_id);
+
+/**
+ * @brief Disable an interrupt channel in the VIM.
+ *
+ * Sets the corresponding bit in the REQENACLR register bank to mask the channel.
+ *
+ * @param[in] channel_id  VIM interrupt channel number (0..126, excluding reserved channels)
+ * @return 0 on success, -1 if channel_id is invalid
+ * @ingroup BSP_VIM
+ */
+int vim_disable_channel(uint32_t channel_id);
+
+/**
+ * @brief Route an interrupt channel to FIQ or IRQ mode.
+ *
+ * Configures the FIRQPR register bank to select FIQ routing (if enable_fiq is non-zero)
+ * or IRQ routing (if enable_fiq is zero) for the given channel.
+ *
+ * @param[in] channel_id   VIM interrupt channel number (0..126, excluding reserved channels)
+ * @param[in] enable_fiq   Non-zero to route to FIQ, zero to route to IRQ
+ * @return 0 on success, -1 if channel_id is invalid
+ * @note By default all channels are routed to IRQ after vim_init().
+ * @ingroup BSP_VIM
+ */
+int vim_set_fiq(uint32_t channel_id, int enable_fiq);
+
+/** @} */ /* end of BSP_VIM */
+
+#endif /* VIM_H */
+===== FILE: vim.c =====
+/**
+ * @file vim.c
+ * @brief VIM driver implementation for TI RM46
+ */
+
+#include "vim.h"
+#include <stdint.h>
+
+/* ========================================================================
+ * VIM Register Access Macros
+ * ======================================================================== */
+
+/**
+ * @brief 32-bit register access macro.
+ */
+#define REG32(addr) (*(volatile uint32_t *)(addr))
+
+/* VIM base addresses */
+/* [prov] regs.yaml:VIM.base_address */
+#define VIM_BASE (0xFFFFFE00u)
+
+/* [prov] regs.yaml:VIM_PARITY.base_address */
+#define VIM_PARITY_BASE (0xFFFFFD00u)
+
+/* VIM register offsets */
+/* [prov] regs.yaml:VIM.FIRQPR0 */
+#define VIM_FIRQPR0_OFFSET (0x0010u)
+/* [prov] regs.yaml:VIM.FIRQPR1 */
+#define VIM_FIRQPR1_OFFSET (0x0014u)
+/* [prov] regs.yaml:VIM.FIRQPR2 */
+#define VIM_FIRQPR2_OFFSET (0x0018u)
+/* [prov] regs.yaml:VIM.FIRQPR3 */
+#define VIM_FIRQPR3_OFFSET (0x001Cu)
+
+/* [prov] regs.yaml:VIM.REQENASET0 */
+#define VIM_REQENASET0_OFFSET (0x0030u)
+/* [prov] regs.yaml:VIM.REQENASET1 */
+#define VIM_REQENASET1_OFFSET (0x0034u)
+/* [prov] regs.yaml:VIM.REQENASET2 */
+#define VIM_REQENASET2_OFFSET (0x0038u)
+/* [prov] regs.yaml:VIM.REQENASET3 */
+#define VIM_REQENASET3_OFFSET (0x003Cu)
+
+/* [prov] regs.yaml:VIM.REQENACLR0 */
+#define VIM_REQENACLR0_OFFSET (0x0040u)
+/* [prov] regs.yaml:VIM.REQENACLR1 */
+#define VIM_REQENACLR1_OFFSET (0x0044u)
+/* [prov] regs.yaml:VIM.REQENACLR2 */
+#define VIM_REQENACLR2_OFFSET (0x0048u)
+/* [prov] regs.yaml:VIM.REQENACLR3 */
+#define VIM_REQENACLR3_OFFSET (0x004Cu)
+
+/* VIM parity register offset */
+/* [prov] regs.yaml:VIM_PARITY.PARCTL */
+#define VIM_PARITY_PARCTL_OFFSET (0x00F0u)
+
+/* VIM vector table constants */
+/* [prov] soc.yaml:VIM.x-ext.vector_table.base_address */
+#define VIM_VECTOR_TABLE_BASE (0xFFF82000u)
+/* [prov] soc.yaml:VIM.x-ext.vector_table.entries */
+#define VIM_VECTOR_TABLE_ENTRIES (128u)
+/* [prov] soc.yaml:VIM.x-ext.vector_table.entry_size_bytes */
+#define VIM_VECTOR_TABLE_ENTRY_SIZE (4u)
+/* [prov] soc.yaml:VIM.x-ext.vector_table.phantom_entry */
+#define VIM_VECTOR_TABLE_PHANTOM_ENTRY (0u)
+/* [prov] soc.yaml:VIM.x-ext.vector_table.reserved_channels */
+#define VIM_RESERVED_CHANNEL_127 (127u)
+
+/* [prov] soc.yaml:VIM.x-ext.parity.enable_value */
+#define VIM_PARITY_ENABLE_VALUE (0x00000001u)
+
+/* Maximum valid channel */
+#define VIM_MAX_VALID_CHANNEL (126u)
+
+/* ========================================================================
+ * Static (private) functions
+ * ======================================================================== */
+
+/**
+ * @brief Default ISR handler for uninitialized interrupt vectors.
+ *
+ * This handler is installed in all vector table entries during vim_init().
+ * If an interrupt fires for a channel that has no user-registered ISR,
+ * this handler will be invoked. It simply loops indefinitely.
+ */
+static void vim_default_isr(void)
+{
+    while (1)
+    {
+        /* Spin forever on unexpected interrupt */
+    }
+}
+
+/**
+ * @brief Check if a channel ID is valid.
+ *
+ * A valid channel is in the range [0..126] and is not reserved (127).
+ *
+ * @param[in] channel_id  Channel ID to validate
+ * @return 1 if valid, 0 if invalid
+ */
+static int vim_is_channel_valid(uint32_t channel_id)
+{
+    if (channel_id > VIM_MAX_VALID_CHANNEL)
+    {
+        return 0;
+    }
+    if (channel_id == VIM_RESERVED_CHANNEL_127)
+    {
+        return 0;
+    }
+    return 1;
+}
+
+/* ========================================================================
+ * Public API Implementation
+ * ======================================================================== */
+
+void vim_init(void)
+{
+    uint32_t i;
+    volatile uint32_t *vector_table;
+
+    /* Enable VIM parity checking */
+    /* [prov] regs.yaml:VIM_PARITY.PARCTL */
+    REG32(VIM_PARITY_BASE + VIM_PARITY_PARCTL_OFFSET) = VIM_PARITY_ENABLE_VALUE;
+
+    /* Initialize all vector table entries to default handler */
+    /* [prov] soc.yaml:VIM.x-ext.vector_table (base/entries) */
+    vector_table = (volatile uint32_t *)VIM_VECTOR_TABLE_BASE;
+
+    for (i = 0u; i < VIM_VECTOR_TABLE_ENTRIES; i++)
+    {
+        vector_table[i] = (uint32_t)&vim_default_isr;
+    }
+
+    /* All channels remain disabled (REQENASET registers are zero at reset) */
+}
+
+int vim_register_isr(uint32_t channel_id, vim_isr_t isr)
+{
+    volatile uint32_t *vector_table;
+    uint32_t vector_index;
+
+    /* Validate inputs */
+    if (!vim_is_channel_valid(channel_id))
+    {
+        return -1;
+    }
+    if (isr == (vim_isr_t)0)
+    {
+        return -1;
+    }
+
+    /* Channel N uses vector table entry (N + 1) because entry 0 is phantom */
+    /* [prov] soc.yaml:VIM.x-ext.vector_table (base/entries) */
+    vector_table = (volatile uint32_t *)VIM_VECTOR_TABLE_BASE;
+    vector_index = channel_id + 1u;
+
+    vector_table[vector_index] = (uint32_t)isr;
+
+    return 0;
+}
+
+int vim_enable_channel(uint32_t channel_id)
+{
+    uint32_t reg_index;
+    uint32_t bit_pos;
+    volatile uint32_t *reqenaset_base;
+
+    /* Validate channel */
+    if (!vim_is_channel_valid(channel_id))
+    {
+        return -1;
+    }
+
+    /* Each REQENASET register covers 32 channels */
+    reg_index = channel_id / 32u;
+    bit_pos = channel_id % 32u;
+
+    /* [prov] regs.yaml:VIM.REQENASET0 */
+    reqenaset_base = (volatile uint32_t *)(VIM_BASE + VIM_REQENASET0_OFFSET);
+    reqenaset_base[reg_index] = (1u << bit_pos);
+
+    return 0;
+}
+
+int vim_disable_channel(uint32_t channel_id)
+{
+    uint32_t reg_index;
+    uint32_t bit_pos;
+    volatile uint32_t *reqenaclr_base;
+
+    /* Validate channel */
+    if (!vim_is_channel_valid(channel_id))
+    {
+        return -1;
+    }
+
+    /* Each REQENACLR register covers 32 channels */
+    reg_index = channel_id / 32u;
+    bit_pos = channel_id % 32u;
+
+    /* [prov] regs.yaml:VIM.REQENACLR0 */
+    reqenaclr_base = (volatile uint32_t *)(VIM_BASE + VIM_REQENACLR0_OFFSET);
+    reqenaclr_base[reg_index] = (1u << bit_pos);
+
+    return 0;
+}
+
+int vim_set_fiq(uint32_t channel_id, int enable_fiq)
+{
+    uint32_t reg_index;
+    uint32_t bit_pos;
+    uint32_t bit_mask;
+    volatile uint32_t *firqpr_base;
+    uint32_t reg_val;
+
+    /* Validate channel */
+    if (!vim_is_channel_valid(channel_id))
+    {
+        return -1;
+    }
+
+    /* Each FIRQPR register covers 32 channels */
+    reg_index = channel_id / 32u;
+    bit_pos = channel_id % 32u;
+    bit_mask = (1u << bit_pos);
+
+    /* [prov] regs.yaml:VIM.FIRQPR0 */
+    firqpr_base = (volatile uint32_t *)(VIM_BASE + VIM_FIRQPR0_OFFSET);
+
+    /* Read-modify-write: set or clear the FIQ bit */
+    reg_val = firqpr_base[reg_index];
+    if (enable_fiq)
+    {
+        reg_val |= bit_mask;
+    }
+    else
+    {
+        reg_val &= ~bit_mask;
+    }
+    firqpr_base[reg_index] = reg_val;
+
+    return 0;
+}
