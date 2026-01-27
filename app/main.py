@@ -9,6 +9,7 @@ from config import YAMLS_DIR, TARGET_FILES, FACTS_CANON, PATTERN_SNIPS
 from modules.file_io import split_and_write_files, write_makefile, write_manifest, write_doxyfile, run_doxygen
 from modules.utils import _read, extract_text_from_bedrock_response, _now_tag
 from modules.prompt import (
+    build_clock_prompt,
     invoke_model,
     Model,
     build_system_prompt,
@@ -23,6 +24,7 @@ from modules.user import prompt_user_for_peripherals
 
 from modules.yaml_utils import (
     dump_yaml_str,
+    load_bus_yaml,
     load_soc_yaml,
     load_regs_yaml,
     load_memmap_yaml,
@@ -115,7 +117,7 @@ def main():
         "--targets",
         nargs="+",
         default=["all"],
-        choices=["all", "startup", "entry", "system", "linker", "vim", "peripherals"],
+        choices=["all", "startup", "entry", "system", "clock", "linker", "vim", "peripherals"],
         help=(
             "Which components to generate. "
             "Choices: all, startup (start.s), entry (entry.c), "
@@ -131,6 +133,7 @@ def main():
     generate_system = "all" in targets or "system" in targets
     generate_linker = "all" in targets or "linker" in targets
     generate_vim = "all" in targets or "vim" in targets
+    generate_clock = "all" in targets or "clock" in targets
     generate_peripherals = "all" in targets or "peripherals" in targets
 
     # Root for this run: output_<timestamp>
@@ -147,11 +150,13 @@ def main():
     regs_path = Path(args.yamlpath) / "regs.yaml"
     irq_path = Path(args.yamlpath) / "irq.yaml"
     memmap_path = Path(args.yamlpath) / "memmap.yaml"
+    bus_path = Path(args.yamlpath) / "bus.yaml"
 
     soc_data = load_soc_yaml(soc_path)
     regs_data = load_regs_yaml(regs_path)
     irq_data = load_irq_yaml(irq_path)
     memmap_data = load_memmap_yaml(memmap_path)
+    bus_data = load_bus_yaml(bus_path)
 
     # Let the user choose which peripherals to generate drivers for (if requested)
     if generate_peripherals:
@@ -210,6 +215,25 @@ def main():
     else:
         print("[info] Skipping entry.c generation due to --targets.")
 
+    if generate_clock:
+        system_soc_slice, system_regs_slice = build_system_slices_for_prompt(
+            soc_data, regs_data
+        )
+        clock_user_prompt = build_clock_prompt(soc_yaml=system_soc_slice, regs_yaml=system_regs_slice, bus_yaml=bus_data)
+        clock_text = _invoke_with_prompts(
+            tag="clock_setup",
+            system_prompt=system_prompt,
+            user_prompt=clock_user_prompt,
+            model_enum=model_enum,
+            max_tokens=args.max_tokens,
+            artifacts_dir=artifacts,
+        )
+        if clock_text:
+            all_written += split_and_write_files(clock_text, out_dir)
+
+    else:
+        print("[info] Skipping clock setup generation due to --targets.")
+        
     # 3) system.c / system.h (system_init using SYSTEM + PCR slices)
     if generate_system:
         system_soc_slice, system_regs_slice = build_system_slices_for_prompt(

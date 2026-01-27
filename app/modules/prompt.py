@@ -146,12 +146,14 @@ The peripheral is described by:
 You must:
 - Mirror ALL numeric constants you use (addresses, offsets, masks, bit values) in the FACTS MIRROR first.
 - Use ONLY those mirrored constants in the C code.
-- Implement a peripheral-specific init function that performs ALL required LOCAL initialization (for example, for GIO/GPIO: set GCR0).
-- Assume global/system-level init (CLKCNTL, PCR, system clocks, VIM vector table init, CPU IRQ enable, etc.) is handled in separate system code and MUST NOT be duplicated here.
+- Implement a peripheral-specific init function that performs ALL required LOCAL initialization
+  (for example, for GIO/GPIO: set GCR0).
+- Assume global/system-level init (PCR PS power-up, system clocks, CLKCNTL, PLL configuration,
+  VIM vector table init, CPU IRQ enable, etc.) is handled in separate system/clock code and MUST NOT be duplicated here.
 - Ensure BOTH generated files end with a single trailing newline.
 
-SYSTEM / INTERRUPT CONTROLLER ASSUMPTIONS
------------------------------------------
+SYSTEM / CLOCK / INTERRUPT ASSUMPTIONS
+-------------------------------------
 - RM46 does NOT use an NVIC. Interrupts are managed by the VIM interrupt controller.
 - VIM driver code is generated separately (system-level) and provides this API:
 
@@ -160,7 +162,36 @@ SYSTEM / INTERRUPT CONTROLLER ASSUMPTIONS
     int vim_disable_channel(uint32_t channel_id);
 
 - Peripheral drivers MUST NOT initialize the VIM vector table or globally enable CPU IRQs.
-- Peripheral drivers MAY register their ISR(s) and enable/disable their VIM channels using the VIM API ABOVE, but ONLY if irq.yaml IDs are provided.
+- Peripheral drivers MAY register their ISR(s) and enable/disable their VIM channels using the VIM API ABOVE,
+  but ONLY if irq.yaml IDs are provided.
+
+CLOCK SERVICE ASSUMPTIONS (MANDATORY)
+------------------------------------
+- A shared clock service module (clock.c / clock.h) is generated separately and provides:
+
+    typedef enum clock_ref_t clock_ref_t;
+
+    int clock_enable(clock_ref_t ref);
+    uint32_t clock_get_hz(clock_ref_t ref);
+
+- clock_ref_t follow the following naming convention.
+  - Normalize enum names deterministically:
+  CLOCKREF_<UPPERCASE_REF>
+  - Replace non-alphanumeric with underscore
+
+- Peripheral drivers MUST call clock_enable() for their required clock reference(s)
+  before accessing any peripheral registers.
+
+- Peripheral drivers MUST use clock_get_hz() when computing baud rates, prescalers,
+  timeouts, or other clock-derived values.
+
+- Peripheral drivers MUST NOT:
+    - Touch SYSTEM clock registers directly
+      (CSDIS/CDDIS/GHVSRC/CLKCNTL/VCLKASRC/RCLKSRC/VCLKACON1 or related SET/CLR registers)
+    - Call any clock configuration/modification APIs
+      (clock_configure*, clock_set_*, clock_configure_profile, etc.)
+
+- If clocks are used in the peripheral, "clock.h" MUST be included in the generated <periph>.c file.
 
 INPUT SHAPES
 ------------
@@ -177,14 +208,9 @@ You are given up to three YAML fragments:
     - clock_ref: string
     - x-ext: object
 
-For this task, the ONLY x-ext field you must interpret is:
-
-  x-ext.init:
-    - A list of register operations that must be applied in the peripheral's init function.
-    - Each entry has:
-        reg:   "<REGS_REF>.<REGISTER>"
-        op:    "set_bits" | "clear_bits" | "write"
-        value: "0x........"
+For this task, interpret the following clock metadata:
+- soc.peripherals[*].clock_ref
+- OPTIONAL: soc.peripherals[*].x-ext.clock_refs: [string...] (if present, multiple required clocks)
 
 2) regs.yaml fragment (only this peripheral):
 
@@ -213,7 +239,8 @@ If soc.irq_ref is non-empty but irq.yaml is NOT provided:
 
 FACTS MIRROR REQUIREMENTS
 -------------------------
-Before emitting any files, you MUST populate the FACTS MIRROR with every numeric constant you will use, pulled directly from YAML.
+Before emitting any files, you MUST populate the FACTS MIRROR with every numeric constant you will use,
+pulled directly from YAML.
 
 You MUST NOT invent numeric values.
 
@@ -221,7 +248,19 @@ If required numeric data is missing for any register access:
 - Add TODO entries to the FACTS MIRROR
 - STOP after the FACTS MIRROR (do NOT emit files)
 
-This STRICTLY includes specific bits in registers. Do not invent these. If they are missing, STOP after the FACTS MIRROR.
+This STRICTLY includes specific bits in registers. Do not invent these.
+
+PERIPHERAL INIT REQUIREMENTS (UPDATED)
+--------------------------------------
+In <periph>_init():
+
+1) FIRST, enable required clocks:
+   - Call clock_enable() using the peripheral’s clock_ref.
+   - If x-ext.clock_refs exists, call clock_enable() for each entry in order.
+
+2) THEN, perform peripheral-local register initialization:
+   - Apply x-ext.init register operations in order.
+   - Do NOT perform any system-level or clock-tree configuration.
 
 DRIVER FUNCTION DISCOVERY (REQUIRED)
 -----------------------------------
@@ -286,7 +325,6 @@ If regs.yaml contains registers whose name or description indicates:
 - internal routing
 
 then you MUST:
-
 1) Expose a public configuration API to enable/disable that functionality
 2) Implement at least ONE helper function demonstrating its use
 3) Prefer a self-test that exercises data-path registers using the blocking APIs
@@ -331,7 +369,9 @@ Header (<periph>.h):
 Source (<periph>.c):
 - include <stdint.h> and "<periph>.h"
 - define base + offsets macros from FACTS MIRROR
-- implement init applying x-ext.init in order
+- implement init as:
+    - clock_enable() calls
+    - x-ext.init register writes
 - clear/read flags as required
 - implement all declared functions
 - each function must touch hardware OR VIM API
@@ -340,7 +380,7 @@ IF REQUIRED DATA IS MISSING
 ---------------------------
 If YAML lacks required numeric data:
 - Populate FACTS MIRROR with TODOs
-- STOP after FACTS MIRROR
+- STOP after the FACTS MIRROR
 - Do NOT emit FILE blocks
 
 INPUTS
@@ -354,7 +394,251 @@ regs.yaml fragment:
 (optional) irq.yaml fragment:
 %s
 
+
  """ % (soc_yaml, regs_yaml, "" if irq_yaml is None else irq_yaml)
+
+def build_clock_prompt(soc_yaml: str, regs_yaml: str, bus_yaml: str):
+    return """
+    You are generating portable C11 BSP CLOCK SERVICE files for TI Hercules RM46 (Cortex-R4).
+
+    You MUST obey the global FACTS POLICY, HARD OUTPUT CONTRACT, and CODING RULES from the system prompt.
+
+    TASK OVERVIEW
+    -------------
+    Generate exactly TWO files for the shared clock service module:
+    1) clock.h  - public header
+    2) clock.c  - implementation
+
+    This module is NOT a single peripheral driver. It is a shared service used by all peripheral drivers.
+
+    You will be given:
+    - A slice of soc.yaml listing peripherals (for discovering which clock_ref values exist).
+    - A slice of bus.yaml describing clock sources, domains, gates, constraints, and known frequencies/dividers.
+    - A slice of regs.yaml describing the SYSTEM and PCR register blocks used to control clocks.
+
+    You must:
+    - Mirror ALL numeric constants you use (addresses, offsets, masks, bit values, frequencies, divider defaults/encodings) in the FACTS MIRROR first.
+    - Use ONLY those mirrored constants in the C code.
+    - Implement a stable, minimal clock API that peripheral drivers can call to enable and query clocks.
+    - Provide OPTIONAL clock modification APIs intended ONLY for application code (main.c), and ensure they are NEVER called from peripheral init code.
+    - Ensure BOTH generated files end with a single trailing newline.
+
+    SYSTEM / PERIPHERAL ASSUMPTIONS
+    -------------------------------
+    - Peripheral drivers are generated separately and MUST NOT touch SYSTEM clock control registers directly
+      (CSDIS/CDDIS/GHVSRC/CLKCNTL/VCLKASRC/RCLKSRC/VCLKACON1 and related SET/CLR registers).
+    - Peripheral drivers MAY call ONLY these safe clock APIs:
+        int clock_enable(clock_ref_t ref);
+        uint32_t clock_get_hz(clock_ref_t ref);
+
+    - Peripheral drivers MUST NOT call any clock configuration/modification API (clock_configure*, clock_set_*).
+    - Clock configuration/modification APIs are intended ONLY for developer application code
+      (e.g., main.c or an application-specific board_init()).
+
+    INPUT SHAPES
+    ------------
+    You are given up to THREE YAML fragments:
+
+    1) soc.yaml fragment (multiple peripherals):
+      soc.peripherals[*]:
+        - name: string
+        - type: string
+        - instance: integer
+        - regs_ref: string
+        - irq_ref: [string...]
+        - clock_ref: string
+        - x-ext: object
+
+    For clock discovery, interpret:
+    - soc.peripherals[*].clock_ref
+    - OPTIONAL: soc.peripherals[*].x-ext.clock_refs: [string...] (if present), representing multiple required clock refs.
+
+    2) bus.yaml fragment (clock topology):
+    - sources:
+        - name, type, freq_hz, x-ext (may include default_enabled, gate bit, etc.)
+    - domains:
+        - name, parent, divider
+        - x-ext may include:
+            clock_domain_id, source_sel_reg, cddis_bit
+            divider_reg, divider_field, divider_range, default_divider
+            and any divider/source encoding details if provided
+    - gates:
+        - entries describing SYSTEM.CSDIS and SYSTEM.CDDIS gating bits (active-high disables)
+        - optional local divider disables in VCLKACON1
+        - optional PCR PS enable policy metadata (do not duplicate PCR PS enabling here unless explicitly required by the clock API)
+    - constraints:
+        - rules that must be respected (document; enforce only if required numeric encodings exist)
+
+    3) regs.yaml fragment (SYSTEM + PCR):
+      peripherals:
+        SYSTEM:
+          base_address: "0x........"
+          registers:
+            <REGISTER_NAME>: { offset: "0x....", ... }
+        PCR:
+          base_address: "0x........"
+          registers:
+            <REGISTER_NAME>: { offset: "0x....", ... }
+
+    IMPORTANT: regs.yaml may or may not include field encodings (bit positions / masks) for divider/mux fields.
+    - If a register bit/field encoding is required for a write and is NOT present, you MUST NOT guess.
+
+    FACTS MIRROR REQUIREMENTS
+    -------------------------
+    Before emitting any files, you MUST populate the FACTS MIRROR with every numeric constant you will use, pulled directly from YAML.
+
+    You MUST NOT invent numeric values.
+
+    This STRICTLY includes:
+    - Base addresses and register offsets
+    - Bit masks/bit positions for gate enables/disables (CSDIS/CDDIS and any SET/CLR)
+    - Any mux selection encodings you write
+    - Any divider field encodings you write
+    - Fixed source frequencies (OSCIN, HF_LPO, LF_LPO, etc.)
+    - Default_divider values used for frequency computation
+
+    If required numeric data is missing for any register access you plan to perform:
+    - Add TODO entries to the FACTS MIRROR
+    - STOP after the FACTS MIRROR (do NOT emit files)
+
+    You MAY choose to omit functionality that would require unknown encodings
+    (e.g., omit divider programming), and still emit files, as long as you do not touch
+    unknown fields and you document the limitation.
+
+    CLOCK API REQUIREMENTS (REQUIRED)
+    --------------------------------
+    You MUST implement the following:
+
+    1) clock_ref_t enum
+    - Create a public enum clock_ref_t in clock.h with one entry per unique clock reference.
+    - Discover clock references from soc.yaml:
+        - include soc.peripherals[*].clock_ref
+        - include all entries from x-ext.clock_refs if present
+    - Normalize enum names deterministically:
+        CLOCKREF_<UPPERCASE_REF>
+        - Replace non-alphanumeric with underscore
+    - Enum integer values must be explicit and stable:
+        - Sort enum names lexicographically and assign values 0..N-1 in that order.
+
+    2) Enable function (safe)
+    int clock_enable(clock_ref_t ref);
+    - MUST be idempotent.
+    - MUST NEVER disable clocks.
+    - MUST only perform enabling actions needed for the referenced clock:
+        - clear disable bits for required clock SOURCES (SYSTEM.CSDIS disable bits)
+        - clear disable bits for required clock DOMAINS (SYSTEM.CDDIS disable bits)
+    - MUST NOT modify dividers/muxes/PLL settings as part of enabling unless bus.yaml explicitly
+      identifies them as required enable steps AND provides numeric encodings.
+    - Add provenance comment above each register access:
+        // [prov] regs.yaml:SYSTEM.<REGISTER>
+        // [prov] regs.yaml:PCR.<REGISTER> (only if used)
+
+    3) Frequency query function (safe)
+    uint32_t clock_get_hz(clock_ref_t ref);
+    - MUST return best-known frequency derived ONLY from YAML facts:
+        - If frequency is a fixed source -> return it
+        - If derived from parent/divider:
+            - If divider value is known (default_divider or explicitly configured value tracked by this module) -> compute
+            - If divider encoding is unknown and no default_divider -> return 0 and document
+        - If PLL parameters are unknown -> return 0 unless bus.yaml provides a concrete freq_hz for that PLL output
+    - MUST NEVER guess.
+
+    CLOCK MODIFICATION API (APPLICATION-ONLY) (REQUIRED IF POSSIBLE)
+    ---------------------------------------------------------------
+    Provide clock modification APIs that are intended ONLY for developer application code (main.c).
+    These functions MUST NOT be called automatically by clock_enable(), clock_get_hz(), or any internal init.
+    Peripheral drivers MUST NOT call them.
+
+    Required shape (choose ONE strategy):
+
+    Strategy A (preferred): single config entry point
+    - In clock.h:
+        typedef struct clock_config_t { ... } clock_config_t;
+        int clock_configure(const clock_config_t *cfg);
+    - clock_config_t must represent OPTIONAL per-ref settings (e.g., divider selections) and default to "no change".
+    - clock_configure() MUST validate inputs and return error without touching hardware if encodings are missing.
+
+    OR
+
+    Strategy B: explicit divider setters
+    - In clock.h:
+        int clock_set_divider(clock_ref_t ref, uint32_t divider);
+    - Implement only for refs that have divider_reg/divider_field encodings present in YAML.
+    - For unsupported refs, return error.
+    - MUST NOT guess divider field encodings.
+
+    In all cases:
+    - Put a prominent comment in clock.h:
+      "APPLICATION-ONLY: Do not call from peripheral drivers."
+    - Do not call configuration APIs from within clock.c.
+
+    DRIVER FUNCTION DISCOVERY (CLOCK-SPECIFIC) (REQUIRED)
+    -----------------------------------------------------
+    You MUST derive additional helper functions from bus.yaml content (not a fixed template), such as:
+    - per-ref inline wrappers (optional):
+        static inline int clock_enable_vclk(void) { return clock_enable(CLOCKREF_VCLK); }
+        static inline uint32_t clock_get_vclk_hz(void) { return clock_get_hz(CLOCKREF_VCLK); }
+
+    - If bus.yaml indicates multiple domains/sources are required for a ref, encode that relationship in clock_enable().
+
+    OUTPUT CONTRACT
+    ---------------
+    After the FACTS MIRROR, emit exactly TWO files:
+
+      ===== FILE: clock.h =====
+      ===== FILE: clock.c =====
+
+    No other files may be emitted.
+
+    CODING RULES
+    ------------
+    - C11, but ISO C90-compatible style
+    - Declare locals at block start (no declarations inside for loops)
+    - Public headers MUST NOT include vendor headers
+    - Use <stdint.h>
+    - Use ONLY FACTS MIRROR constants
+    - You may define:
+        #define REG32(addr) (*(volatile uint32_t *)(addr))
+    - Each file must end with a trailing newline
+
+    IMPLEMENTATION REQUIREMENTS
+    ---------------------------
+    clock.h:
+    - include guard
+    - declare clock_ref_t enum with explicit values
+    - declare required APIs:
+        int clock_enable(clock_ref_t ref);
+        uint32_t clock_get_hz(clock_ref_t ref);
+    - declare application-only config API (Strategy A or B) if possible
+    - optional: inline wrappers for common refs
+
+    clock.c:
+    - include <stdint.h> and "clock.h"
+    - define base + offsets macros from FACTS MIRROR
+    - implement register operations with volatile accesses
+    - implement clock_enable() and clock_get_hz() as switch(ref) dispatchers
+    - implement application-only config API without calling it internally
+    - add provenance comments above each register access
+
+    IF REQUIRED DATA IS MISSING
+    ---------------------------
+    If YAML lacks required numeric data for any register bit/field access you plan to perform:
+    - Populate FACTS MIRROR with TODOs
+    - STOP after FACTS MIRROR
+    - Do NOT emit FILE blocks
+
+    INPUTS
+    ------
+    soc.yaml fragment:
+    %s
+
+    bus.yaml fragment:
+    %s
+
+    regs.yaml fragment (SYSTEM + PCR slices):
+    %s
+
+    """ % (soc_yaml, bus_yaml, regs_yaml)
 
 def build_vim_prompt(soc_yaml, regs_yaml, irq_yaml):
     
@@ -514,6 +798,8 @@ def build_system_init_prompt(soc_yaml: str, regs_yaml: str):
     return """
     You are generating low-level embedded C startup code for a TI Hercules RM46-like MCU.
 
+You MUST obey the global FACTS POLICY, HARD OUTPUT CONTRACT, and CODING RULES from the system prompt.
+
 You will be given:
 - A slice of soc.yaml describing SYSTEM and PCR peripherals.
 - A slice of regs.yaml describing the SYSTEM and PCR register blocks.
@@ -534,9 +820,39 @@ The YAML follows this schema:
       op:  "set_bits", "clear_bits", or "write"
       value: 32-bit hex string like "0xFFFFFFFF"
 
+  - For SYSTEM, OPTIONAL x-ext.base_clock_refs is a list of clock references to enable
+    at boot as "base clocks" (minimal safe bring-up). Each entry is a string matching
+    the clock_ref naming used by the clock module (clock_ref_t values), e.g.:
+      x-ext.base_clock_refs: ["HCLK", "VCLK", "HF_LPO", "LF_LPO"]
+    If x-ext.base_clock_refs is absent, do not enable any clocks implicitly in system_init.
+
+  - clock_ref_t follow the following naming convention.
+      - Normalize enum names deterministically:
+      CLOCKREF_<UPPERCASE_REF>
+      - Replace non-alphanumeric with underscore
+
 - regs.yaml:
   - peripherals.<name>.base_address is the base address as a hex string.
   - peripherals.<name>.registers.<reg_name>.offset is the offset as a hex string.
+
+CLOCK MODULE INTEGRATION (MANDATORY)
+------------------------------------
+- A shared clock service module (clock.c / clock.h) is generated separately and provides:
+
+    typedef enum clock_ref_t clock_ref_t;
+    int clock_enable(clock_ref_t ref);
+
+- system.c MUST include "clock.h" to call clock_enable().
+
+- system_init() MUST perform ONLY the following clock-related work:
+  1) Enable base clocks listed in SYSTEM.x-ext.base_clock_refs by calling clock_enable(ref).
+  2) MUST NOT configure/modify clock dividers, PLLs, or muxes here.
+  3) MUST NOT call any clock configuration/modification APIs
+     (clock_configure*, clock_set_*, clock_configure_profile, etc.).
+     Those are APPLICATION-ONLY and must be called by developer code in main.c if desired.
+
+- Peripheral drivers will call clock_enable() for their own clock_ref(s). system_init
+  should only ensure minimal base clocks are enabled.
 
 Your task:
 - Generate two files: system.h and system.c.
@@ -545,6 +861,23 @@ Your task:
   - Declare all local variables at the top of a block, before any statements.
 - Ensure BOTH generated files end with a trailing newline.
 
+FACTS MIRROR REQUIREMENTS (MANDATORY)
+-------------------------------------
+Before emitting any files, you MUST populate a FACTS MIRROR with every numeric constant you will use,
+pulled directly from YAML:
+- Base addresses
+- Register offsets
+- Values written from SYSTEM.x-ext.init
+
+You MUST NOT invent numeric values.
+
+If required numeric data is missing for any register access:
+- Add TODO entries to the FACTS MIRROR
+- STOP after the FACTS MIRROR (do NOT emit files)
+
+NOTE: clock_enable() calls do not require mirroring numeric constants here, since those are handled
+inside the clock module.
+
 Requirements:
 
 1) system.h
@@ -552,22 +885,22 @@ Requirements:
 - Provide an include guard.
 - Declare:
     void system_init(void);
-- Optionally, you may declare helper functions as static inline if needed, but keep the API minimal.
+- Keep the API minimal.
 
 2) system.c
 -----------
-- Include <stdint.h> and "system.h".
+- Include <stdint.h>, "system.h", and "clock.h".
 - Define macros for SYSTEM and PCR base addresses and register offsets using the YAML data, for example:
     #define SYSTEM_BASE 0xFFFFFF00u
     #define SYSTEM_CLKCNTL_OFFSET 0x00D0u
     #define PCR_BASE 0xFFFFE000u
     #define PCR_PSPWRDWNCLR0_OFFSET 0x00A0u
 - Use the exact names and values taken from regs.yaml.
-- You may define a helper macro:
+- You may define:
     #define REG32(addr) (*(volatile uint32_t *)(addr))
 
-- Implement a static helper to perform a register operation, for example:
-    #define OP_SET_BITS  1
+- Implement a static helper to perform a register operation:
+    #define OP_SET_BITS   1
     #define OP_CLEAR_BITS 2
     #define OP_WRITE      3
 
@@ -586,27 +919,31 @@ Requirements:
         }
     }
 
-- Implement void system_init(void) that:
-  - Conceptually iterates over SYSTEM.x-ext.init in order.
-  - For each entry, hardcode the mapping from the "reg" string to:
-      - A base address (SYSTEM_BASE or PCR_BASE)
-      - A register offset macro (e.g. SYSTEM_CLKCNTL_OFFSET, PCR_PSPWRDWNCLR0_OFFSET)
-      - An operation kind (set_bits, clear_bits, write)
-      - A value constant (from YAML)
-  - Emit direct calls to reg_write_op(...) with the correct base, offset, value, and op kind.
+- Implement void system_init(void) that performs, in this exact order:
+  1) Apply SYSTEM.x-ext.init register operations in order via reg_write_op(...).
+  2) Enable base clocks:
+     - If SYSTEM.x-ext.base_clock_refs exists, call clock_enable() for each listed ref, in order.
+     - If absent, do nothing (do NOT enable clocks implicitly).
 
-- The effective behavior should match:
-  - PCR.PSPWRDWNCLR0/1/2/3 |= 0xFFFFFFFF  (power up all peripheral quadrants)
-  - SYSTEM.CLKCNTL |= 0x00000100         (enable the global peripheral enable bit)
+- The effective behavior MUST match exactly:
+  - The provided SYSTEM.x-ext.init list
+  - The provided SYSTEM.x-ext.base_clock_refs list (if present)
 
-- You may also add a placeholder function such as:
-    static void system_configure_clocks(void) { /* TODO */ }
-  and call it from system_init(), but keep it empty.
+- You MAY add a comment such as:
+    /* Clock configuration (PLL/dividers/mux) is application-owned; see clock_configure* APIs in clock.h (do not call here). */
 
 3) Assumptions:
 ---------------
 - The linker script and assembly startup (Reset_Handler, stack pointer setup) are handled elsewhere in start.s and linker.cmd.
 - Reset_Handler_C (in entry.c) will call system_init() before main().
+
+OUTPUT CONTRACT
+---------------
+After the FACTS MIRROR, output exactly:
+  ===== FILE: system.h =====
+  ===== FILE: system.c =====
+
+No other files may be emitted.
 
 Here is soc.yaml (relevant slice):
 
@@ -616,7 +953,9 @@ Here is regs.yaml (relevant slice):
 
 %s
 
-Now, output system.h followed by system.c, obeying the global HARD OUTPUT CONTRACT.
+Now, output FACTS MIRROR, then system.h followed by system.c, obeying the global HARD OUTPUT CONTRACT.
+
+
     """ % (soc_yaml, regs_yaml)
 
 def build_linker_prompt(memmap_yaml: str):

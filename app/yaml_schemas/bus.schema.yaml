@@ -1,0 +1,84 @@
+$id: bus.schema.yaml
+$schema: https://json-schema.org/draft/2020-12/schema
+
+type: object
+additionalProperties: false
+required: [ir_schema_version, sources, domains]
+
+properties:
+  ir_schema_version: { type: string, const: "1.1.0" }
+
+  sources:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      additionalProperties: false
+      required: [name, type, freq_hz]
+      properties:
+        name: { type: string }
+        type: { enum: [internal_rc, external_xtal, pll, other] }
+        freq_hz: { type: integer, minimum: 1 }
+        tolerance_ppm: { type: integer }
+        x-ext: { type: object, additionalProperties: true }
+
+  plls:
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [name, input]
+      properties:
+        name: { type: string }
+        input: { type: string }  # name of source
+        mult_range:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { type: integer }
+        div_range:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { type: integer }
+        vco_limits_hz:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { type: integer }
+        x-ext: { type: object, additionalProperties: true }
+
+  domains:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      additionalProperties: false
+      required: [name, parent]
+      properties:
+        name: { type: string }
+        parent: { type: string } # source/pll/domain name
+        divider: { type: integer, minimum: 1 }
+        x-ext: { type: object, additionalProperties: true }
+
+  gates:
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [name, parent]
+      properties:
+        name: { type: string }
+        parent: { type: string }
+        peripheral_refs:
+          type: array
+          items: { type: string }
+        x-ext: { type: object, additionalProperties: true }
+
+  constraints:
+    type: array
+    items: { type: object, additionalProperties: true }
+
+  provenance:
+    type: object
+    additionalProperties: true

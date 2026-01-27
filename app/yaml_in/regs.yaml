@@ -5,65 +5,288 @@ peripherals:
     base_address: "0xFFFFFF00"
     desc: "System Control Registers (systemREG1)"
     registers:
-      # SYSPC1–10 live in 0x0000–0x0078; you can add individual ones later if needed.
+      SSWPLL1: { offset: "0x0024", access: RW, reset: "0x00000000", desc: "Software-Controlled PLL Register 1" }
+      SSWPLL2: { offset: "0x0028", access: RW, reset: "0x00000000", desc: "Software-Controlled PLL Register 2" }
+      SSWPLL3: { offset: "0x002C", access: RW, reset: "0x00000000", desc: "Software-Controlled PLL Register 3" }
 
-      SSWPLL1:    { offset: "0x0024", access: RW, reset: "0x00000000", desc: "Software-Controlled PLL Register 1" }
-      SSWPLL2:    { offset: "0x0028", access: RW, reset: "0x00000000", desc: "Software-Controlled PLL Register 2" }
-      SSWPLL3:    { offset: "0x002C", access: RW, reset: "0x00000000", desc: "Software-Controlled PLL Register 3" }
+      CSDIS:
+        offset: "0x0030"
+        access: RW
+        reset: "0x000000CE"
+        desc: "Clock Source Disable Register (privileged write)"
+        fields:
+          - { name: RESERVED_31_8, msb: 31, lsb: 8, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: CLKSR7OFF, bit: 7, access: RW, reset: 1, desc: "Clock source 7 off: 0=enabled, 1=disabled (privileged write)" }
+          - { name: CLKSR6OFF, bit: 6, access: RW, reset: 1, desc: "Clock source 6 off: 0=enabled, 1=disabled (privileged write)" }
+          - { name: CLKSR5OFF, bit: 5, access: RW, reset: 0, desc: "Clock source 5 off: 0=enabled, 1=disabled (privileged write)" }
+          - { name: CLKSR4OFF, bit: 4, access: RW, reset: 0, desc: "Clock source 4 off: 0=enabled, 1=disabled (privileged write)" }
+          - { name: CLKSR3OFF, bit: 3, access: RW, reset: 1, desc: "Clock source 3 off: 0=enabled, 1=disabled (privileged write)" }
+          - { name: RESERVED_2, bit: 2, access: RO, reset: 1, desc: "Reserved (reads return 1, writes have no effect)" }
+          - { name: CLKSR1OFF, bit: 1, access: RW, reset: 1, desc: "Clock source 1 off: 0=enabled, 1=disabled (privileged write)" }
+          - { name: CLKSR0OFF, bit: 0, access: RW, reset: 0, desc: "Clock source 0 off: 0=enabled, 1=disabled (privileged write)" }
 
-      CSDIS:      { offset: "0x0030", access: RW, reset: "0x00000000", desc: "Clock Source Disable Register" }
-      CSDISSET:   { offset: "0x0034", access: RW, reset: "0x00000000", desc: "Clock Source Disable Set Register" }
-      CSDISCLR:   { offset: "0x0038", access: RW, reset: "0x00000000", desc: "Clock Source Disable Clear Register" }
+      CSDISSET:
+        offset: "0x0034"
+        access: RW
+        reset: "0x000000CE"
+        desc: "Clock Source Disable Set Register (privileged write)"
+        fields:
+          - { name: RESERVED_31_8, msb: 31, lsb: 8, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: SETCLKSR7OFF, bit: 7, access: RW, reset: 1, desc: "Set clock source 7 to disabled state (privileged write)" }
+          - { name: SETCLKSR6OFF, bit: 6, access: RW, reset: 1, desc: "Set clock source 6 to disabled state (privileged write)" }
+          - { name: SETCLKSR5OFF, bit: 5, access: RW, reset: 0, desc: "Set clock source 5 to disabled state (privileged write)" }
+          - { name: SETCLKSR4OFF, bit: 4, access: RW, reset: 0, desc: "Set clock source 4 to disabled state (privileged write)" }
+          - { name: SETCLKSR3OFF, bit: 3, access: RW, reset: 1, desc: "Set clock source 3 to disabled state (privileged write)" }
+          - { name: RESERVED_2, bit: 2, access: RO, reset: 1, desc: "Reserved (reads return 1, writes have no effect)" }
+          - { name: SETCLKSR1OFF, bit: 1, access: RW, reset: 1, desc: "Set clock source 1 to disabled state (privileged write)" }
+          - { name: SETCLKSR0OFF, bit: 0, access: RW, reset: 0, desc: "Set clock source 0 to disabled state (privileged write)" }
 
-      CDDIS:      { offset: "0x003C", access: RW, reset: "0x00000000", desc: "Clock Domain Disable Register" }
-      CDDISSET:   { offset: "0x0040", access: RW, reset: "0x00000000", desc: "Clock Domain Disable Set Register" }
-      CDDISCLR:   { offset: "0x0044", access: RW, reset: "0x00000000", desc: "Clock Domain Disable Clear Register" }
+      CSDISCLR:
+        offset: "0x0038"
+        access: RW
+        reset: "0x000000CE"
+        desc: "Clock Source Disable Clear Register (privileged write)"
+        fields:
+          - { name: RESERVED_31_8, msb: 31, lsb: 8, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: CLRCLKSR7OFF, bit: 7, access: RW, reset: 1, desc: "Clear clock source 7 disable (enable clock source 7) (privileged write)" }
+          - { name: CLRCLKSR6OFF, bit: 6, access: RW, reset: 1, desc: "Clear clock source 6 disable (enable clock source 6) (privileged write)" }
+          - { name: CLRCLKSR5OFF, bit: 5, access: RW, reset: 0, desc: "Clear clock source 5 disable (enable clock source 5) (privileged write)" }
+          - { name: CLRCLKSR4OFF, bit: 4, access: RW, reset: 0, desc: "Clear clock source 4 disable (enable clock source 4) (privileged write)" }
+          - { name: CLRCLKSR3OFF, bit: 3, access: RW, reset: 1, desc: "Clear clock source 3 disable (enable clock source 3) (privileged write)" }
+          - { name: RESERVED_2, bit: 2, access: RO, reset: 1, desc: "Reserved (reads return 1, writes have no effect)" }
+          - { name: CLRCLKSR1OFF, bit: 1, access: RW, reset: 1, desc: "Clear clock source 1 disable (enable clock source 1) (privileged write)" }
+          - { name: CLRCLKSR0OFF, bit: 0, access: RW, reset: 0, desc: "Clear clock source 0 disable (enable clock source 0) (privileged write)" }
 
-      GHVSRC:     { offset: "0x0048", access: RW, reset: "0x00000000", desc: "GCLK, HCLK, VCLK Source Register" }
-      VCLKASRC:   { offset: "0x004C", access: RW, reset: "0x00000000", desc: "VCLKA Source Register" }
-      RCLKSRC:    { offset: "0x0050", access: RW, reset: "0x00000000", desc: "RTI Clock Source Register" }
-      CSVSTAT:    { offset: "0x0054", access: RW, reset: "0x00000000", desc: "Clock Source Valid Status Register" }
+      CDDIS:
+        offset: "0x003C"
+        access: RW
+        reset: "0x00000000"
+        desc: "Clock Domain Disable Register (privileged write)"
+        fields:
+          - { name: RESERVED_31_12, msb: 31, lsb: 12, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: VCLKA4OFF, bit: 11, access: RW, reset: 0, desc: "VCLKA4 domain off: 0=enabled, 1=disabled (privileged write)" }
+          - { name: VCLKA3OFF, bit: 10, access: RW, reset: 0, desc: "VCLKA3 domain off: 0=enabled, 1=disabled (privileged write)" }
+          - { name: VCLK4OFF, bit: 9, access: RW, reset: 0, desc: "VCLK4 domain off: 0=enabled, 1=disabled (privileged write)" }
+          - { name: VCLK3OFF, bit: 8, access: RW, reset: 0, desc: "VCLK3 domain off: 0=enabled, 1=disabled (privileged write)" }
+          - { name: RESERVED_7, bit: 7, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: RTICLK1OFF, bit: 6, access: RW, reset: 0, desc: "RTICLK1 domain off: 0=enabled, 1=disabled (privileged write)" }
+          - { name: RESERVED_5, bit: 5, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: VCLKA1OFF, bit: 4, access: RW, reset: 0, desc: "VCLKA1 domain off: 0=enabled, 1=disabled (privileged write)" }
+          - { name: VCLK2OFF, bit: 3, access: RW, reset: 0, desc: "VCLK2 domain off: 0=enabled, 1=disabled (privileged write)" }
+          - { name: VCLKPOFF, bit: 2, access: RW, reset: 0, desc: "VCLK_periph domain off: 0=enabled, 1=disabled (privileged write)" }
+          - { name: HCLKOFF, bit: 1, access: RW, reset: 0, desc: "HCLK and VCLK_sys domains off: 0=enabled, 1=disabled (privileged write)" }
+          - { name: GCLKOFF, bit: 0, access: RW, reset: 0, desc: "GCLK domain off: 0=enabled, 1=disabled (privileged write)" }
 
-      MSTGCR:     { offset: "0x0058", access: RW, reset: "0x00000000", desc: "Master Clock Global Control Register" }
-      MINITGCR:   { offset: "0x005C", access: RW, reset: "0x00000000", desc: "Mini-Clock Global Control Register" }
-      MSINENA:    { offset: "0x0060", access: RW, reset: "0x00000000", desc: "Memory Self-Init Enable Register" }
-      MSTFAIL:    { offset: "0x0064", access: RW, reset: "0x00000000", desc: "Master Self-Test Fail Register" }
-      MSTCGSTAT:  { offset: "0x0068", access: RW, reset: "0x00000000", desc: "Master Clock Global Status Register" }
-      MINISTAT:   { offset: "0x006C", access: RW, reset: "0x00000000", desc: "Mini-Clock Status Register" }
+      CDDISSET:
+        offset: "0x0040"
+        access: RW
+        reset: "0x00000000"
+        desc: "Clock Domain Disable Set Register (privileged write)"
+        fields:
+          - { name: RESERVED_31_12, msb: 31, lsb: 12, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: SETVCLKA4OFF, bit: 11, access: RW, reset: 0, desc: "Set VCLKA4 domain disable (privileged write)" }
+          - { name: SETVCLKA3OFF, bit: 10, access: RW, reset: 0, desc: "Set VCLKA3 domain disable (privileged write)" }
+          - { name: SETVCLK4OFF, bit: 9, access: RW, reset: 0, desc: "Set VCLK4 domain disable (privileged write)" }
+          - { name: SETVCLK3OFF, bit: 8, access: RW, reset: 0, desc: "Set VCLK3 domain disable (privileged write)" }
+          - { name: RESERVED_7, bit: 7, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: SETRTI1CLKOFF, bit: 6, access: RW, reset: 0, desc: "Set RTICLK1 domain disable (privileged write)" }
+          - { name: RESERVED_5, bit: 5, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: SETVCLKA1OFF, bit: 4, access: RW, reset: 0, desc: "Set VCLKA1 domain disable (privileged write)" }
+          - { name: SETVCLK2OFF, bit: 3, access: RW, reset: 0, desc: "Set VCLK2 domain disable (privileged write)" }
+          - { name: SETVCLKPOFF, bit: 2, access: RW, reset: 0, desc: "Set VCLK_periph domain disable (privileged write)" }
+          - { name: SETHCLKOFF, bit: 1, access: RW, reset: 0, desc: "Set HCLK/VCLK_sys domains disable (privileged write)" }
+          - { name: SETGCLKOFF, bit: 0, access: RW, reset: 0, desc: "Set GCLK domain disable (privileged write)" }
 
-      PLLCTL1:    { offset: "0x0070", access: RW, reset: "0x00000000", desc: "PLL Control Register 1" }
-      PLLCTL2:    { offset: "0x0074", access: RW, reset: "0x00000000", desc: "PLL Control Register 2" }
+      CDDISCLR:
+        offset: "0x0044"
+        access: RW
+        reset: "0x00000000"
+        desc: "Clock Domain Disable Clear Register (privileged write)"
+        fields:
+          - { name: RESERVED_31_12, msb: 31, lsb: 12, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: CLRVCLKA4OFF, bit: 11, access: RW, reset: 0, desc: "Clear VCLKA4 domain disable (enable) (privileged write)" }
+          - { name: CLRVCLKA3OFF, bit: 10, access: RW, reset: 0, desc: "Clear VCLKA3 domain disable (enable) (privileged write)" }
+          - { name: CLRVCLK4OFF, bit: 9, access: RW, reset: 0, desc: "Clear VCLK4 domain disable (enable) (privileged write)" }
+          - { name: CLRVCLK3OFF, bit: 8, access: RW, reset: 0, desc: "Clear VCLK3 domain disable (enable) (privileged write)" }
+          - { name: RESERVED_7, bit: 7, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: CLRRTI1CLKOFF, bit: 6, access: RW, reset: 0, desc: "Clear RTICLK1 domain disable (enable) (privileged write)" }
+          - { name: RESERVED_5, bit: 5, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: CLRVCLKA1OFF, bit: 4, access: RW, reset: 0, desc: "Clear VCLKA1 domain disable (enable) (privileged write)" }
+          - { name: CLRVCLK2OFF, bit: 3, access: RW, reset: 0, desc: "Clear VCLK2 domain disable (enable) (privileged write)" }
+          - { name: CLRVCLKPOFF, bit: 2, access: RW, reset: 0, desc: "Clear VCLK_periph domain disable (enable) (privileged write)" }
+          - { name: CLRHCLKOFF, bit: 1, access: RW, reset: 0, desc: "Clear HCLK/VCLK_sys domains disable (enable) (privileged write)" }
+          - { name: CLRGCLKOFF, bit: 0, access: RW, reset: 0, desc: "Clear GCLK domain disable (enable) (privileged write)" }
 
-      DIEIDL:     { offset: "0x007C", access: R,  reset: "0x00000000", desc: "Device ID Low Register" }
-      DIEIDH:     { offset: "0x0080", access: R,  reset: "0x00000000", desc: "Device ID High Register" }
+      GHVSRC:
+        offset: "0x0048"
+        access: RW
+        reset: "0x00000000"
+        desc: "GCLK, HCLK, VCLK, and VCLK2 Source Register (privileged write)"
+        fields:
+          - { name: RESERVED_31_28, msb: 31, lsb: 28, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: GHVWAKE, msb: 27, lsb: 24, access: RW, reset: 0, desc: "GCLK/HCLK/VCLK/VCLK2 source on wakeup (0h..7h valid; 8h..Fh reserved)" }
+          - { name: RESERVED_23_20, msb: 23, lsb: 20, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: HVLPM, msb: 19, lsb: 16, access: RW, reset: 0, desc: "GCLK/HCLK/VCLK/VCLK2 source on wakeup when GCLK turned off (0h..7h valid; 8h..Fh reserved)" }
+          - { name: RESERVED_15_4, msb: 15, lsb: 4, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: GHVSRC, msb: 3, lsb: 0, access: RW, reset: 0, desc: "Current GCLK/HCLK/VCLK/VCLK2 source (0h..7h valid; 8h..Fh reserved)" }
 
-      VRCTL:      { offset: "0x0084", access: RW, reset: "0x00000000", desc: "Voltage Regulator Control Register" }
-      LPOMONCTL:  { offset: "0x0088", access: RW, reset: "0x00000000", desc: "LPO Monitor Control Register" }
-      CLKTEST:    { offset: "0x008C", access: RW, reset: "0x00000000", desc: "Clock Test Register" }
+      VCLKASRC:
+        offset: "0x004C"
+        access: RW
+        reset: "0x00000909"
+        desc: "Peripheral Asynchronous Clock Source Register (privileged write)"
+        fields:
+          - { name: RESERVED_31_16, msb: 31, lsb: 16, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: RESERVED_15_12, msb: 15, lsb: 12, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: RESERVED_11_8, msb: 11, lsb: 8, access: RW, reset: 9, desc: "Reserved (privileged write); reset shows 9h in register diagram" }
+          - { name: RESERVED_7_4, msb: 7, lsb: 4, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: VCLKA1S, msb: 3, lsb: 0, access: RW, reset: 9, desc: "Peripheral asynchronous clock1 source: 0h..7h=Clock source0..7, 8h..Fh=VCLK" }
+
+      RCLKSRC:
+        offset: "0x0050"
+        access: RW
+        reset: "0x01090109"
+        desc: "RTI Clock Source Register (privileged write)"
+        fields:
+          - { name: RESERVED_31_26, msb: 31, lsb: 26, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: RESERVED_25_24, msb: 25, lsb: 24, access: RW, reset: 1, desc: "Reserved (privileged write); reads return value" }
+          - { name: RESERVED_23_20, msb: 23, lsb: 20, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: RESERVED_19_16, msb: 19, lsb: 16, access: RW, reset: 9, desc: "Reserved (privileged write); reads return value" }
+          - { name: RESERVED_15_10, msb: 15, lsb: 10, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: RTI1DIV, msb: 9, lsb: 8, access: RW, reset: 1, desc: "RTICLK1 divider: 0=1, 1h=2, 2h=4, 3h=8 (privileged write)" }
+          - { name: RESERVED_7_4, msb: 7, lsb: 4, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: RTI1SRC, msb: 3, lsb: 0, access: RW, reset: 9, desc: "RTICLK1 source: 0h..7h=Clock source0..7, 8h..Fh=VCLK (privileged write)" }
+
+      CSVSTAT:
+        offset: "0x0054"
+        access: RO
+        reset: "0x00000019"
+        desc: "Clock Source Valid Status Register"
+        fields:
+          - { name: RESERVED_31_8, msb: 31, lsb: 8, access: RO, reset: 0, desc: "Reserved" }
+          - { name: CLKSR7V, bit: 7, access: RO, reset: 1, desc: "Clock source 7 valid: 0=not valid, 1=valid" }
+          - { name: CLKSR6V, bit: 6, access: RO, reset: 0, desc: "Clock source 6 valid: 0=not valid, 1=valid" }
+          - { name: CLKSR5V, bit: 5, access: RO, reset: 0, desc: "Clock source 5 valid: 0=not valid, 1=valid" }
+          - { name: CLKSR4V, bit: 4, access: RO, reset: 1, desc: "Clock source 4 valid: 0=not valid, 1=valid" }
+          - { name: CLKSR3V, bit: 3, access: RO, reset: 1, desc: "Clock source 3 valid: 0=not valid, 1=valid" }
+          - { name: RESERVED_2, bit: 2, access: RO, reset: 0, desc: "Reserved" }
+          - { name: CLKSR1V, bit: 1, access: RO, reset: 0, desc: "Clock source 1 valid: 0=not valid, 1=valid" }
+          - { name: CLKSR0V, bit: 0, access: RO, reset: 1, desc: "Clock source 0 valid: 0=not valid, 1=valid" }
+
+      MSTGCR:   { offset: "0x0058", access: RW, reset: "0x00000000", desc: "Memory Self-Test Global Control Register" }
+      MINITGCR: { offset: "0x005C", access: RW, reset: "0x00000000", desc: "Mini-Clock Global Control Register" }
+      MSINENA:  { offset: "0x0060", access: RW, reset: "0x00000000", desc: "Memory Self-Init Enable Register" }
+      MSTFAIL:  { offset: "0x0064", access: RW, reset: "0x00000000", desc: "Master Self-Test Fail Register" }
+      MSTCGSTAT: { offset: "0x0068", access: RW, reset: "0x00000000", desc: "Master Clock Global Status Register" }
+      MINISTAT: { offset: "0x006C", access: RW, reset: "0x00000000", desc: "Mini-Clock Status Register" }
+
+      PLLCTL1:
+        offset: "0x0070"
+        access: RW
+        reset: "0x2F025F00"
+        desc: "PLL Control Register 1 (PLL1) (privileged write)"
+        fields:
+          - { name: ROS, bit: 31, access: RW, reset: 0, desc: "Reset on PLL slip: 0=no reset, 1=reset on slip (requires MASK_SLIP enabled)" }
+          - { name: MASK_SLIP, msb: 30, lsb: 29, access: RW, reset: 1, desc: "Mask detection of PLL slip / bypass behavior on slip (privileged write)" }
+          - { name: PLLDIV, msb: 28, lsb: 24, access: RW, reset: 15, desc: "PLL output clock divider (R=PLLDIV+1) (privileged write)" }
+          - { name: ROF, bit: 23, access: RW, reset: 0, desc: "Reset on oscillator fail: 0=no reset, 1=reset if oscillator out of range" }
+          - { name: RESERVED_22, bit: 22, access: RO, reset: 0, desc: "Reserved" }
+          - { name: REFCLKDIV, msb: 21, lsb: 16, access: RW, reset: 2, desc: "Reference clock divider (NR=REFCLKDIV+1) (privileged write)" }
+          - { name: PLLMUL, msb: 15, lsb: 0, access: RW, reset: 24320, desc: "PLL multiplication factor (NF=(PLLMUL/256)+1) (privileged write)" }
+
+      PLLCTL2:
+        offset: "0x0074"
+        access: RW
+        reset: "0x7FC00200"
+        desc: "PLL Control Register 2 (privileged write)"
+        fields:
+          - { name: FMENA, bit: 31, access: RW, reset: 0, desc: "Frequency modulation enable: 0=disable, 1=enable" }
+          - { name: SPREADINGRATE, msb: 30, lsb: 22, access: RW, reset: 511, desc: "Spreading rate (NS=SPREADINGRATE+1) (privileged write)" }
+          - { name: RESERVED_21, bit: 21, access: RO, reset: 0, desc: "Reserved" }
+          - { name: MULMOD, msb: 20, lsb: 12, access: RW, reset: 0, desc: "Multiplier correction when FM enabled (privileged write)" }
+          - { name: ODPLL, msb: 11, lsb: 9, access: RW, reset: 1, desc: "Internal PLL output divider (OD=ODPLL+1) (privileged write)" }
+          - { name: SPR_AMOUNT, msb: 8, lsb: 0, access: RW, reset: 0, desc: "Spreading amount (NV=(SPR_AMOUNT+1)/2048) (privileged write)" }
+
+      VRCTL:     { offset: "0x0084", access: RW, reset: "0x00000000", desc: "Voltage Regulator Control Register" }
+
+      LPOMONCTL:
+        offset: "0x0088"
+        access: RW
+        reset: "0x01001010"
+        desc: "LPO/Clock Monitor Control Register (privileged write)"
+        fields:
+          - { name: RESERVED_31_25, msb: 31, lsb: 25, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: BIAS_ENABLE, bit: 24, access: RW, reset: 1, desc: "Bias enable for LPO: 0=disabled, 1=enabled (privileged write)" }
+          - { name: RESERVED_23_17, msb: 23, lsb: 17, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: OSCFRQCONFIGCNT, bit: 16, access: RO, reset: 0, desc: "Oscillator frequency configuration counter: 0=OSC<=20MHz, 1=OSC>20MHz and <=80MHz" }
+          - { name: RESERVED_15_13, msb: 15, lsb: 13, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: HFTRIM, msb: 12, lsb: 8, access: RW, reset: 16, desc: "High-frequency LPO trim value (privileged write; change only when not used as clock source)" }
+          - { name: RESERVED_7_5, msb: 7, lsb: 5, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: LFTRIM, msb: 4, lsb: 0, access: RW, reset: 16, desc: "Low-frequency LPO trim value (privileged write; change only when not used as clock source)" }
+
+      CLKTEST:
+        offset: "0x008C"
+        access: RW
+        reset: "0x000A0000"
+        desc: "Clock Test Register (privileged write; test/debug only)"
+        fields:
+          - { name: RESERVED_31_27, msb: 31, lsb: 27, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: ALTLIMPCLOCKENABLE, bit: 26, access: RW, reset: 0, desc: "Alternate limp clock select via GIOB[0] (privileged write)" }
+          - { name: RANGEDETCTRL, bit: 25, access: RW, reset: 0, desc: "Range detection control (depends on RANGEDETENASSEL) (privileged write)" }
+          - { name: RANGEDETENASSEL, bit: 24, access: RW, reset: 0, desc: "Selects range detection enable source (hardware vs RANGEDETCTRL) (privileged write)" }
+          - { name: RESERVED_23_20, msb: 23, lsb: 20, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: CLK_TEST_EN, msb: 19, lsb: 16, access: RW, reset: 10, desc: "Clock test enable to ECLK pin: 5h=enabled, others=disabled (privileged write)" }
+          - { name: RESERVED_15_12, msb: 15, lsb: 12, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: SEL_GIO_PIN, msb: 11, lsb: 8, access: RW, reset: 0, desc: "GIOB[0] pin clock source valid/status select (privileged write)" }
+          - { name: RESERVED_7_4, msb: 7, lsb: 4, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: SEL_ECP_PIN, msb: 3, lsb: 0, access: RW, reset: 0, desc: "ECLK pin clock source select (privileged write; select only valid sources per CSVSTAT)" }
 
       DFTCTRLREG1: { offset: "0x0090", access: RW, reset: "0x00000000", desc: "DFT Control Register 1" }
       DFTCTRLREG2: { offset: "0x0094", access: RW, reset: "0x00000000", desc: "DFT Control Register 2" }
 
-      GPREG1:     { offset: "0x00A0", access: RW, reset: "0x00000000", desc: "General Purpose Register 1" }
-      BTRMSEL:    { offset: "0x00A4", access: RW, reset: "0x00000000", desc: "Boot ROM Selection Register" }
+      GPREG1:   { offset: "0x00A0", access: RW, reset: "0x00000000", desc: "General Purpose Register 1" }
+      BTRMSEL:  { offset: "0x00A4", access: RW, reset: "0x00000000", desc: "Boot ROM Selection Register" }
 
-      RAMGCR:     { offset: "0x00C0", access: RW, reset: "0x00000000", desc: "RAM Global Control Register" }
-      BMMCR1:     { offset: "0x00C4", access: RW, reset: "0x00000000", desc: "Backup Memory Map Config Register 1" }
-      BMMCR2:     { offset: "0x00C8", access: RW, reset: "0x00000000", desc: "Backup Memory Map Config Register 2" }
-      CPURSTCR:   { offset: "0x00CC", access: RW, reset: "0x00000000", desc: "CPU Reset Control Register" }
+      RAMGCR:   { offset: "0x00C0", access: RW, reset: "0x00000000", desc: "RAM Global Control Register" }
+      BMMCR1:   { offset: "0x00C4", access: RW, reset: "0x00000000", desc: "Backup Memory Map Config Register 1" }
+      BMMCR2:   { offset: "0x00C8", access: RW, reset: "0x00000000", desc: "Backup Memory Map Config Register 2" }
+      CPURSTCR: { offset: "0x00CC", access: RW, reset: "0x00000000", desc: "CPU Reset Control Register" }
 
-      CLKCNTL:    { offset: "0x00D0", access: RW, reset: "0x00000000", desc: "Clock Control Register (bit 8: peripheral enable)" }
-      ECPCNTL:    { offset: "0x00D4", access: RW, reset: "0x00000000", desc: "ECP Control Register" }
+      CLKCNTL:
+        offset: "0x00D0"
+        access: RW
+        reset: "0x01010000"
+        desc: "Clock Control Register"
+        fields:
+          - { name: VCLK2R, msb: 27, lsb: 24, access: RW, reset: 1, desc: "VBUS clock2 ratio: VCLK2 = HCLK / (VCLK2R) where value encodes divide-by (1..16) (privileged write)" }
+          - { name: RESERVED_23_20, msb: 23, lsb: 20, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: VCLKR, msb: 19, lsb: 16, access: RW, reset: 1, desc: "VBUS clock ratio: VCLK = HCLK / (VCLKR) where value encodes divide-by (1..16) (privileged write)" }
+          - { name: RESERVED_15_9, msb: 15, lsb: 9, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: PENA, bit: 8, access: RW, reset: 0, desc: "Peripheral enable: 0=peripheral frames in reset, 1=peripheral frames out of reset" }
+          - { name: RESERVED_7_0, msb: 7, lsb: 0, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
 
-      DEVCR1:     { offset: "0x00DC", access: RW, reset: "0x00000000", desc: "Device Control Register 1" }
-      SYSECR:     { offset: "0x00E0", access: RW, reset: "0x00000000", desc: "System Exception Control Register" }
-      SYSESR:     { offset: "0x00E4", access: RW, reset: "0x00000000", desc: "System Exception Status Register" }
-      SYSTASR:    { offset: "0x00E8", access: RW, reset: "0x00000000", desc: "System Technical Advisory Status Register" }
-      GBLSTAT:    { offset: "0x00EC", access: RW, reset: "0x00000000", desc: "Global Status Register" }
+      ECPCNTL:
+        offset: "0x00D4"
+        access: RW
+        reset: "0x00000000"
+        desc: "ECP Control Register"
+        fields:
+          - { name: RESERVED_31_25, msb: 31, lsb: 25, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: ECPSSEL, bit: 24, access: RW, reset: 0, desc: "ECLK source select: 0=VCLK, 1=OSCIN (other sources via CLKTEST)" }
+          - { name: ECPCOS, bit: 23, access: RW, reset: 0, desc: "ECP continue on suspend: 0=disable ECLK in suspend, 1=keep ECLK running" }
+          - { name: RESERVED_22_18, msb: 22, lsb: 18, access: RO, reset: 0, desc: "Reserved (reads return 0, writes have no effect)" }
+          - { name: ECPINSEL, msb: 17, lsb: 16, access: RW, reset: 0, desc: "ECP input clock source select: 0=tied low, 1=HCLK, 2=external clock, 3=tied low" }
+          - { name: ECPDIV, msb: 15, lsb: 0, access: RW, reset: 0, desc: "ECP divider: ECLK = (VCLK or OSCIN) / (ECPDIV+1)" }
 
-      DEV:        { offset: "0x00F0", access: R,  reset: "0x00000000", desc: "Device Identification Register" }
-      SSIVEC:     { offset: "0x00F4", access: RW, reset: "0x00000000", desc: "SSI Vector Register" }
-      SSIF:       { offset: "0x00F8", access: RW, reset: "0x00000000", desc: "SSI Flag Register" }
+      DEVCR1:   { offset: "0x00DC", access: RW, reset: "0x00000000", desc: "Device Control Register 1" }
+      SYSECR:   { offset: "0x00E0", access: RW, reset: "0x00000000", desc: "System Exception Control Register" }
+      SYSESR:   { offset: "0x00E4", access: RW, reset: "0x00000000", desc: "System Exception Status Register" }
+      SYSTASR:  { offset: "0x00E8", access: RW, reset: "0x00000000", desc: "System Technical Advisory Status Register" }
+      GBLSTAT:  { offset: "0x00EC", access: RW, reset: "0x00000000", desc: "Global Status Register" }
+
+      DEV:      { offset: "0x00F0", access: RO, reset: "0x00000000", desc: "Device Identification Register" }
+      SSIVEC:   { offset: "0x00F4", access: RW, reset: "0x00000000", desc: "SSI Vector Register" }
+      SSIF:     { offset: "0x00F8", access: RW, reset: "0x00000000", desc: "SSI Flag Register" }
 
   PCR:
     base_address: "0xFFFFE000"
@@ -261,3 +484,4 @@ peripherals:
 provenance:
   notes:
     - "GIO base and port register layouts/addresses from RM46_Hardware_Info.md"
+    - "SYSTEM clock/register fields and reset values extracted from RM46_ClockSysRegs.pdf (SPNU514C)."

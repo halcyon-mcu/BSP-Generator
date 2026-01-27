@@ -41,6 +41,9 @@ soc:
             op: "set_bits"
             value: "0x00000100"
 
+        
+        base_clock_refs: ["OSCIN","HF_LPO","LF_LPO","GCLK","HCLK","VCLK"]
+
     - name: "PCR"
       type: "pcr"
       instance: 0
@@ -53,7 +56,7 @@ soc:
       instance: 1
       regs_ref: "GIO"
       irq_ref: ["GIO_A", "GIO_B"]
-      clock_ref: "VCLK1"
+      clock_ref: "VCLK"
       x-ext: 
         init:
           - reg: "GIO.GCR0"
@@ -65,7 +68,7 @@ soc:
       instance: 1
       regs_ref: "SCI"
       irq_ref: ["SCI_LVL0", "SCI_LVL1", "LIN_LVL0", "LIN_LVL1"]          
-      clock_ref: "VCLK1"
+      clock_ref: "VCLK"
       x-ext:
         init:
           # SCI initialization sequence per TRM Section 28
@@ -89,7 +92,7 @@ soc:
           # Step 5: Configure baud rate (BRS register - value depends on target baud)
           # - reg: "SCI.BRS"
           #   op: "write"
-          #   value: "0x000000XX"    # Calculate based on VCLK1 and desired baud
+          #   value: "0x000000XX"    # Calculate based on VCLK and desired baud
           
           # Step 6: Set CLOCK bit to select internal clock
           - reg: "SCI.SCIGCR1"

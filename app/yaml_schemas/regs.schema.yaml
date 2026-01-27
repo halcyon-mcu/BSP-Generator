@@ -1,0 +1,68 @@
+$id: regs.schema.yaml
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+additionalProperties: false
+required: [ir_schema_version, peripherals]
+properties:
+  ir_schema_version: { type: string, const: "1.1.0" }
+  peripherals:
+    type: object
+    minProperties: 1
+    additionalProperties: { $ref: "#/$defs/peripheral" }
+  provenance: { type: object, additionalProperties: true }
+$defs:
+  hex: { type: string, pattern: "^0x[0-9A-Fa-f]+$" }
+  access: { type: string, enum: [RO, WO, RW, RC, RWC, R] }
+  ext: { type: object, additionalProperties: true }
+  peripheral:
+    type: object
+    additionalProperties: false
+    required: [base_address, registers]
+    properties:
+      base_address: { $ref: "#/$defs/hex" }
+      desc: { type: string }
+      registers:
+        type: object
+        minProperties: 1
+        additionalProperties: { $ref: "#/$defs/register" }
+      x-ext: { $ref: "#/$defs/ext" }
+  register:
+    type: object
+    additionalProperties: false
+    required: [offset, access]
+    properties:
+      offset: { $ref: "#/$defs/hex" }
+      access: { $ref: "#/$defs/access" }
+      reset: { $ref: "#/$defs/hex" }
+      desc: { type: string }
+      fields: { type: array, items: { $ref: "#/$defs/field" } }
+      x-ext: { $ref: "#/$defs/ext" }
+  field:
+    type: object
+    additionalProperties: false
+    required: [name, access]
+    properties:
+      name: { type: string }
+      bit: { type: integer, minimum: 0, maximum: 31 }
+      msb: { type: integer, minimum: 0, maximum: 31 }
+      lsb: { type: integer, minimum: 0, maximum: 31 }
+      access: { $ref: "#/$defs/access" }
+      reset: { type: integer, minimum: 0 }
+      desc: { type: string }
+      modes: { type: array, items: { type: string } }
+      write_behavior: { type: string }
+      write_constraint: { type: string }
+      enum: { type: array, items: { $ref: "#/$defs/fieldEnum" } }
+      x-ext: { $ref: "#/$defs/ext" }
+    allOf:
+      - oneOf:
+          - required: [bit]
+          - required: [msb, lsb]
+  fieldEnum:
+    type: object
+    additionalProperties: false
+    required: [name, value]
+    properties:
+      name: { type: string }
+      value: { type: integer }
+      desc: { type: string }

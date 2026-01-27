@@ -1,0 +1,43 @@
+$id: pinmux.schema.yaml
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+additionalProperties: false
+required: [ir_schema_version, package, pins]
+properties:
+  ir_schema_version: { type: string, const: "1.1.0" }
+  package: { type: string }             # e.g., LQFP144
+  pins:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      additionalProperties: false
+      required: [pad, functions]
+      properties:
+        pad: { type: string }           # ball/pad ID
+        name: { type: string }
+        defaults:
+          type: object
+          additionalProperties: false
+          properties:
+            pull:  { enum: [none, up, down] }
+            drive: { type: string }
+        functions:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [af, signal]
+            properties:
+              af:     { type: string }  # AF mnemonic
+              signal: { type: string }  # e.g., SCI1.TX or GPIO1[5]
+              requires_pull: { enum: [up, down] }
+              x-ext:  { type: object }
+  constraints: { type: object }
+  provenance:  { type: object }
+
+
+
+
+

@@ -1,0 +1,57 @@
+$id: soc.schema.yaml
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+additionalProperties: false
+required: [ir_schema_version, chip, vendor, soc]
+properties:
+  ir_schema_version: { type: string, const: "1.1.0" }
+  chip: { type: string }
+  vendor: { type: string }
+  family: { type: string }
+  revision: { type: string }
+  soc:
+    type: object
+    additionalProperties: false
+    required: [cpu, peripherals]
+    properties:
+      cpu:
+        type: object
+        additionalProperties: false
+        required: [cores]
+        properties:
+          cores:
+            type: array
+            minItems: 1
+            items:
+              type: object
+              additionalProperties: false
+              required: [name, arch, word_size_bits, endianness]
+              properties:
+                name: { type: string }
+                arch: { type: string }            # e.g., armv7-r
+                endianness: { enum: [little, big] }
+                word_size_bits: { type: integer, enum: [8,16,32,64] }
+                fpu: { type: [string, "null"] }
+      peripherals:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          additionalProperties: false
+          required: [name, type, regs_ref, clock_ref]
+          properties:
+            name: { type: string }               # e.g., GPIO1
+            type: { type: string }               # normalized type: gpio|uart|i2c|spi|adc|timer|can|emac|...
+            instance: { type: integer }          # 1..N
+            regs_ref: { type: string }           # key in regs.yaml
+            irq_ref:
+              type: array
+              items: { type: string }            # keys in irq.yaml
+            clock_ref: { type: string }          # domain/gate name in bus.yaml
+            x-ext: { type: object }
+  provenance: { type: object }
+
+
+
+
+

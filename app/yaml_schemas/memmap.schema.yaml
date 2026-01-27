@@ -1,0 +1,31 @@
+$id: memmap.schema.yaml
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+additionalProperties: false
+required: [ir_schema_version, memory]
+properties:
+  ir_schema_version: { type: string, const: "1.1.0" }
+  memory:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      additionalProperties: false
+      required: [name, origin, length, attrs]
+      properties:
+        name:   { type: string }
+        origin: { type: string, pattern: "^0x[0-9A-F]+$" }
+        length:
+          oneOf:
+            - { type: string }         # "128K", "1M"
+            - { type: integer, minimum: 1 }
+        attrs:  { type: string }       # rx, rwx...
+        x-ext:  { type: object }
+  link:      { type: object }
+  startup:   { type: object }
+  provenance:{ type: object }
+
+
+
+
+
