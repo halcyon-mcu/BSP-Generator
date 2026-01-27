@@ -133,7 +133,7 @@ domains:
       notes:
         - "CPU clock; same freq and phase as HCLK"
         - "During CPU self-test (LBIST), GCLK may be divided by 1..8 via STCCLKDIV.CLKDIV (reset use is application-controlled)"
-      lbist_divider_reg: SYSTEM.STCCLKDIV
+      lbist_divider_reg: SYSTEM2.STCCLKDIV
       lbist_divider_field: CLKDIV
       lbist_divider_range: [1, 8]
 
@@ -231,7 +231,7 @@ domains:
     divider: 1
     x-ext:
       clock_domain_id: 10
-      source_sel_reg: SYSTEM.VCLKACON1
+      source_sel_reg: SYSTEM2.VCLKACON1
       cddis_bit: 10
       notes:
         - "Defaults to VCLK as the source"
@@ -241,7 +241,7 @@ domains:
     parent: VCLKA3_S
     divider: 2
     x-ext:
-      divider_reg: SYSTEM.VCLKACON1
+      divider_reg: SYSTEM2.VCLKACON1
       divider_field: VCLKA3R
       divider_range: [1, 8]
       default_divider: 2
@@ -253,7 +253,7 @@ domains:
     divider: 1
     x-ext:
       clock_domain_id: 11
-      source_sel_reg: SYSTEM.VCLKACON1
+      source_sel_reg: SYSTEM2.VCLKACON1
       cddis_bit: 11
       notes:
         - "Defaults to VCLK as the source"
@@ -263,7 +263,7 @@ domains:
     parent: VCLKA4_S
     divider: 2
     x-ext:
-      divider_reg: SYSTEM.VCLKACON1
+      divider_reg: SYSTEM2.VCLKACON1
       divider_field: VCLKA4R
       divider_range: [1, 8]
       default_divider: 2
@@ -356,10 +356,10 @@ gates:
   # Local divider disables in VCLKACON1 (active-high disables)
   - name: VCLKA3_DIVR_LOCAL_EN
     parent: VCLKA3_DIVR
-    x-ext: { reg: SYSTEM.VCLKACON1, field: VCLKA3_DIV_CDDIS, active_high_disables: true }
+    x-ext: { reg: SYSTEM2.VCLKACON1, field: VCLKA3_DIV_CDDIS, active_high_disables: true }
   - name: VCLKA4_DIVR_LOCAL_EN
     parent: VCLKA4_DIVR
-    x-ext: { reg: SYSTEM.VCLKACON1, field: VCLKA4_DIV_CDDIS, active_high_disables: true }
+    x-ext: { reg: SYSTEM2.VCLKACON1, field: VCLKA4_DIV_CDDIS, active_high_disables: true }
 
   # Peripheral Select power-down clears (project policy: enable all PS clocks at startup)
   - name: PCR_PS_ALL_ENABLE

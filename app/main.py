@@ -19,6 +19,7 @@ from modules.prompt import (
     build_entry_prompt,           # entry.c
     build_start_asm_prompt,       # start.s
     build_vim_prompt,             # VIM driver
+    _progress,                    # global progress tracker
 )
 from modules.user import prompt_user_for_peripherals
 
@@ -35,20 +36,21 @@ from modules.yaml_utils import (
 )
 
 
-def _invoke_with_prompts(
+async def _invoke_and_write(
     tag: str,
     system_prompt: str,
     user_prompt: str,
     model_enum: Model,
     max_tokens: int,
     artifacts_dir: Path,
+    out_dir: Path,
 ):
     """
     Helper to:
       - save system/user prompts for this call,
       - invoke the model,
       - save raw text,
-      - return the extracted text (or "" on empty).
+      - split and write files immediately upon completion.
     """
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -68,11 +70,9 @@ def _invoke_with_prompts(
     ]
 
     print(f"[info] Invoking {model_enum.name} for {tag} …")
-    resp = invoke_model(model_enum, max_tokens, messages)
-
-    # Handle async/sync return
-    if inspect.isawaitable(resp):
-        resp = asyncio.run(resp)
+    
+    # invoke_model is now truly async
+    resp = await invoke_model(model_enum, max_tokens, messages)
 
     text = extract_text_from_bedrock_response(resp)
     ts = _now_tag()
@@ -82,14 +82,168 @@ def _invoke_with_prompts(
             str(resp), encoding="utf-8"
         )
         print(f"[warn] Empty model text for {tag}; raw response saved.")
-        return ""
+        return []
 
     (artifacts_dir / f"{tag}_llm_text_{ts}.txt").write_text(text, encoding="utf-8")
-    return text
+    
+    # Write files immediately
+    written_files = split_and_write_files(text, out_dir)
+    for file in written_files:
+        try:
+            relative_path = file.relative_to(out_dir)
+        except ValueError:
+            relative_path = file
+        print(f"[ok] {tag}: {relative_path}")
+    
+    return written_files
+
+
+async def _generate_startup(
+    system_prompt: str,
+    model_enum: Model,
+    max_tokens: int,
+    artifacts_dir: Path,
+    out_dir: Path,
+    start_user_prompt: str,
+):
+    """Generate start.s (assembly vector / SP setup)"""
+    return await _invoke_and_write(
+        tag="start_asm",
+        system_prompt=system_prompt,
+        user_prompt=start_user_prompt,
+        model_enum=model_enum,
+        max_tokens=max_tokens,
+        artifacts_dir=artifacts_dir,
+        out_dir=out_dir,
+    )
+
+
+async def _generate_entry(
+    system_prompt: str,
+    model_enum: Model,
+    max_tokens: int,
+    artifacts_dir: Path,
+    out_dir: Path,
+    entry_user_prompt: str,
+):
+    """Generate entry.c (Reset_Handler_C → system_init() → main())"""
+    return await _invoke_and_write(
+        tag="entry_c",
+        system_prompt=system_prompt,
+        user_prompt=entry_user_prompt,
+        model_enum=model_enum,
+        max_tokens=max_tokens,
+        artifacts_dir=artifacts_dir,
+        out_dir=out_dir,
+    )
+
+
+async def _generate_clock(
+    system_prompt: str,
+    model_enum: Model,
+    max_tokens: int,
+    artifacts_dir: Path,
+    out_dir: Path,
+    clock_user_prompt: str,
+):
+    """Generate clock setup code"""
+    return await _invoke_and_write(
+        tag="clock_setup",
+        system_prompt=system_prompt,
+        user_prompt=clock_user_prompt,
+        model_enum=model_enum,
+        max_tokens=max_tokens,
+        artifacts_dir=artifacts_dir,
+        out_dir=out_dir,
+    )
+
+
+async def _generate_system(
+    system_prompt: str,
+    model_enum: Model,
+    max_tokens: int,
+    artifacts_dir: Path,
+    out_dir: Path,
+    system_init_user_prompt: str,
+):
+    """Generate system.c / system.h"""
+    return await _invoke_and_write(
+        tag="system_init",
+        system_prompt=system_prompt,
+        user_prompt=system_init_user_prompt,
+        model_enum=model_enum,
+        max_tokens=max_tokens,
+        artifacts_dir=artifacts_dir,
+        out_dir=out_dir,
+    )
+
+
+async def _generate_linker(
+    system_prompt: str,
+    model_enum: Model,
+    max_tokens: int,
+    artifacts_dir: Path,
+    out_dir: Path,
+    linker_user_prompt: str,
+):
+    """Generate linker script"""
+    return await _invoke_and_write(
+        tag="linker",
+        system_prompt=system_prompt,
+        user_prompt=linker_user_prompt,
+        model_enum=model_enum,
+        max_tokens=max_tokens,
+        artifacts_dir=artifacts_dir,
+        out_dir=out_dir,
+    )
+
+
+async def _generate_vim(
+    system_prompt: str,
+    model_enum: Model,
+    max_tokens: int,
+    artifacts_dir: Path,
+    out_dir: Path,
+    vim_user_prompt: str,
+):
+    """Generate VIM driver"""
+    return await _invoke_and_write(
+        tag="vim_driver",
+        system_prompt=system_prompt,
+        user_prompt=vim_user_prompt,
+        model_enum=model_enum,
+        max_tokens=max_tokens,
+        artifacts_dir=artifacts_dir,
+        out_dir=out_dir,
+    )
+
+
+async def _generate_peripheral(
+    periph: dict,
+    system_prompt: str,
+    model_enum: Model,
+    max_tokens: int,
+    artifacts_dir: Path,
+    out_dir: Path,
+    periph_user_prompt: str,
+):
+    """Generate driver for a single peripheral"""
+    name = str(periph.get("name", "UNKNOWN"))
+    tag = f"periph_{name.lower()}"
+    
+    return await _invoke_and_write(
+        tag=tag,
+        system_prompt=system_prompt,
+        user_prompt=periph_user_prompt,
+        model_enum=model_enum,
+        max_tokens=max_tokens,
+        artifacts_dir=artifacts_dir,
+        out_dir=out_dir,
+    )
 
 
 # ---------------- Main ----------------
-def main():
+async def main():
     parser = argparse.ArgumentParser(
         description="YAML-in → Claude → BSP-out (multi-peripheral BSP)"
     )
@@ -127,6 +281,7 @@ def main():
     )
     args = parser.parse_args()
 
+    # Parse target flags
     targets = set(args.targets)
     generate_start = "all" in targets or "startup" in targets
     generate_entry = "all" in targets or "entry" in targets
@@ -136,7 +291,7 @@ def main():
     generate_clock = "all" in targets or "clock" in targets
     generate_peripherals = "all" in targets or "peripherals" in targets
 
-    # Root for this run: output_<timestamp>
+    # Setup output directories
     base_out = Path(args.out)
     run_tag = _now_tag()
     out_dir = base_out / f"output_{run_tag}"
@@ -145,20 +300,14 @@ def main():
     artifacts = out_dir / "_artifacts"
     artifacts.mkdir(parents=True, exist_ok=True)
 
-    # Load structured YAMLs for slicing
-    soc_path = Path(args.yamlpath) / "soc.yaml"
-    regs_path = Path(args.yamlpath) / "regs.yaml"
-    irq_path = Path(args.yamlpath) / "irq.yaml"
-    memmap_path = Path(args.yamlpath) / "memmap.yaml"
-    bus_path = Path(args.yamlpath) / "bus.yaml"
+    # Load YAMLs
+    soc_data = load_soc_yaml(Path(args.yamlpath) / "soc.yaml")
+    regs_data = load_regs_yaml(Path(args.yamlpath) / "regs.yaml")
+    irq_data = load_irq_yaml(Path(args.yamlpath) / "irq.yaml")
+    memmap_data = load_memmap_yaml(Path(args.yamlpath) / "memmap.yaml")
+    bus_data = load_bus_yaml(Path(args.yamlpath) / "bus.yaml")
 
-    soc_data = load_soc_yaml(soc_path)
-    regs_data = load_regs_yaml(regs_path)
-    irq_data = load_irq_yaml(irq_path)
-    memmap_data = load_memmap_yaml(memmap_path)
-    bus_data = load_bus_yaml(bus_path)
-
-    # Let the user choose which peripherals to generate drivers for (if requested)
+    # Get user peripheral selections
     if generate_peripherals:
         chosen_peripherals = prompt_user_for_peripherals(soc_data)
         if not chosen_peripherals:
@@ -170,10 +319,8 @@ def main():
         chosen_peripherals = []
         print("[info] Peripheral driver generation disabled by --targets.")
 
-    # Build the global system prompt once (FACTS_POLICY, file separators, etc.)
+    # Setup model and system prompt
     system_prompt = build_system_prompt()
-
-    # Map CLI string to your Model enum
     model_enum = {
         "haiku3.0": Model.HAIKU_3_0,
         "haiku4.5": Model.HAIKU_4_5,
@@ -181,60 +328,29 @@ def main():
         "sonnet4.5": Model.SONNET_4_5,
     }[args.model]
 
-    all_written: list[Path] = []
-
-    # 1) start.s (assembly vector / SP setup)
+    # Prepare prompts upfront (before launching concurrent tasks)
+    print("[info] Preparing prompts...")
+    
+    start_user_prompt = None
     if generate_start:
         start_user_prompt = build_start_asm_prompt()
-        start_text = _invoke_with_prompts(
-            tag="start_asm",
-            system_prompt=system_prompt,
-            user_prompt=start_user_prompt,
-            model_enum=model_enum,
-            max_tokens=args.max_tokens,
-            artifacts_dir=artifacts,
-        )
-        if start_text:
-            all_written += split_and_write_files(start_text, out_dir)
-    else:
-        print("[info] Skipping startup (start.s) generation due to --targets.")
 
-    # 2) entry.c (Reset_Handler_C → system_init() → main())
+    entry_user_prompt = None
     if generate_entry:
         entry_user_prompt = build_entry_prompt()
-        entry_text = _invoke_with_prompts(
-            tag="entry_c",
-            system_prompt=system_prompt,
-            user_prompt=entry_user_prompt,
-            model_enum=model_enum,
-            max_tokens=args.max_tokens,
-            artifacts_dir=artifacts,
-        )
-        if entry_text:
-            all_written += split_and_write_files(entry_text, out_dir)
-    else:
-        print("[info] Skipping entry.c generation due to --targets.")
 
+    clock_user_prompt = None
     if generate_clock:
         system_soc_slice, system_regs_slice = build_system_slices_for_prompt(
             soc_data, regs_data
         )
-        clock_user_prompt = build_clock_prompt(soc_yaml=system_soc_slice, regs_yaml=system_regs_slice, bus_yaml=bus_data)
-        clock_text = _invoke_with_prompts(
-            tag="clock_setup",
-            system_prompt=system_prompt,
-            user_prompt=clock_user_prompt,
-            model_enum=model_enum,
-            max_tokens=args.max_tokens,
-            artifacts_dir=artifacts,
+        clock_user_prompt = build_clock_prompt(
+            soc_yaml=system_soc_slice,
+            regs_yaml=system_regs_slice,
+            bus_yaml=bus_data
         )
-        if clock_text:
-            all_written += split_and_write_files(clock_text, out_dir)
 
-    else:
-        print("[info] Skipping clock setup generation due to --targets.")
-        
-    # 3) system.c / system.h (system_init using SYSTEM + PCR slices)
+    system_init_user_prompt = None
     if generate_system:
         system_soc_slice, system_regs_slice = build_system_slices_for_prompt(
             soc_data, regs_data
@@ -242,37 +358,13 @@ def main():
         system_init_user_prompt = build_system_init_prompt(
             system_soc_slice, system_regs_slice
         )
-        system_init_text = _invoke_with_prompts(
-            tag="system_init",
-            system_prompt=system_prompt,
-            user_prompt=system_init_user_prompt,
-            model_enum=model_enum,
-            max_tokens=args.max_tokens,
-            artifacts_dir=artifacts,
-        )
-        if system_init_text:
-            all_written += split_and_write_files(system_init_text, out_dir)
-    else:
-        print("[info] Skipping system.c/system.h generation due to --targets.")
 
-    # 4) Linker script (FLASH/RAM from MEMMAP slice)
+    linker_user_prompt = None
     if generate_linker:
         memmap_slice_str = build_memmap_slice_for_prompt(memmap_data)
         linker_user_prompt = build_linker_prompt(memmap_slice_str)
-        linker_text = _invoke_with_prompts(
-            tag="linker",
-            system_prompt=system_prompt,
-            user_prompt=linker_user_prompt,
-            model_enum=model_enum,
-            max_tokens=args.max_tokens,
-            artifacts_dir=artifacts,
-        )
-        if linker_text:
-            all_written += split_and_write_files(linker_text, out_dir)
-    else:
-        print("[info] Skipping linker.cmd generation due to --targets.")
 
-    # 5) VIM driver
+    vim_user_prompt = None
     if generate_vim:
         vim_soc_slice, vim_regs_slice, _ = build_peripheral_slices_for_prompt(
             soc_data, regs_data, irq_data, "VIM"
@@ -280,69 +372,170 @@ def main():
         vim_user_prompt = build_vim_prompt(
             vim_soc_slice, vim_regs_slice, dump_yaml_str(irq_data)
         )
-        vim_text = _invoke_with_prompts(
-            tag="vim_driver",
-            system_prompt=system_prompt,
-            user_prompt=vim_user_prompt,
-            model_enum=model_enum,
-            max_tokens=args.max_tokens,
-            artifacts_dir=artifacts,
-        )
-        if vim_text:
-            all_written += split_and_write_files(vim_text, out_dir)
 
-    # 6) Per-peripheral drivers (one call per selected peripheral)
+    # Prepare peripheral prompts
+    peripheral_prompts = {}
     if generate_peripherals and chosen_peripherals:
         for periph in chosen_peripherals:
-            name = str(periph.get("name", "UNKNOWN"))
-            tag = f"periph_{name.lower()}"
+            name = str(periph.get("name", "UNKNOWN")).upper()
+            # Skip VIM as it's generated separately above
+            if name == "VIM":
+                print(f"[info] Skipping {name}; already generated as system component.")
+                continue
 
-            # Build YAML slices for THIS peripheral (soc + regs)
             soc_slice_str, regs_slice_str, irq_slice_str = build_peripheral_slices_for_prompt(
                 soc_data, regs_data, irq_data, name
             )
-
-            # Reuse build_user_prompt for per-peripheral driver generation
-            periph_user_prompt = build_user_prompt(soc_slice_str, regs_slice_str, irq_slice_str)
-            text = _invoke_with_prompts(
-                tag=tag,
-                system_prompt=system_prompt,
-                user_prompt=periph_user_prompt,
-                model_enum=model_enum,
-                max_tokens=args.max_tokens,
-                artifacts_dir=artifacts,
+            periph_user_prompt = build_user_prompt(
+                soc_slice_str, regs_slice_str, irq_slice_str
             )
-            if text:
-                all_written += split_and_write_files(text, out_dir)
+            peripheral_prompts[name] = (periph, periph_user_prompt)
 
-    if all_written:
-        print("\n[ok] Generated files in", out_dir)
-        for p in all_written:
-            try:
-                print("  -", p.relative_to(out_dir))
-            except ValueError:
-                print("  -", p)
+    # Build generation tasks (now just async wrappers around pre-built prompts)
+    generation_tasks = []
+
+    if generate_start:
+        generation_tasks.append(
+            _generate_startup(
+                system_prompt, model_enum, args.max_tokens, artifacts, out_dir,
+                start_user_prompt
+            )
+        )
+        print("[debug] Added task: start_asm")
     else:
-        print("[warn] No files split. See _artifacts/ for raw outputs and preamble.")
+        print("[info] Skipping startup (start.s) generation due to --targets.")
+
+    if generate_entry:
+        generation_tasks.append(
+            _generate_entry(
+                system_prompt, model_enum, args.max_tokens, artifacts, out_dir,
+                entry_user_prompt
+            )
+        )
+        print("[debug] Added task: entry_c")
+    else:
+        print("[info] Skipping entry.c generation due to --targets.")
+
+    if generate_clock:
+        generation_tasks.append(
+            _generate_clock(
+                system_prompt,
+                model_enum,
+                args.max_tokens,
+                artifacts,
+                out_dir,
+                clock_user_prompt,
+            )
+        )
+        print("[debug] Added task: clock_setup")
+    else:
+        print("[info] Skipping clock setup generation due to --targets.")
+
+    if generate_system:
+        generation_tasks.append(
+            _generate_system(
+                system_prompt,
+                model_enum,
+                args.max_tokens,
+                artifacts,
+                out_dir,
+                system_init_user_prompt,
+            )
+        )
+        print("[debug] Added task: system_init")
+    else:
+        print("[info] Skipping system.c/system.h generation due to --targets.")
+
+    if generate_linker:
+        generation_tasks.append(
+            _generate_linker(
+                system_prompt,
+                model_enum,
+                args.max_tokens,
+                artifacts,
+                out_dir,
+                linker_user_prompt,
+            )
+        )
+        print("[debug] Added task: linker")
+    else:
+        print("[info] Skipping linker.cmd generation due to --targets.")
+
+    if generate_vim:
+        generation_tasks.append(
+            _generate_vim(
+                system_prompt,
+                model_enum,
+                args.max_tokens,
+                artifacts,
+                out_dir,
+                vim_user_prompt,
+            )
+        )
+        print("[debug] Added task: vim_driver")
+
+    if peripheral_prompts:
+        for name, (periph, periph_user_prompt) in peripheral_prompts.items():
+            generation_tasks.append(
+                _generate_peripheral(
+                    periph,
+                    system_prompt,
+                    model_enum,
+                    args.max_tokens,
+                    artifacts,
+                    out_dir,
+                    periph_user_prompt,
+                )
+            )
+            print(f"[debug] Added task: periph_{name.lower()}")
+
+    # Run all generation tasks concurrently
+    if generation_tasks:
+        print(f"[info] Total tasks to run: {len(generation_tasks)}")
+        print("[info] Starting concurrent generation of all components...\n")
+        
+        # Initialize progress tracker
+        _progress.set_total(len(generation_tasks))
+        _progress.stop_event.clear()
+        
+        # Start the global progress spinner
+        spinner_thread = _progress.start_spinner()
+        
+        try:
+            await asyncio.gather(*generation_tasks)
+        finally:
+            # Stop progress spinner
+            _progress.stop_spinner()
+            spinner_thread.join(timeout=1)
+            print()  # Newline after progress bar
+    else:
+        print("[warn] No generation tasks created.")
+
+    # Generate documentation
+    await _generate_documentation(out_dir)
 
 
-    print(f"\n [info] Creating documentation with Doxygen")
+async def _generate_documentation(out_dir: Path):
+    """Generate Doxygen documentation (optional, skipped if doxygen not available)"""
+    print(f"\n[info] Creating documentation with Doxygen")
     docs_dir = out_dir / "docs"
     docs_dir.mkdir(parents=True, exist_ok=True)
+    
     try:
         doxy_path = write_doxyfile(docs_dir)
         run_doxygen(out_dir, doxy_path)
-    except Exception as e:
-        print(f"[error] Doxygen generation failed: {e}")
-
-    else:
         print(f"[ok] Documentation generated in {docs_dir / 'html'}.")
-
+        
         if (docs_dir / "html" / "index.html").exists():
-            print(f"[info] Docs index located at {os.path.abspath(docs_dir / 'html' / 'index.html')}.")
-
+            abs_path = os.path.abspath(docs_dir / "html" / "index.html")
+            print(f"[info] Docs index located at {abs_path}.")
+    except FileNotFoundError as e:
+        print(f"[warn] Doxygen not found in system PATH. Install doxygen to generate documentation.")
+        print(f"       Details: {e}")
+    except Exception as e:
+        print(f"[warn] Doxygen generation failed (documentation skipped).")
+        print(f"       Details: {e}")
 
 
 if __name__ == "__main__":
-    main()
-    
+    asyncio.run(main())

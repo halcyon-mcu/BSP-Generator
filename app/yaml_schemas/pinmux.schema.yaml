@@ -5,17 +5,17 @@ additionalProperties: false
 required: [ir_schema_version, package, pins]
 properties:
   ir_schema_version: { type: string, const: "1.1.0" }
-  package: { type: string }             # e.g., LQFP144
+  package: { type: string }
   pins:
     type: array
     minItems: 1
     items:
       type: object
       additionalProperties: false
-      required: [pad, functions]
+      required: [name, functions] # 'pad' is optional until schematic data is available
       properties:
-        pad: { type: string }           # ball/pad ID
-        name: { type: string }
+        pad: { type: string, description: "Physical ball/pin ID (e.g., N17) from schematic/datasheet" }
+        name: { type: string, description: "Primary signal name or functional group name" }
         defaults:
           type: object
           additionalProperties: false
@@ -28,16 +28,17 @@ properties:
           items:
             type: object
             additionalProperties: false
-            required: [af, signal]
+            required: [af, signal, mux]
             properties:
-              af:     { type: string }  # AF mnemonic
-              signal: { type: string }  # e.g., SCI1.TX or GPIO1[5]
+              af:     { type: string, description: "Alternate Function ID/Index" }
+              signal: { type: string, description: "Signal name e.g. SCI1.TX" }
+              mux:
+                type: object
+                required: [register, bit]
+                properties:
+                  register: { type: string, description: "Register name (e.g. PINMMR0)" }
+                  bit: { type: integer, minimum: 0, maximum: 31, description: "Bit index within the register" }
               requires_pull: { enum: [up, down] }
               x-ext:  { type: object }
   constraints: { type: object }
   provenance:  { type: object }
-
-
-
-
-

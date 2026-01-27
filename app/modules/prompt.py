@@ -3,6 +3,7 @@ import os
 import sys
 import threading
 import time
+import asyncio
 import boto3
 from botocore.config import Config
 from langchain_aws import BedrockEmbeddings
@@ -1423,29 +1424,96 @@ class Message(TypedDict):
     content: str
 
 
-async def invoke_model(model: Model, max_tokens: int, messages: list[Message]) -> str:
-    body = {
-        "max_tokens": max_tokens,
-        "anthropic_version": "bedrock-2023-05-31",
-        "messages": messages,
-    }
-
-    # Start progress indicator
-    stop_spinner = threading.Event()
-    spinner_thread = threading.Thread(target=_show_progress, args=(stop_spinner,))
-    spinner_thread.daemon = True
-    spinner_thread.start()
-
-    try:
-        response = client.invoke_model(modelId=model.get_model_id(), body=json.dumps(body))
-        return response
-    finally:
-        # Stop the spinner
-        stop_spinner.set()
-        spinner_thread.join(timeout=1)
-        # Clear the spinner line
-        sys.stdout.write('\r' + ' ' * 50 + '\r')
+class _ProgressTracker:
+    """Thread-safe progress tracker for concurrent generation tasks."""
+    def __init__(self):
+        self.total_tasks = 0
+        self.completed_tasks = 0
+        self.lock = threading.Lock()
+        self.stop_event = threading.Event()
+    
+    def set_total(self, total: int):
+        with self.lock:
+            self.total_tasks = total
+    
+    def increment(self):
+        with self.lock:
+            self.completed_tasks += 1
+            return self.completed_tasks, self.total_tasks
+    
+    def start_spinner(self):
+        spinner_thread = threading.Thread(target=self._show_progress)
+        spinner_thread.daemon = True
+        spinner_thread.start()
+        return spinner_thread
+    
+    def stop_spinner(self):
+        self.stop_event.set()
+    
+    def _show_progress(self):
+        """Display overall progress while tasks are running."""
+        spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+        idx = 0
+        start_time = time.time()
+        
+        while not self.stop_event.is_set():
+            with self.lock:
+                completed = self.completed_tasks
+                total = self.total_tasks
+            
+            elapsed = int(time.time() - start_time)
+            minutes, seconds = divmod(elapsed, 60)
+            spinner = spinner_chars[idx % len(spinner_chars)]
+            
+            progress_str = f'{spinner} Generating: {completed}/{total} tasks completed ({minutes:02d}:{seconds:02d})'
+            sys.stdout.write(f'\r{progress_str:<70}')
+            sys.stdout.flush()
+            idx += 1
+            time.sleep(0.1)
+        
+        # Final clear
+        sys.stdout.write('\r' + ' ' * 70 + '\r')
         sys.stdout.flush()
+
+
+# Global progress tracker for concurrent generation
+_progress = _ProgressTracker()
+
+# Semaphore to limit concurrent API calls (Bedrock has rate limits)
+# Will be created in invoke_model on first call
+_model_semaphore = None
+
+
+async def invoke_model(model: Model, max_tokens: int, messages: list[Message]) -> str:
+    """
+    Invoke the Bedrock model with concurrency limiting.
+    Only allows up to 2 concurrent model invocations to avoid rate limiting.
+    """
+    global _model_semaphore
+    if _model_semaphore is None:
+        _model_semaphore = asyncio.Semaphore(2)
+    
+    async with _model_semaphore:
+        body = {
+            "max_tokens": max_tokens,
+            "anthropic_version": "bedrock-2023-05-31",
+            "messages": messages,
+        }
+
+        try:
+            # Run the blocking API call in a thread pool executor to avoid blocking the event loop
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: client.invoke_model(
+                    modelId=model.get_model_id(),
+                    body=json.dumps(body)
+                )
+            )
+            return response
+        finally:
+            # Mark this task as completed for progress tracking
+            _progress.increment()
 
 
 def _show_progress(stop_event):

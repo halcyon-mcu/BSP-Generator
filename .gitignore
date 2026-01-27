@@ -10,7 +10,6 @@ uv.lock
 
 __pycache__
 
-*.pdf
 
 # Ignore all output folders with timestamp pattern
 app/output_*/
