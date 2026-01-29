@@ -35,6 +35,18 @@ soc:
           - reg: "PCR.PSPWRDWNCLR3"
             op: "set_bits"
             value: "0xFFFFFFFF"
+          - reg: "PCR.PCSPWRDWNCLR0"
+            op: "set_bits"
+            value: "0xFFFFFFFF"
+          - reg: "PCR.PCSPWRDWNCLR1"
+            op: "set_bits"
+            value: "0xFFFFFFFF"
+          - reg: "PCR.PCSPWRDWNCLR2"
+            op: "set_bits"
+            value: "0xFFFFFFFF"
+          - reg: "PCR.PCSPWRDWNCLR3"
+            op: "set_bits"
+            value: "0xFFFFFFFF"
 
           # Enable peripheral access via global gate in CLKCNTL (bit 8)
           - reg: "SYSTEM.CLKCNTL"

@@ -12,33 +12,42 @@ properties:
     items:
       type: object
       additionalProperties: false
-      required: [name, functions] # 'pad' is optional until schematic data is available
+      required: [name, functions]
       properties:
-        pad: { type: string, description: "Physical ball/pin ID (e.g., N17) from schematic/datasheet" }
-        name: { type: string, description: "Primary signal name or functional group name" }
+        # Added: Physical pin number on the chip package (e.g., 96)
+        package_pin: { type: integer, description: "Physical Pin Number on the PGE144 package" }
+        
+        # Internal Signal Name (from Datasheet)
+        name: { type: string }
+        
+        # Added: Board-level connections (from Schematic)
+        board:
+          type: object
+          properties:
+            net: { type: string, description: "Net name as it appears on the schematic wires" }
+            connects_to: { type: string, description: "External component (e.g., 'U5 TLIN1029', 'D5 LED')" }
+            headers: { type: array, items: { type: string }, description: "Available on headers (e.g., 'J1.1', 'J4.5')" }
+            electrical: { type: string, description: "External pull-ups/downs or dividers" }
+        
         defaults:
           type: object
-          additionalProperties: false
           properties:
             pull:  { enum: [none, up, down] }
             drive: { type: string }
+            
         functions:
           type: array
           minItems: 1
           items:
             type: object
-            additionalProperties: false
             required: [af, signal, mux]
             properties:
-              af:     { type: string, description: "Alternate Function ID/Index" }
-              signal: { type: string, description: "Signal name e.g. SCI1.TX" }
+              af:     { type: string }
+              signal: { type: string }
               mux:
                 type: object
                 required: [register, bit]
                 properties:
-                  register: { type: string, description: "Register name (e.g. PINMMR0)" }
-                  bit: { type: integer, minimum: 0, maximum: 31, description: "Bit index within the register" }
+                  register: { type: string }
+                  bit: { type: integer }
               requires_pull: { enum: [up, down] }
-              x-ext:  { type: object }
-  constraints: { type: object }
-  provenance:  { type: object }

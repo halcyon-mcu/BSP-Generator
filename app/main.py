@@ -307,18 +307,6 @@ async def main():
     memmap_data = load_memmap_yaml(Path(args.yamlpath) / "memmap.yaml")
     bus_data = load_bus_yaml(Path(args.yamlpath) / "bus.yaml")
 
-    # Get user peripheral selections
-    if generate_peripherals:
-        chosen_peripherals = prompt_user_for_peripherals(soc_data)
-        if not chosen_peripherals:
-            print(
-                "[info] No peripherals selected (besides SYSTEM/PCR). "
-                "Continuing without peripheral drivers."
-            )
-    else:
-        chosen_peripherals = []
-        print("[info] Peripheral driver generation disabled by --targets.")
-
     # Setup model and system prompt
     system_prompt = build_system_prompt()
     model_enum = {
@@ -328,8 +316,59 @@ async def main():
         "sonnet4.5": Model.SONNET_4_5,
     }[args.model]
 
-    # Prepare prompts upfront (before launching concurrent tasks)
-    print("[info] Preparing prompts...")
+    # --- PASS 1: Architecture Discovery ---
+    from modules.discovery import run_discovery_pass
+    from modules.implementation import run_implementation_pass
+    import sys
+
+    print("\n[info] Starting Pass 1: Architecture Discovery...")
+    bsp_manifest = await run_discovery_pass(
+        soc_data,
+        regs_data,
+        model_enum,
+        out_dir,
+        max_tokens=args.max_tokens
+    )
+    print("\n[info] Pass 1 Complete.")
+
+    # --- PASS 2: Implementation ---
+    
+    # Select peripherals for implementation
+    pass2_allowed_modules = []
+    if generate_peripherals:
+        print("\n[user] Select Peripherals for Driver Implementation:")
+        chosen_peripherals = prompt_user_for_peripherals(soc_data)
+        if chosen_peripherals:
+            pass2_allowed_modules = [p.get("name") for p in chosen_peripherals]
+        else:
+            print("[info] No peripherals selected.")
+    else:
+        print("[info] Skipping peripheral driver selection due to --targets flag.")
+
+    if pass2_allowed_modules:
+        print(f"\n[info] Starting Pass 2: Implementation for {len(pass2_allowed_modules)} modules...")
+        await run_implementation_pass(
+            bsp_manifest,
+            soc_data,
+            bus_data,
+            model_enum,
+            out_dir,
+            max_tokens=args.max_tokens,
+            allowed_modules=pass2_allowed_modules
+        )
+        print("\n[info] Pass 2 Complete.")
+    else:
+        print("\n[info] Skipping Pass 2 (No modules selected).")
+
+    print("\n[info] Proceeding to Platform Generation...")
+
+    # --- PASS 3: Platform & System Files ---
+    # Restoring logic for linker, startup, system, etc.
+    
+    # Re-setup model/prompt if needed (mostly reusing existing)
+    system_prompt = build_system_prompt()
+    
+    print("[info] Preparing Platform prompts...")
     
     start_user_prompt = None
     if generate_start:
@@ -369,29 +408,12 @@ async def main():
         vim_soc_slice, vim_regs_slice, _ = build_peripheral_slices_for_prompt(
             soc_data, regs_data, irq_data, "VIM"
         )
+        # Note: We keep VIM here because it often needs IRQ data which generic Pass 2 might not fully utilize yet.
         vim_user_prompt = build_vim_prompt(
             vim_soc_slice, vim_regs_slice, dump_yaml_str(irq_data)
         )
 
-    # Prepare peripheral prompts
-    peripheral_prompts = {}
-    if generate_peripherals and chosen_peripherals:
-        for periph in chosen_peripherals:
-            name = str(periph.get("name", "UNKNOWN")).upper()
-            # Skip VIM as it's generated separately above
-            if name == "VIM":
-                print(f"[info] Skipping {name}; already generated as system component.")
-                continue
-
-            soc_slice_str, regs_slice_str, irq_slice_str = build_peripheral_slices_for_prompt(
-                soc_data, regs_data, irq_data, name
-            )
-            periph_user_prompt = build_user_prompt(
-                soc_slice_str, regs_slice_str, irq_slice_str
-            )
-            peripheral_prompts[name] = (periph, periph_user_prompt)
-
-    # Build generation tasks (now just async wrappers around pre-built prompts)
+    # Build generation tasks for Platform files
     generation_tasks = []
 
     if generate_start:
@@ -402,8 +424,6 @@ async def main():
             )
         )
         print("[debug] Added task: start_asm")
-    else:
-        print("[info] Skipping startup (start.s) generation due to --targets.")
 
     if generate_entry:
         generation_tasks.append(
@@ -413,8 +433,6 @@ async def main():
             )
         )
         print("[debug] Added task: entry_c")
-    else:
-        print("[info] Skipping entry.c generation due to --targets.")
 
     if generate_clock:
         generation_tasks.append(
@@ -428,10 +446,9 @@ async def main():
             )
         )
         print("[debug] Added task: clock_setup")
-    else:
-        print("[info] Skipping clock setup generation due to --targets.")
 
     if generate_system:
+        # This may overlap with system_driver.c from Pass 2, but usually contains sys_init/clocks logic.
         generation_tasks.append(
             _generate_system(
                 system_prompt,
@@ -443,8 +460,6 @@ async def main():
             )
         )
         print("[debug] Added task: system_init")
-    else:
-        print("[info] Skipping system.c/system.h generation due to --targets.")
 
     if generate_linker:
         generation_tasks.append(
@@ -458,8 +473,6 @@ async def main():
             )
         )
         print("[debug] Added task: linker")
-    else:
-        print("[info] Skipping linker.cmd generation due to --targets.")
 
     if generate_vim:
         generation_tasks.append(
@@ -474,44 +487,23 @@ async def main():
         )
         print("[debug] Added task: vim_driver")
 
-    if peripheral_prompts:
-        for name, (periph, periph_user_prompt) in peripheral_prompts.items():
-            generation_tasks.append(
-                _generate_peripheral(
-                    periph,
-                    system_prompt,
-                    model_enum,
-                    args.max_tokens,
-                    artifacts,
-                    out_dir,
-                    periph_user_prompt,
-                )
-            )
-            print(f"[debug] Added task: periph_{name.lower()}")
-
-    # Run all generation tasks concurrently
+    # Run platform tasks
     if generation_tasks:
-        print(f"[info] Total tasks to run: {len(generation_tasks)}")
-        print("[info] Starting concurrent generation of all components...\n")
-        
-        # Initialize progress tracker
+        print(f"[info] Starting Platform Generation ({len(generation_tasks)} tasks)...")
         _progress.set_total(len(generation_tasks))
         _progress.stop_event.clear()
-        
-        # Start the global progress spinner
         spinner_thread = _progress.start_spinner()
-        
         try:
             await asyncio.gather(*generation_tasks)
         finally:
-            # Stop progress spinner
             _progress.stop_spinner()
             spinner_thread.join(timeout=1)
-            print()  # Newline after progress bar
+            print()
     else:
-        print("[warn] No generation tasks created.")
+        print("[info] No additional platform tasks to run.")
 
     # Generate documentation
+
     await _generate_documentation(out_dir)
 
 

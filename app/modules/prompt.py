@@ -1397,6 +1397,144 @@ Now generate start.s that satisfies all requirements above.
 
     """
 
+def build_manifest_prompt(module_name: str, soc_slice: str) -> str:
+    """
+    Constructs the prompt for "Pass 1A" - API Manifest Discovery.
+    Focuses solely on architectural metadata (JSON).
+    """
+    return f"""
+You are a Senior Embedded Systems Architect.
+Analyze the hardware description for the "{module_name}" module and define its software interface.
+
+INPUT CONTEXT:
+1. Module Name: "{module_name}"
+2. SOC Description (YAML):
+{soc_slice}
+
+TASK:
+Define the public interface (functions and structs) this module will expose.
+- Naming Convention: {module_name.upper()}_FunctionName.
+- Init Function: {module_name.upper()}_Init.
+- Dependencies: Identify other modules this module needs (e.g., PCR for clocks, VIM for interrupts).
+
+OUTPUT FORMAT:
+Return a single valid JSON object.
+{{
+    "module_name": "{module_name}",
+    "driver_header_file": "{module_name.lower()}_driver.h",
+    "reg_header_file": "reg_{module_name.lower()}.h",
+    "init_function": "{module_name.upper()}_Init",
+    "functions": [
+        {{
+            "name": "Function Name",
+            "prototype": "void {module_name.upper()}_Func(void);",
+            "description": "..."
+        }}
+    ],
+    "dependencies": ["PCR", "SYSTEM"]
+}}
+"""
+
+def build_reg_header_prompt(module_name: str, soc_slice: str, regs_slice: str) -> str:
+    """
+    Constructs the prompt for "Pass 1B" - Register Header Generation.
+    Focuses solely on C Code generation.
+    """
+    return f"""
+You are an Expert Embedded C Developer.
+Generate the Register Map Header file for the "{module_name}" peripheral.
+
+INPUT CONTEXT:
+1. Module Name: "{module_name}"
+2. Register Definition (YAML):
+{regs_slice}
+
+TASK:
+Generate the C header file defining the register map struct.
+- Filename: reg_{module_name.lower()}.h
+- Use "typedef volatile struct" for the register map.
+- Use uint32_t for all register widths (unless specified otherwise).
+- Define bit-masks as macros (e.g., #define {module_name.upper()}_BIT_NAME ...).
+- Do NOT use bit-fields.
+- Do NOT include base address pointers (those go in the driver).
+- Wrap the output in a C code block (```c ... ```).
+
+OUTPUT:
+Return the C code content inside markdown code blocks.
+"""
+
+def build_pass2_driver_h_prompt(module_name: str, manifest_json: str, reg_header_content: str) -> str:
+    """
+    Constructs the prompt for "Pass 2A" - Driver Header Generation.
+    Uses the Registry Manifest to strict define the API.
+    """
+    return f"""
+You are an Expert Embedded C Developer.
+Generate the Public Driver Header file for the "{module_name}" peripheral.
+
+INPUT CONTEXT:
+1. Module Name: "{module_name}"
+2. API Manifest (JSON Source of Truth):
+{manifest_json}
+3. Register Header Definitions (Reference):
+{reg_header_content}
+
+TASK:
+Generate the C header file (`{module_name.lower()}_driver.h`) that exposes the public interface.
+- Include the register header: `#include "reg_{module_name.lower()}.h"`
+- **CRITICAL:** Do NOT redefine the register struct. It is already in the included register header.
+- Define all Structs and Enums listed in the Manifest "types"/"structs" section.
+- Define function prototypes EXACTLY as listed in the Manifest "functions" section.
+- Ensure strict dependency order: Structs/Enums MUST be defined BEFORE the functions that use them.
+- Use include guards (e.g., `{module_name.upper()}_DRIVER_H`).
+- Do NOT implement functions here.
+- Wrap output in a C code block.
+
+OUTPUT:
+Return ONLY the C code content.
+"""
+
+def build_pass2_driver_c_prompt(module_name: str, manifest_json: str, reg_header_content: str, soc_slice: str = "", bus_slice: str = "") -> str:
+    """
+    Constructs the prompt for "Pass 2B" - Driver Implementation Generation.
+    Uses the Registry Manifest + Register Header + Hardware Info + Bus Info (optional).
+    """
+    return f"""
+You are an Expert Embedded C Developer.
+Generate the Driver Implementation file for the "{module_name}" peripheral.
+
+INPUT CONTEXT:
+1. Module Name: "{module_name}"
+2. API Manifest (JSON Source of Truth):
+{manifest_json}
+3. Register Header Definitions (Reference):
+{reg_header_content}
+4. Hardware Details (YAML):
+{soc_slice}
+5. Bus/Clock Details (YAML):
+{bus_slice}   
+
+TASK:
+Generate the C source file (`{module_name.lower()}_driver.c`) implementing the driver.
+- Include the driver header: `#include "{module_name.lower()}_driver.h"`
+- **CRITICAL:** Do NOT redefine the register struct. It is already defined in `reg_{module_name.lower()}.h`.
+- **CRITICAL:** Look at INPUT CONTEXT 3 to find the exact typedef name (e.g., `sciBASE_t` or `SYSTEM_RegMap_t`) and the exact member names (e.g., `GCR0`, `FLR`).
+- Base Address: Use the specific memory address from the YAML (e.g. `sciREG1`).
+- Instance Definition:
+  - Create the base pointer definition casting the address to the Struct Type found in Context 3.
+  - Example: `#define {module_name.lower()}REG ((volatile <STRUCT_TYPE_FROM_CTX3> *)0xFFF7E500U)`
+- Implement EVERY function listed in the Manifest.
+- Logic:
+  - Init Function: Must perform the initialization steps described in the Manifest/YAML.
+  - Dependencies: If Manifest lists "PCR" dependency for clocks, assume `PCR_EnablePeripheral(id)` is available and call it.
+  - Registers: Access registers using the pointer and the EXACT member names from Context 3 (e.g. `ptr->GCR0`).
+  - Clocks/Baud Rates: Use the info from Bus/Clock Details if calculation of dividers/baud rates is required (e.g. VCLK frequencies).
+- Wrap output in a C code block.
+
+OUTPUT:
+Return ONLY the C code content.
+"""
+
 from enum import Enum
 
 class Model(Enum):
