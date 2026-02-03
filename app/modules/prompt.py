@@ -15,11 +15,41 @@ config = Config(
     retries={'max_attempts': 3}
 )
 
-client = boto3.client(
-    service_name="bedrock-runtime",
-    region_name="us-east-2",
-    config=config,
-)
+# Check for custom bearer token in environment
+bearer_token = os.environ.get('AWS_BEARER_TOKEN_BEDROCK')
+access_key = os.environ.get('AWS_ACCESS_KEY_ID')
+secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
+region = os.environ.get('AWS_REGION', 'us-east-2')
+
+# Create boto3 client with authentication
+if bearer_token:
+    # Use bearer token as session token with explicit credentials
+    session = boto3.Session(
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        aws_session_token=bearer_token,
+        region_name=region,
+    )
+    client = session.client(
+        service_name="bedrock-runtime",
+        config=config,
+    )
+elif access_key and secret_key:
+    # Use explicit credentials without session token
+    client = boto3.client(
+        service_name="bedrock-runtime",
+        region_name=region,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        config=config,
+    )
+else:
+    # Fall back to default credential chain (IAM role, ~/.aws/credentials, etc.)
+    client = boto3.client(
+        service_name="bedrock-runtime",
+        region_name=region,
+        config=config,
+    )
 
 # ---------------- Prompt builders (hardened) ----------------
 
