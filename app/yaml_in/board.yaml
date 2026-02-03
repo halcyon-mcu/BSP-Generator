@@ -1,0 +1,912 @@
+ir_schema_version: 1.1.0
+board:
+  name: LAUNCHXL2-TMS57012-RM46
+  revision: Rev 1.0
+  manufacturer: Texas Instruments
+  description: TI LaunchPad XL2 Development Board for RM46 Hercules MCU
+  schematic:
+    source: RM46_schematic.pdf
+    revision_date: '2014-10-24'
+mcu:
+  part_number: RM46L850
+  package: PGE_144
+  pin_count: 144
+  full_name: RM46L850_PGE_144
+power:
+  regulators:
+  - designator: U5
+    part_number: LM26420XMHX/NOPB
+    type: buck
+    switching_frequency: 2.2MHz
+    description: Dual synchronous buck converter
+    channels:
+    - channel: 1
+      output_voltage: 1.2
+      current_rating: 3.1A
+      net_name: +1V2
+      description: Core voltage for RM46 MCU
+      inductor:
+        designator: L1
+        value: 1µH
+        current: 3.1A
+    - channel: 2
+      output_voltage: 3.3
+      current_rating: 3.1A
+      net_name: +3V3
+      description: IO voltage for RM46 MCU and peripherals
+      inductor:
+        designator: L2
+        value: 1µH
+        current: 3.1A
+  voltage_rails:
+    vcc_1v2:
+      voltage: 1.2
+      description: Core voltage (VCC) for RM46 MCU
+      mcu_pins:
+      - 17
+      - 29
+      - 45
+      - 48
+      - 49
+      - 57
+      - 87
+      - 101
+      - 114
+      - 123
+      - 137
+      - 143
+      decoupling_caps:
+      - designator: C4
+        value: 10µF
+        type: bulk
+      - designator: C5
+        value: 0.1µF
+      - designator: C6
+        value: 0.1µF
+      - designator: C7
+        value: 0.1µF
+      - designator: C9
+        value: 0.1µF
+      - designator: C10
+        value: 0.1µF
+      - designator: C11
+        value: 0.1µF
+      - designator: C12
+        value: 0.1µF
+      - designator: C13
+        value: 0.1µF
+      - designator: C14
+        value: 0.1µF
+      - designator: C15
+        value: 0.1µF
+      - designator: C16
+        value: 0.1µF
+      - designator: C19
+        value: 0.1µF
+    vccio_3v3:
+      voltage: 3.3
+      description: IO voltage (VCCIO) for RM46 MCU
+      mcu_pins:
+      - 10
+      - 26
+      - 42
+      - 104
+      - 120
+      - 136
+      decoupling_caps:
+      - designator: C8
+        value: 10µF
+        type: bulk
+      - designator: C17
+        value: 0.1µF
+      - designator: C18
+        value: 0.1µF
+      - designator: C20
+        value: 0.1µF
+      - designator: C21
+        value: 0.1µF
+      - designator: C22
+        value: 0.1µF
+      - designator: C23
+        value: 0.1µF
+    vccp_3v3:
+      voltage: 3.3
+      description: Peripheral voltage (VCCP)
+      mcu_pins: []
+    vccad_3v3:
+      voltage: 3.3
+      description: Analog voltage (VCCAD) for ADC
+      mcu_pins: []
+    vss_gnd:
+      voltage: null
+      description: Ground pins (VSS) for RM46 MCU
+      mcu_pins:
+      - 11
+      - 21
+      - 27
+      - 28
+      - 43
+      - 44
+      - 47
+      - 50
+      - 56
+      - 88
+      - 102
+      - 103
+      - 115
+      - 121
+      - 122
+      - 135
+      - 138
+      - 144
+    vssad_gnd:
+      voltage: null
+      description: Analog ground (VSSAD) for ADC
+      mcu_pins: []
+  current_monitor:
+    part_number: INA210_DCK_6
+    designator: U6
+    description: Current sense amplifier for core current monitoring
+    sense_resistor:
+      designator: R29
+      value: 4.99Ω
+      tolerance: 1%
+    output: HERCULES_ICORE
+    connection: TM4C debug MCU for current measurement
+clock:
+  crystal:
+    designator: Y1
+    part_description: 16.00MHz Crystal
+    frequency_hz: 16000000
+    frequency_mhz: 16.0
+    pins:
+      oscin:
+        mcu_pin: 18
+        net_name: OSCIN
+      oscout:
+        mcu_pin: 20
+        net_name: OSCOUT
+      kelvin_gnd:
+        mcu_pin: 19
+        net_name: KGND
+        description: Kelvin ground for low-noise oscillator reference
+    load_capacitors:
+    - designator: C1
+      value: 33pF
+      tolerance: ±5%
+      voltage_rating: 50V
+      connected_to_pin: 18
+      description: Crystal load capacitor on OSCIN
+    - designator: C2
+      value: 33pF
+      tolerance: ±5%
+      voltage_rating: 50V
+      connected_to_pin: 20
+      description: Crystal load capacitor on OSCOUT
+    fault_injection:
+      enabled: true
+      jumper: JP1
+      description: OSC FAULT INJECT - Allows injection of oscillator faults for testing
+      resistors:
+      - designator: R1
+        value: 0Ω
+        note: Series resistor to OSCIN
+      - designator: R2
+        value: 0Ω
+        note: Series resistor to OSCOUT
+      - designator: R3
+        value: 0Ω
+        note: Pull resistor
+      - designator: R4
+        value: DNP
+        note: Do Not Populate - fault injection resistor
+leds:
+- designator: LED1
+  function: ERROR LED
+  color: RED
+  mcu_pin: 117
+  net_name: NERROR
+  series_resistor: 2.2kΩ
+  connection: +3V3
+  active_state: LOW
+  description: Indicates error condition from MCU
+- designator: LED2
+  function: USER LED
+  color: GRN
+  mcu_pin: 142
+  gpio: GIOB[2]
+  net_name: GIOB_2
+  series_resistor: 2.2kΩ
+  connection: +3V3
+  active_state: LOW
+- designator: LED3
+  function: USER LED
+  color: GRN
+  mcu_pin: 133
+  gpio: GIOB[1]
+  net_name: GIOB_1
+  series_resistor: 2.2kΩ
+  connection: +3V3
+  active_state: LOW
+buttons:
+- designator: S3
+  function: USER button
+  type: TACT6MM_NO_MOM
+  active_state: LOW
+  mcu_pin: 55
+  net_name: MIBSPI3NCS_0 / AD2EVT / GIOB_2 / EQEP1I
+  pull_resistor: 2.2kΩ
+  pull_direction: up
+  pull_connection: +3V3
+- designator: S4
+  function: USER button
+  type: TACT6MM_NO_MOM
+  active_state: LOW
+  net_name: N2HET1_15 / MIBSPI1NCS_4 / ECAP1
+  pull_resistor: 2.2kΩ
+  pull_direction: up
+  pull_connection: +3V3
+sensors:
+- designator: Q1
+  part_number: TEMT6000
+  type: Ambient light sensor (phototransistor)
+  mcu_pin: 80
+  interface: analog
+  adc_channel: AD1IN_6
+  bias_resistor:
+    designator: R14
+    value: 5.76kΩ
+    tolerance: 1%
+  filter_capacitor:
+    designator: C24
+    value: 4700pF
+  supply: +3V3
+  description: Light-to-voltage converter for ambient light sensing
+debug:
+  debugger:
+    type: XDS110 ICDIv2
+    description: Onboard XDS110 JTAG debugger with USB interface
+    mcu: TM4C129 (separate debug MCU)
+    capabilities:
+    - JTAG debugging
+    - UART passthrough
+    - Virtual COM port
+    - Current monitoring
+  jtag:
+    connector: J1
+    connector_type: 20-pin header (0.1" pitch)
+    description: Main JTAG debug connector for RM46 Hercules MCU
+    signals:
+      tms:
+        mcu_pin: 108
+        net_name: TMS / HERCULES_TMS
+        description: Test Mode Select
+      tck:
+        mcu_pin: 112
+        net_name: TCK / HERCULES_TCK
+        description: Test Clock
+      tdi:
+        mcu_pin: 110
+        net_name: TDI / HERCULES_TDI
+        description: Test Data In
+      tdo:
+        mcu_pin: 111
+        net_name: TDO / HERCULES_TDO
+        description: Test Data Out
+      ntrst:
+        mcu_pin: 109
+        net_name: NTRST / HERCULES_NTRST
+        description: Test Reset (active low)
+        pull_up:
+          resistor: R6
+          value: 10.0kΩ
+          connection: +3V3
+      rtck:
+        mcu_pin: 113
+        net_name: RTCK / HERCULES_RTCK
+        description: Return Test Clock
+      test_pin:
+        mcu_pin: 34
+        net_name: TEST / EXTERNAL_DEBUG
+        description: Test mode pin
+        pull_down:
+          resistor: R5
+          value: 2.2kΩ
+          connection: GND
+          note: Pulled down for normal operation
+    additional_signals:
+    - net: LINRX
+      pin: 131
+      function: LIN Receive for debug
+    - net: LINTX
+      pin: 132
+      function: LIN Transmit for debug
+    - net: CAN1RX
+      pin: 90
+      function: CAN1 Receive
+    - net: CAN1TX
+      pin: 89
+      function: CAN1 Transmit
+    - net: CAN2RX
+      pin: 129
+      function: CAN2 Receive
+    - net: CAN2TX
+      pin: 128
+      function: CAN2 Transmit
+    - net: CAN3RX
+      pin: 12
+      function: CAN3 Receive
+    - net: CAN3TX
+      pin: 13
+      function: CAN3 Transmit
+  usb:
+    connector: J13
+    connector_type: USB_MICRO_B_SMD
+    function: Debug/Programming interface via XDS ICDIv2
+    esd_protection:
+      part_number: TPD4E004_DRY_6
+      designator: U10
+      description: 4-channel ESD protection for USB data lines
+      protected_lines:
+      - D+
+      - D-
+      - ID
+      - VBUS
+      decoupling:
+        capacitor: C53
+        value: 4700pF
+    current_limiter:
+      part_number: TPS2553_DBV_6
+      designator: U9
+      description: Current-limited power switch for USB bus-powered operation
+      current_limit:
+        resistor: R45
+        value: 62kΩ
+        limit_current: ~500mA
+      enable_control: USB_HIPWR_ENA
+      fault_output: Active low fault indication
+      input_filter:
+      - designator: C51
+        value: 4.7µF
+      - designator: C52
+        value: 0.1µF
+      output_filter:
+        designator: C55
+        value: 100µF
+communication:
+  can:
+    dcan1:
+      rx_pin: 90
+      tx_pin: 89
+      net_rx: DCAN1RX / CAN1RX
+      net_tx: DCAN1TX / CAN1TX
+      connector: J1 (JTAG), J11-42/43
+      transceiver_populated: false
+      notes: CAN transceiver not populated on board
+    dcan2:
+      rx_pin: 129
+      tx_pin: 128
+      net_rx: DCAN2RX / CAN2RX
+      net_tx: DCAN2TX / CAN2TX
+      connector: J1 (JTAG), J11-28/29
+      transceiver_populated: false
+      notes: CAN transceiver not populated on board
+    dcan3:
+      rx_pin: 12
+      tx_pin: 13
+      net_rx: DCAN3RX / CAN3RX
+      net_tx: DCAN3TX / CAN3TX
+      connector: J1 (JTAG), J11-61/62
+      transceiver_populated: false
+      notes: CAN transceiver not populated on board
+  lin:
+    lin1:
+      rx_pin: 131
+      tx_pin: 132
+      net_rx: LINRX / HERCULES_LIN1_RXD
+      net_tx: LINTX / HERCULES_LIN1_TXD
+      connector: J1 (JTAG)
+      transceiver_populated: false
+      notes: LIN transceiver not populated on board
+  uart:
+    sci:
+      rx_pin: 38
+      tx_pin: 39
+      net_rx: N2HET1_6 / SCIRX / EPWM5A
+      net_tx: N2HET1_13 / SCITX / EPWM5B
+      connector: J1, J2-4/5
+      function: Serial communication interface (UART)
+  spi:
+    mibspi1:
+      clk:
+        pin: 95
+        net: MIBSPI1CLK
+      simo:
+        pin: 93
+        net: MIBSPI1SIMO[0]
+      somi:
+        pin: 94
+        net: MIBSPI1SOMI[0]
+      nena:
+        pin: 96
+        net: MIBSPI1NENA
+      ncs:
+      - pin: 105
+        net: MIBSPI1NCS[0]
+      - pin: 130
+        net: MIBSPI1NCS[1]
+      - pin: 40
+        net: MIBSPI1NCS[2]
+    mibspi3:
+      clk:
+        pin: 53
+        net: MIBSPI3CLK
+      simo:
+        pin: 52
+        net: MIBSPI3SIMO[0]
+      somi:
+        pin: 51
+        net: MIBSPI3SOMI[0]
+      nena:
+        pin: 54
+        net: MIBSPI3NENA
+      ncs:
+      - pin: 55
+        net: MIBSPI3NCS[0]
+      - pin: 37
+        net: MIBSPI3NCS[1]
+      - pin: 4
+        net: MIBSPI3NCS[2]
+      - pin: 3
+        net: MIBSPI3NCS[3]
+    mibspi5:
+      clk:
+        pin: 100
+        net: MIBSPI5CLK
+      simo:
+        pin: 99
+        net: MIBSPI5SIMO[0]
+      somi:
+        pin: 98
+        net: MIBSPI5SOMI[0]
+      nena:
+        pin: 97
+        net: MIBSPI5NENA
+      ncs:
+      - pin: 32
+        net: MIBSPI5NCS[0]
+    spi4:
+      clk:
+        pin: 25
+        net: N2HET1_0 / SPI4CLK
+      nena:
+        pin: 23
+        net: N2HET1_1 / SPI4NENA
+      simo:
+        pin: 30
+        net: N2HET1_2 / SPI4SIMO[0]
+      ncs:
+        pin: 24
+        net: N2HET1_3 / SPI4NCS[0]
+      somi:
+        pin: 31
+        net: N2HET1_5 / SPI4SOMI[0]
+  i2c:
+    i2c:
+      sda:
+        pin: 4
+        net: MIBSPI3NCS_2 / I2C_SDA
+      scl:
+        pin: 3
+        net: MIBSPI3NCS_3 / I2C_SCL
+      connector: J2-7/8
+  ethernet:
+    mii_rmii:
+      description: Media Independent Interface signals (not populated)
+      signals:
+      - name: MII_TX_CLK
+        pin: 118
+      - name: MII_TXEN / RMII_TXEN
+        pin: 100
+      - name: MII_TXD[0] / RMII_TXD[0]
+        pin: 98
+      - name: MII_TXD[1] / RMII_TXD[1]
+        pin: 99
+      - name: MII_TXD[2]
+        pin: 105
+      - name: MII_TXD[3]
+        pin: 106
+      - name: MII_RXD[0] / RMII_RXD[0]
+        pin: 91
+      - name: MII_RXD[1] / RMII_RXD[1]
+        pin: 92
+      - name: MII_RXD[2]
+        pin: 96
+      - name: MII_RXD[3]
+        pin: 97
+      - name: MII_RXCLK / RMII_REFCLK
+        pin: 107
+      - name: MII_RX_DV
+        pin: 127
+      - name: MII_RX_ER / RMII_RX_ER
+        pin: 86
+      - name: MII_CRS / RMII_CRS_DV
+        pin: 124
+      - name: MII_COL
+        pin: 130
+      - name: MDIO
+        pin: 40
+      - name: MDCLK
+        pin: 37
+      notes: Ethernet PHY not populated on this board
+    phy_populated: false
+pwm_timers:
+  epwm:
+    description: Enhanced PWM outputs available on booster pack connectors
+    channels:
+    - signal: EPWM1A
+      pin: 14
+      net: GIOA_5/EXTCLKIN/EPWM1A
+    - signal: EPWM1B
+      pin: 16
+      net: GIOA_6/N2HET2_4/EPWM1B
+    - signal: EPWM2A
+      pin: 22
+      net: GIOA_7/N2HET2_6/EPWM2A
+    - signal: EPWM2B
+      pin: 25
+      net: N2HET1_0/SPI4CLK/EPWM2B
+    - signal: EPWM3A
+      pin: 30
+      net: N2HET1_2/SPI4SIMO/EPWM3A
+    - signal: EPWM3B
+      pin: 31
+      net: N2HET1_5/SPI4SOMI/EPWM3B
+    - signal: EPWM4A
+      pin: 32
+      net: MIBSPI5NCS_0/EPWM4A
+    - signal: EPWM4B
+      pin: 36
+      net: N2HET1_4/EPWM4B
+    - signal: EPWM5A
+      pin: 38
+      net: N2HET1_6/SCIRX/EPWM5A
+    - signal: EPWM5B
+      pin: 39
+      net: N2HET1_13/SCITX/EPWM5B
+    - signal: EPWM6A
+      pin: 140
+      net: N2HET1_18/EPWM6A
+    - signal: EPWM6B
+      pin: 141
+      net: N2HET1_20/EPWM6B
+    - signal: EPWM7A
+      pin: 35
+      net: N2HET1_9/N2HET2_16/EPWM7A
+    - signal: EPWM7B
+      pin: 33
+      net: N2HET1_7/N2HET2_14/EPWM7B
+  ecap:
+    description: Enhanced Capture modules
+    channels:
+    - signal: ECAP1
+      pin: 41
+      net: N2HET1_15/MIBSPI1NCS_4/ECAP1
+    - signal: ECAP2
+      pin: 51
+      net: MIBSPI3SOMI/AWM_EXT_ENA/ECAP2
+    - signal: ECAP3
+      pin: 52
+      net: MIBSPI3SIMO/AWM_EXT_SEL_0/ECAP3
+    - signal: ECAP4
+      pin: 96
+      net: MIBSPI1NENA/N2HET1_23/ECAP4
+    - signal: ECAP5
+      pin: 97
+      net: MIBSPI5NENA/MII_RXD_3/ECAP5
+    - signal: ECAP6
+      pin: 105
+      net: MIBSPI1NCS_0/MII_TXD_2/ECAP6
+  eqep:
+    description: Enhanced Quadrature Encoder Pulse modules
+    eqep1:
+    - signal: EQEP1A
+      pin: 53
+      net: MIBSPI3CLK/EQEP1A
+    - signal: EQEP1B
+      pin: 54
+      net: MIBSPI3NENA/EQEP1B
+    - signal: EQEP1I
+      pin: 55
+      net: MIBSPI3NCS_0/EQEP1I
+    - signal: EQEP1S
+      pin: 130
+      net: MIBSPI1NCS_1/EQEP1S
+    eqep2:
+    - signal: EQEP2A
+      pin: 23
+      net: N2HET1_1/EQEP2A
+    - signal: EQEP2B
+      pin: 24
+      net: N2HET1_3/EQEP2B
+    - signal: EQEP2I
+      pin: 9
+      net: GIOA_2/N2HET2_0/EQEP2I
+    - signal: EQEP2S
+      pin: 127
+      net: N2HET1_30/MII_RX_DV/EQEP2S
+adc:
+  channels:
+    adc1:
+    - channel: AD1IN[0]
+      pin: 60
+      net: AD1IN_0
+      booster_pack: J2-8
+    - channel: AD1IN[1]
+      pin: 71
+      net: AD1IN_1
+      booster_pack: J6-7
+    - channel: AD1IN[2]
+      pin: 73
+      net: AD1IN_2
+      booster_pack: J6-18
+    - channel: AD1IN[3]
+      pin: 74
+      net: AD1IN_3
+      booster_pack: J6-19
+    - channel: AD1IN[4]
+      pin: 76
+      net: AD1IN_4
+      booster_pack: J6-20
+    - channel: AD1IN[5]
+      pin: 78
+      net: AD1IN_5
+      booster_pack: J11-45
+    - channel: AD1IN[6]
+      pin: 80
+      net: AD1IN_6
+      sensor: Light sensor Q1
+    - channel: AD1IN[7]
+      pin: 61
+      net: AD1IN_7
+      booster_pack: J2-9
+    - channel: AD1IN[8]
+      pin: 83
+      net: AD1IN_8/AD2IN_8
+      booster_pack: J11-48
+    - channel: AD1IN[9]
+      pin: 70
+      net: AD1IN_9/AD2IN_9
+      booster_pack: J6-3
+    - channel: AD1IN[10]
+      pin: 72
+      net: AD1IN_10/AD2IN_10
+      booster_pack: J6-17
+    - channel: AD1IN[11]
+      pin: 75
+      net: AD1IN_11/AD2IN_11
+      booster_pack: J11-47
+    - channel: AD1IN[12]
+      pin: 77
+      net: AD1IN_12/AD2IN_12
+      booster_pack: J11-46
+    - channel: AD1IN[13]
+      pin: 79
+      net: AD1IN_13/AD2IN_13
+      booster_pack: J11-45
+    - channel: AD1IN[14]
+      pin: 82
+      net: AD1IN_14/AD2IN_14
+      booster_pack: J11-49
+    - channel: AD1IN[15]
+      pin: 85
+      net: AD1IN_15/AD2IN_15
+      booster_pack: J11-47
+    - channel: AD1IN[16]
+      pin: 58
+      net: AD1IN_16/AD2IN_0
+      booster_pack: J2-3
+    - channel: AD1IN[17]
+      pin: 59
+      net: AD1IN_17/AD2IN_1
+      booster_pack: J2-5
+    - channel: AD1IN[18]
+      pin: 62
+      net: AD1IN_18/AD2IN_2
+      booster_pack: J2-10
+    - channel: AD1IN[19]
+      pin: 63
+      net: AD1IN_19/AD2IN_3
+      booster_pack: J2-11
+    - channel: AD1IN[20]
+      pin: 64
+      net: AD1IN_20/AD2IN_4
+      booster_pack: J2-12
+    - channel: AD1IN[21]
+      pin: 65
+      net: AD1IN_21/AD2IN_5
+      booster_pack: J2-13
+    - channel: AD1IN[22]
+      pin: 81
+      net: AD1IN_22/AD2IN_6
+      booster_pack: J11-50
+    - channel: AD1IN[23]
+      pin: 84
+      net: AD1IN_23/AD2IN_7
+      booster_pack: J11-48
+    adc_reference:
+      adrefhi:
+        pin: 66
+        net: ADREFHI
+        description: ADC reference high
+      adreflo:
+        pin: 67
+        net: ADREFLO
+        description: ADC reference low
+    adc_event:
+      ad1evt:
+        pin: 86
+        net: AD1EVT / MII_RX_ER / RMII_RX_ER
+        description: ADC1 event trigger
+connectors:
+- designator: J2, J3, J4, J5
+  type: BoosterPack Site 1
+  pins: 40
+  description: TI BoosterPack 40-pin expansion connector (site 1)
+  standards_compatible: 20-pin and 40-pin BoosterPack
+- designator: J6, J7, J8, J9
+  type: BoosterPack Site 2
+  pins: 40
+  description: TI BoosterPack 40-pin expansion connector (site 2)
+  standards_compatible: 20-pin and 40-pin BoosterPack
+- designator: J11
+  type: Proto Header
+  pins: 50
+  description: General purpose prototype header with additional signals
+- designator: J1
+  type: JTAG Debug
+  pins: 20
+  description: 20-pin JTAG connector (0.1" pitch) for Hercules MCU
+  signals_available:
+  - TMS
+  - TCK
+  - TDI
+  - TDO
+  - nTRST
+  - RTCK
+  - CAN1/2/3 (RX/TX)
+  - LIN1 (RX/TX)
+  - SCI (RX/TX)
+gpio_mapping:
+  GIOB[2]:
+    function: USER LED
+    pin: 142
+    component: LED2
+    type: output
+  GIOB[1]:
+    function: USER LED
+    pin: 133
+    component: LED3
+    type: output
+  GIOB[?]:
+    function: USER button
+    pin: 55
+    component: S3
+    type: input
+hardware_limitations:
+  missing_components:
+  - CAN transceivers (DCAN1, DCAN2, DCAN3) - signals available, external transceiver required
+  - LIN transceiver (LIN1) - signals available, external transceiver required
+  - Ethernet PHY chip - MII/RMII signals available, external PHY required
+  - Target USB connector - USB signals available but not routed to connector
+  notes:
+  - USB connector (J13) is for debug interface only (XDS ICDIv2), not target MCU USB
+  - CAN, LIN, and Ethernet require external transceiver/PHY for operation
+  - Debug MCU (TM4C129) provides JTAG, UART passthrough, and current monitoring
+  - BoosterPack connectors support standard TI BoosterPack expansion modules
+  - Light sensor (TEMT6000) is populated and connected to AD1IN[6]
+  - 'Two reset buttons: S1 (power-on reset), S2 (warm reset)'
+  - Voltage supervisor (TPS3106K33) monitors both 1.2V and 3.3V rails
+x-ext:
+  extraction_date: '2026-02-03'
+  reset:
+    supervisor:
+      part_number: TPS3106K33
+      package: DBV_6
+      designator: U2
+      description: Voltage supervisor with reset output
+      threshold:
+        sense_voltage_min: 0.542
+        sense_voltage_max: 0.559
+        units: V
+        description: 'SENSE threshold: 0.542V - 0.559V'
+      connections:
+        vdd:
+          pin: 6
+          connected_to: +3V3
+        sense:
+          pin: 4
+          connected_to: +1V2
+          description: Monitors 1.2V core voltage
+        reset_vdd:
+          pin: 1
+          net_name: NPORRST
+          description: Reset output for VDD monitoring
+        reset_sense:
+          pin: 5
+          description: Reset output for SENSE monitoring
+        mr:
+          pin: 3
+          description: Manual Reset input
+          connection: HERCULES_MR_PB
+    buttons:
+      power_on_reset:
+        designator: S1
+        type: TACT6MM_NO_MOM
+        function: POWER ON RESET
+        connection: HERCULES_MR_PB
+        pull_up:
+          resistor: R8
+          value: 2.2kΩ
+          connection: +3V3
+      warm_reset:
+        designator: S2
+        type: TACT6MM_NO_MOM
+        function: WARM RESET
+        connection: HERCULES_NRST
+        pull_up:
+          resistor: R9
+          value: 2.2kΩ
+          connection: +3V3
+    mcu_connections:
+      nporrst:
+        mcu_pin: 46
+        net_name: NPORRST
+        description: Power-On Reset (active low)
+        pull_up:
+          resistor: R7
+          value: 2.2kΩ
+          connection: +3V3
+      nrst:
+        mcu_pin: 116
+        net_name: NRST / HERCULES_NRST
+        description: System Reset (active low)
+        decoupling:
+          capacitor: C3
+          value: 1000pF
+          connection: GND
+  error_signal:
+    mcu_pin: 117
+    net_name: NERROR
+    description: Error output signal (active low)
+  power_leds:
+  - designator: LED4
+    color: GRN
+    function: +3V3 Power Indicator
+    series_resistor:
+      designator: R22
+      value: 2.2kΩ
+    connection: +3V3
+  - designator: LED6
+    color: GRN
+    function: +5V Power Indicator
+    series_resistor:
+      designator: R27
+      value: 2.2kΩ
+    connection: +5V
+  - designator: LED9
+    color: RED
+    function: USB Power Indicator
+    series_resistor:
+      designator: R42
+      value: 2.2kΩ
+    connection: +5V_USB
+  debug_mcu_leds:
+    description: LEDs on TM4C debug controller
+    leds:
+    - designator: LED7
+      color: GRN
+      function: Debug status
+    - designator: LED8
+      color: GRN
+      function: Debug status
