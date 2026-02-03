@@ -19,3 +19,7 @@ app/_artifacts/
 app/board/
 app/drivers/
 app/examples/
+app/yaml_out/
+
+# Claude Code artifacts
+.claude/
