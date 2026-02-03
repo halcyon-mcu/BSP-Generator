@@ -1,0 +1,406 @@
+ir_schema_version: "1.1.0"
+
+sources:
+  - name: OSCIN
+    type: external_xtal
+    freq_hz: 16000000
+    x-ext:
+      trm_clock_id: 0
+      default_enabled: true
+      # Datasheet timing requirement corresponds to 5–20 MHz OSCIN (square or sine).
+      freq_range_hz: [5000000, 20000000]
+      board_note: "LaunchPad XL2 schematic: Y1 = 16.00 MHz on OSCIN/OSCOUT network"
+
+  - name: PLL1
+    type: pll
+    freq_hz: 1
+    x-ext:
+      trm_clock_id: 1
+      default_enabled: false
+      notes: "PLL #1 (FMzPLL) output"
+      todo:
+        - Define PLL1 profile (NR/NF/OD/R) and replace freq_hz with computed output frequency
+
+  - name: RESERVED
+    type: other
+    freq_hz: 1
+    x-ext:
+      trm_clock_id: 2
+      must_not_enable: true
+
+  - name: EXTCLKIN1
+    type: other
+    freq_hz: 1
+    x-ext:
+      trm_clock_id: 3
+      default_enabled: false
+      freq_max_hz: 80000000
+      notes:
+        - "External clock input must be a square wave"
+        - "External clock input validity is not checked by hardware"
+      todo:
+        - Set freq_hz if EXTCLKIN1 is used on the board
+
+  - name: LF_LPO
+    type: internal_rc
+    freq_hz: 85000
+    x-ext:
+      trm_clock_id: 4
+      default_enabled: true
+      typical_hz: 85000
+      untrimmed_range_hz: [36000, 180000]
+      startup_time_cold_us: 2000
+
+  - name: HF_LPO
+    type: internal_rc
+    freq_hz: 9600000
+    x-ext:
+      trm_clock_id: 5
+      default_enabled: true
+      freq_hz_note: "Typical trimmed HF LPO frequency"
+      typical_untrimmed_hz: 9000000
+      untrimmed_range_hz: [5500000, 19500000]
+      trimmed_range_hz: [8000000, 11000000]
+      startup_time_cold_us: 900
+      notes:
+        - "Reference for oscillator monitor; limp-mode clock"
+        - "Oscillator monitor valid OSC range is based on HF_LPO (approximately f(HF_LPO)/4 .. f(HF_LPO)*4)"
+
+  - name: PLL2
+    type: pll
+    freq_hz: 1
+    x-ext:
+      trm_clock_id: 6
+      default_enabled: false
+      notes: "PLL #2 output; modulation disabled"
+      todo:
+        - Define PLL2 profile (NR2/NF2/OD2/R2) and replace freq_hz with computed output frequency
+
+  - name: EXTCLKIN2
+    type: other
+    freq_hz: 1
+    x-ext:
+      trm_clock_id: 7
+      default_enabled: false
+      freq_max_hz: 80000000
+      notes:
+        - "External clock input must be a square wave"
+        - "External clock input validity is not checked by hardware"
+      todo:
+        - Set freq_hz if EXTCLKIN2 is used on the board
+
+plls:
+  - name: PLL1
+    input: OSCIN
+    mult_range: [1, 256]
+    div_range: [1, 64]
+    vco_limits_hz: [150000000, 550000000]
+    x-ext:
+      formula: "fPLLCLK = (fOSCIN / NR) * NF / (OD * R)"
+      params:
+        NR: { range: [1, 64] }
+        NF: { range: [1, 256] }
+        OD: { range: [1, 8] }
+        R:  { range: [1, 32] }
+      post_odclk_max_hz: 400000000
+      refclk_min_hz: 1000000
+      refclk_max_is_fosc_sqr: true
+
+  - name: PLL2
+    input: OSCIN
+    mult_range: [1, 256]
+    div_range: [1, 64]
+    vco_limits_hz: [150000000, 550000000]
+    x-ext:
+      formula: "fPLL2CLK = (fOSCIN / NR2) * NF2 / (OD2 * R2)"
+      params:
+        NR2: { range: [1, 64] }
+        NF2: { range: [1, 256] }
+        OD2: { range: [1, 8] }
+        R2:  { range: [1, 32] }
+      post_odclk2_max_hz: 400000000
+      refclk2_min_hz: 1000000
+      refclk2_max_is_fosc_sqr: true
+
+domains:
+  - name: GCLK
+    parent: OSCIN
+    divider: 1
+    x-ext:
+      clock_domain_id: 0
+      source_sel_reg: SYSTEM.GHVSRC
+      cddis_bit: 0
+      notes:
+        - "CPU clock; same freq and phase as HCLK"
+        - "During CPU self-test (LBIST), GCLK may be divided by 1..8 via STCCLKDIV.CLKDIV (reset use is application-controlled)"
+      lbist_divider_reg: SYSTEM2.STCCLKDIV
+      lbist_divider_field: CLKDIV
+      lbist_divider_range: [1, 8]
+
+  - name: GCLK2
+    parent: OSCIN
+    divider: 1
+    x-ext:
+      clock_domain_id: 0
+      source_sel_reg: SYSTEM.GHVSRC
+      cddis_bit: 0
+      notes:
+        - "Second CPU clock; 2 cycles delayed; disabled with GCLK"
+
+  - name: HCLK
+    parent: OSCIN
+    divider: 1
+    x-ext:
+      clock_domain_id: 1
+      source_sel_reg: SYSTEM.GHVSRC
+      cddis_bit: 1
+      notes: "System module clock"
+
+  - name: VCLK
+    parent: HCLK
+    divider: 2
+    x-ext:
+      clock_domain_id: 2
+      source_sel_reg: SYSTEM.GHVSRC
+      cddis_bit: 2
+      divider_reg: SYSTEM.CLKCNTL
+      divider_field: VCLKR
+      divider_range: [1, 16]
+      default_divider: 2
+      notes: "Peripheral bus clock (PCR-accessed peripherals incl. SCI)"
+
+  - name: VCLK2
+    parent: HCLK
+    divider: 2
+    x-ext:
+      clock_domain_id: 3
+      source_sel_reg: SYSTEM.GHVSRC
+      cddis_bit: 3
+      divider_reg: SYSTEM.CLKCNTL
+      divider_field: VCLK2R
+      divider_range: [1, 16]
+      default_divider: 2
+      notes:
+        - "N2HET/HTU clock"
+        - "Must be an integer multiple of VCLK"
+
+  - name: VCLK3
+    parent: HCLK
+    divider: 2
+    x-ext:
+      clock_domain_id: 8
+      source_sel_reg: SYSTEM.GHVSRC
+      cddis_bit: 8
+      divider_reg: SYSTEM.CLKCNTL
+      divider_field: VCLK3R
+      divider_range: [1, 16]
+      default_divider: 2
+
+  - name: VCLK4
+    parent: HCLK
+    divider: 2
+    x-ext:
+      clock_domain_id: 9
+      source_sel_reg: SYSTEM.GHVSRC
+      cddis_bit: 9
+      divider_reg: SYSTEM.CLKCNTL
+      divider_field: VCLK4R
+      divider_range: [1, 16]
+      default_divider: 2
+
+  - name: VCLKA1
+    parent: VCLK
+    divider: 1
+    x-ext:
+      clock_domain_id: 4
+      source_sel_reg: SYSTEM.VCLKASRC
+      cddis_bit: 4
+      notes: "Defaults to VCLK as the source (e.g., DCAN baud-rate clock)"
+
+  - name: VCLKA2
+    parent: VCLK
+    divider: 1
+    x-ext:
+      clock_domain_id: 5
+      source_sel_reg: SYSTEM.VCLKASRC
+      cddis_bit: 5
+      notes: "Defaults to VCLK as the source"
+
+  - name: VCLKA3_S
+    parent: VCLK
+    divider: 1
+    x-ext:
+      clock_domain_id: 10
+      source_sel_reg: SYSTEM2.VCLKACON1
+      cddis_bit: 10
+      notes:
+        - "Defaults to VCLK as the source"
+        - "Frequency can be as fast as HCLK frequency"
+
+  - name: VCLKA3_DIVR
+    parent: VCLKA3_S
+    divider: 2
+    x-ext:
+      divider_reg: SYSTEM2.VCLKACON1
+      divider_field: VCLKA3R
+      divider_range: [1, 8]
+      default_divider: 2
+      local_disable_field: VCLKA3_DIV_CDDIS
+      local_disable_note: "Disabled separately via VCLKACON1.VCLKA3_DIV_CDDIS only if VCLKA3_S is not already disabled"
+
+  - name: VCLKA4_S
+    parent: VCLK
+    divider: 1
+    x-ext:
+      clock_domain_id: 11
+      source_sel_reg: SYSTEM2.VCLKACON1
+      cddis_bit: 11
+      notes:
+        - "Defaults to VCLK as the source"
+        - "Frequency can be as fast as HCLK frequency"
+
+  - name: VCLKA4_DIVR
+    parent: VCLKA4_S
+    divider: 2
+    x-ext:
+      divider_reg: SYSTEM2.VCLKACON1
+      divider_field: VCLKA4R
+      divider_range: [1, 8]
+      default_divider: 2
+      local_disable_field: VCLKA4_DIV_CDDIS
+      local_disable_note: "Disabled separately via VCLKACON1.VCLKA4_DIV_CDDIS only if VCLKA4_S is not already disabled"
+
+  - name: VCLKA4_DIVR_EMAC
+    parent: VCLKA4_DIVR
+    divider: 1
+    x-ext:
+      notes:
+        - "EMAC clock domain derived from VCLKA4_DIVR with special dedicated source-selection options"
+        - "MII requires 25 MHz; RMII requires 50 MHz"
+        - "Additional dedicated options include PLL2 post_ODCLK/8 and PLL2 post_ODCLK/16"
+      todo:
+        - Extract VCLKA4_DIVR_EMAC source-select controls (datasheet section 6.6.2.3 / Table 6-14)
+
+  - name: RTICLK
+    parent: VCLK
+    divider: 1
+    x-ext:
+      clock_domain_id: 6
+      source_sel_reg: SYSTEM.RCLKSRC
+      cddis_bit: 6
+      async_div_field: RTI1DIV
+      async_div_options: [1, 2, 4, 8]
+      notes:
+        - "Defaults to VCLK as the source"
+        - "If RTICLK source != VCLK, RTICLK must be <= VCLK/3 (ensure via RCLKSRC.RTI1DIV)"
+
+gates:
+  # Clock source gating via SYSTEM.CSDIS{SET,CLR} (active-high disables)
+  - name: CLKSR0_OSCIN_EN
+    parent: OSCIN
+    x-ext: { reg: SYSTEM.CSDIS, bit: 0, active_high_disables: true }
+  - name: CLKSR1_PLL1_EN
+    parent: PLL1
+    x-ext: { reg: SYSTEM.CSDIS, bit: 1, active_high_disables: true }
+  - name: CLKSR3_EXTCLKIN1_EN
+    parent: EXTCLKIN1
+    x-ext: { reg: SYSTEM.CSDIS, bit: 3, active_high_disables: true }
+  - name: CLKSR4_LF_LPO_EN
+    parent: LF_LPO
+    x-ext: { reg: SYSTEM.CSDIS, bit: 4, active_high_disables: true }
+  - name: CLKSR5_HF_LPO_EN
+    parent: HF_LPO
+    x-ext: { reg: SYSTEM.CSDIS, bit: 5, active_high_disables: true }
+  - name: CLKSR6_PLL2_EN
+    parent: PLL2
+    x-ext: { reg: SYSTEM.CSDIS, bit: 6, active_high_disables: true }
+  - name: CLKSR7_EXTCLKIN2_EN
+    parent: EXTCLKIN2
+    x-ext: { reg: SYSTEM.CSDIS, bit: 7, active_high_disables: true }
+
+  # Clock domain gating via SYSTEM.CDDIS{SET,CLR} (active-high disables)
+  - name: GCLK_DOMAIN_EN
+    parent: GCLK
+    x-ext: { reg: SYSTEM.CDDIS, bit: 0, active_high_disables: true }
+  - name: HCLK_DOMAIN_EN
+    parent: HCLK
+    x-ext: { reg: SYSTEM.CDDIS, bit: 1, active_high_disables: true }
+  - name: VCLK_PERIPH_DOMAIN_EN
+    parent: VCLK
+    x-ext: { reg: SYSTEM.CDDIS, bit: 2, active_high_disables: true }
+  - name: VCLK2_DOMAIN_EN
+    parent: VCLK2
+    x-ext: { reg: SYSTEM.CDDIS, bit: 3, active_high_disables: true }
+  - name: VCLKA1_DOMAIN_EN
+    parent: VCLKA1
+    x-ext: { reg: SYSTEM.CDDIS, bit: 4, active_high_disables: true }
+  - name: VCLKA2_DOMAIN_EN
+    parent: VCLKA2
+    x-ext: { reg: SYSTEM.CDDIS, bit: 5, active_high_disables: true }
+  - name: RTICLK1_DOMAIN_EN
+    parent: RTICLK
+    x-ext: { reg: SYSTEM.CDDIS, bit: 6, active_high_disables: true }
+  - name: VCLK3_DOMAIN_EN
+    parent: VCLK3
+    x-ext: { reg: SYSTEM.CDDIS, bit: 8, active_high_disables: true }
+  - name: VCLK4_DOMAIN_EN
+    parent: VCLK4
+    x-ext: { reg: SYSTEM.CDDIS, bit: 9, active_high_disables: true }
+  - name: VCLKA3_DOMAIN_EN
+    parent: VCLKA3_S
+    x-ext: { reg: SYSTEM.CDDIS, bit: 10, active_high_disables: true }
+  - name: VCLKA4_DOMAIN_EN
+    parent: VCLKA4_S
+    x-ext: { reg: SYSTEM.CDDIS, bit: 11, active_high_disables: true }
+
+  # Local divider disables in VCLKACON1 (active-high disables)
+  - name: VCLKA3_DIVR_LOCAL_EN
+    parent: VCLKA3_DIVR
+    x-ext: { reg: SYSTEM2.VCLKACON1, field: VCLKA3_DIV_CDDIS, active_high_disables: true }
+  - name: VCLKA4_DIVR_LOCAL_EN
+    parent: VCLKA4_DIVR
+    x-ext: { reg: SYSTEM2.VCLKACON1, field: VCLKA4_DIV_CDDIS, active_high_disables: true }
+
+  # Peripheral Select power-down clears (project policy: enable all PS clocks at startup)
+  - name: PCR_PS_ALL_ENABLE
+    parent: VCLK
+    x-ext:
+      regs_clear_all: [PCR.PSPWRDWNCLR0, PCR.PSPWRDWNCLR1, PCR.PSPWRDWNCLR2, PCR.PSPWRDWNCLR3]
+      value: 0xFFFFFFFF
+      semantics: "Clear peripheral-select power-down for all quadrants (enables all PS clocks)"
+      note: "Per-peripheral PS mapping not included here; project enables all at startup"
+
+constraints:
+  - rule: "clock_source_id_2_reserved_must_not_enable"
+    x-ext: { source_id: 2 }
+
+  - rule: "vclk2_integer_multiple_of_vclk"
+
+  - rule: "rticlk_async_must_be_le_vclk_div_3"
+    x-ext: { when_rticlk_source_not_vclk: true }
+
+  - rule: "do_not_disable_OSCIN_or_HF_LPO_with_clock_monitor_enabled"
+
+  - rule: "external_clock_inputs_not_validated_by_hardware"
+    x-ext: { applies_to: [EXTCLKIN1, EXTCLKIN2] }
+
+  - rule: "vclka4_divr_emac_required_frequency"
+    x-ext:
+      mii_required_hz: 25000000
+      rmii_required_hz: 50000000
+
+provenance:
+  trm:
+    document: "RM46 TRM SPNU514C"
+    sections:
+      - "2.4.2.1 Enabling / Disabling Clock Domains"
+      - "2.4.2.2 Mapping Clock Sources to Clock Domains"
+      - "2.5.1 Primary System Control Registers (SYS) register list (CSDIS/CDDIS/GHVSRC/VCLKASRC/RCLKSRC)"
+  datasheet:
+    document: "RM46L852 datasheet SPNS185C"
+    sections:
+      - "6.6 Clocks"
+      - "Tables: 6-8, 6-9, 6-10, 6-11, 6-12, 6-13; 6.6.2.3 (VCLKA4_DIVR_EMAC)"
+  board:
+    document: "RM46 LaunchPad XL2 schematic"
+    note: "OSCIN crystal Y1 = 16.00 MHz"

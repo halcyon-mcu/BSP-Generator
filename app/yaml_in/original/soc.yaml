@@ -1,0 +1,164 @@
+ir_schema_version: "1.1.0"
+chip: "RM46L852"
+vendor: "Texas Instruments"
+family: "Hercules RM46"
+revision: "Rev B"
+
+soc:
+  cpu:
+    cores:
+      - name: "Cortex-R4F"
+        arch: "armv7-r"
+        endianness: little
+        word_size_bits: 32
+        fpu: "VFPv3-D16"     # TODO: confirm FPU config
+
+  peripherals:
+    - name: "SYSTEM"
+      type: "system"
+      instance: 1
+      regs_ref: "SYSTEM"
+      irq_ref: ["SYSTEM_SSI"]
+      clock_ref: ""
+      x-ext:
+        init:
+          # Power up all peripheral power domains via PCR
+          - reg: "PCR.PSPWRDWNCLR0"
+            op: "set_bits"
+            value: "0xFFFFFFFF"
+          - reg: "PCR.PSPWRDWNCLR1"
+            op: "set_bits"
+            value: "0xFFFFFFFF"
+          - reg: "PCR.PSPWRDWNCLR2"
+            op: "set_bits"
+            value: "0xFFFFFFFF"
+          - reg: "PCR.PSPWRDWNCLR3"
+            op: "set_bits"
+            value: "0xFFFFFFFF"
+          - reg: "PCR.PCSPWRDWNCLR0"
+            op: "set_bits"
+            value: "0xFFFFFFFF"
+          - reg: "PCR.PCSPWRDWNCLR1"
+            op: "set_bits"
+            value: "0xFFFFFFFF"
+          - reg: "PCR.PCSPWRDWNCLR2"
+            op: "set_bits"
+            value: "0xFFFFFFFF"
+          - reg: "PCR.PCSPWRDWNCLR3"
+            op: "set_bits"
+            value: "0xFFFFFFFF"
+
+          # Enable peripheral access via global gate in CLKCNTL (bit 8)
+          - reg: "SYSTEM.CLKCNTL"
+            op: "set_bits"
+            value: "0x00000100"
+
+        
+        base_clock_refs: ["OSCIN","HF_LPO","LF_LPO","GCLK","HCLK","VCLK"]
+
+    - name: "PCR"
+      type: "pcr"
+      instance: 0
+      regs_ref: "PCR"         
+      clock_ref: "SYSCLK"     
+      x-ext: {}
+
+    - name: "GIO"
+      type: "gpio"
+      instance: 1
+      regs_ref: "GIO"
+      irq_ref: ["GIO_A", "GIO_B"]
+      clock_ref: "VCLK"
+      x-ext: 
+        init:
+          - reg: "GIO.GCR0"
+            op: "set_bits"
+            value: "0x00000001"
+
+    - name: "SCI"
+      type: "sci"
+      instance: 1
+      regs_ref: "SCI"
+      irq_ref: ["SCI_LVL0", "SCI_LVL1", "LIN_LVL0", "LIN_LVL1"]          
+      clock_ref: "VCLK"
+      x-ext:
+        init:
+          # SCI initialization sequence per TRM Section 28
+          # Step 1: Enable SCI by setting RESET bit to 1
+          - reg: "SCI.SCIGCR0"
+            op: "set_bits"
+            value: "0x00000001"
+          
+          # Step 2: Clear SWnRST bit to 0 before configuration
+          - reg: "SCI.SCIGCR1"
+            op: "clear_bits"
+            value: "0x00000080"      # SWnRST bit
+          
+          # Step 3: Configure frame format in SCIGCR1 (if needed - add specific bits here)
+          
+          # Step 4: Set RX FUNC and TX FUNC bits for SCI pin functionality
+          - reg: "SCI.SCIPIO0"
+            op: "set_bits"
+            value: "0x00000006"      # RX FUNC (bit 1) | TX FUNC (bit 2)
+          
+          # Step 5: Configure baud rate (BRS register - value depends on target baud)
+          # - reg: "SCI.BRS"
+          #   op: "write"
+          #   value: "0x000000XX"    # Calculate based on VCLK and desired baud
+          
+          # Step 6: Set CLOCK bit to select internal clock
+          - reg: "SCI.SCIGCR1"
+            op: "set_bits"
+            value: "0x01000000"      # CLOCK bit
+          
+          # Step 7: Set CONT bit for emulation mode behavior
+          - reg: "SCI.SCIGCR1"
+            op: "set_bits"
+            value: "0x00020000"      # CONT bit
+          
+          # Step 8: Enable RX and TX (set RXENA and TXENA bits)
+          - reg: "SCI.SCIGCR1"
+            op: "set_bits"
+            value: "0x03000000"      # RXENA (bit 24) | TXENA (bit 25)
+          
+          # Step 9: Set SWnRST bit to 1 to bring SCI out of reset
+          - reg: "SCI.SCIGCR1"
+            op: "set_bits"
+            value: "0x00000080"      # SWnRST bit
+            
+        interrupts:
+          # Table 29-1: values returned by SCIINTVECT0/1
+          # Note: Offset 1 is highest priority; larger is lower priority.
+          vect_offsets:
+            1:  { name: "WAKEUP",         desc: "Wakeup" }
+            3:  { name: "PARITY_ERROR",   desc: "Parity error" }
+            6:  { name: "FRAME_ERROR",    desc: "Frame error" }
+            7:  { name: "BREAK_DETECT",   desc: "Break detect error" }
+            9:  { name: "OVERRUN_ERROR",  desc: "Overrun error" }
+            11: { name: "RECEIVE",        desc: "Receive" }
+            12: { name: "TRANSMIT",       desc: "Transmit" }
+          reserved_offsets: [[0,0],[2,2],[4,5],[8,8],[10,10],[13,15]]
+
+    - name: "VIM"
+      type: "vim"
+      instance: 1
+      regs_ref: "VIM"
+      irq_ref: []
+      clock_ref: "HCLK"
+      x-ext:
+        vector_table:
+          base_address: "0xFFF82000"
+          entries: 128
+          entry_size_bytes: 4
+          phantom_entry: 0
+          reserved_channels: [127]
+          
+        parity:
+          regs_ref: "VIM_PARITY"  
+          enable_reg: "VIM_PARITY.PARCTL"
+          enable_value: "0x00000001"
+
+
+provenance:
+  notes:
+    - "Addresses and clocks taken from RM46_Hardware_Info.md"

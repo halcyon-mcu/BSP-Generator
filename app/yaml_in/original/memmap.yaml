@@ -1,0 +1,18 @@
+ir_schema_version: "1.1.0"
+memory:
+  - name: "FLASH"
+    origin: "0x00000000"
+    length: "0x00150000"   # 1,382,400 bytes (~1.3125 MB) per file range
+    attrs: "rx"
+  - name: "RAM"
+    origin: "0x08000000"
+    length: "0x00030000"   # 192 KB
+    attrs: "rwx"
+
+link:
+  vector_table: "0x00000000"   # IVT at start of flash
+startup:
+  reset_handler: "0x00001000"  # as noted in md (can be relocated by linker)
+provenance:
+  notes:
+    - "Flash/RAM ranges and IVT/reset handler locations from RM46_Hardware_Info.md"

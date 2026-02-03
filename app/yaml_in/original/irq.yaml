@@ -1,0 +1,659 @@
+ir_schema_version: "1.1.0"
+
+interrupt_controller:
+  name: "VIM"
+  type: "vim"
+  vector_table:
+    base_address: "0xFFF82000"
+    entries: 128
+    entry_size_bytes: 4
+    phantom_entry: 0
+    valid_channels: [0, 126]
+    reserved_channels: [127]
+
+irqs:
+  - name: "ESM_HIGH_NMI"
+    id: 0
+    peripheral_refs: ["ESM"]
+    desc: "ESM High level interrupt (NMI)"
+
+  - name: "RESERVED_1"
+    id: 1
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "RTI_COMPARE0"
+    id: 2
+    peripheral_refs: ["RTI"]
+    desc: "RTI compare interrupt 0"
+
+  - name: "RTI_COMPARE1"
+    id: 3
+    peripheral_refs: ["RTI"]
+    desc: "RTI compare interrupt 1"
+
+  - name: "RTI_COMPARE2"
+    id: 4
+    peripheral_refs: ["RTI"]
+    desc: "RTI compare interrupt 2"
+
+  - name: "RTI_COMPARE3"
+    id: 5
+    peripheral_refs: ["RTI"]
+    desc: "RTI compare interrupt 3"
+
+  - name: "RTI_OVERFLOW0"
+    id: 6
+    peripheral_refs: ["RTI"]
+    desc: "RTI overflow interrupt 0"
+
+  - name: "RTI_OVERFLOW1"
+    id: 7
+    peripheral_refs: ["RTI"]
+    desc: "RTI overflow interrupt 1"
+
+  - name: "RTI_TIMEBASE"
+    id: 8
+    peripheral_refs: ["RTI"]
+    desc: "RTI timebase interrupt"
+
+  - name: "GIO_A"
+    id: 9
+    peripheral_refs: ["GIO"]
+    desc: "GIO interrupt A"
+
+  - name: "N2HET1_LVL0"
+    id: 10
+    peripheral_refs: ["N2HET1"]
+    desc: "N2HET1 level 0 interrupt"
+
+  - name: "HTU1_LVL0"
+    id: 11
+    peripheral_refs: ["HTU1"]
+    desc: "HTU1 level 0 interrupt"
+
+  - name: "MIBSPI1_LVL0"
+    id: 12
+    peripheral_refs: ["MIBSPI1"]
+    desc: "MIBSPI1 level 0 interrupt"
+
+  - name: "LIN_LVL0"
+    id: 13
+    peripheral_refs: ["LIN"]
+    desc: "LIN level 0 interrupt"
+
+  - name: "MIBADC1_EVT_GRP"
+    id: 14
+    peripheral_refs: ["MIBADC1"]
+    desc: "MIBADC1 event group interrupt"
+
+  - name: "MIBADC1_SW_GRP1"
+    id: 15
+    peripheral_refs: ["MIBADC1"]
+    desc: "MIBADC1 sw group 1 interrupt"
+
+  - name: "DCAN1_LVL0"
+    id: 16
+    peripheral_refs: ["DCAN1"]
+    desc: "DCAN1 level 0 interrupt"
+
+  - name: "SPI2_LVL0"
+    id: 17
+    peripheral_refs: ["SPI2"]
+    desc: "SPI2 level 0 interrupt"
+
+  - name: "RESERVED_18"
+    id: 18
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "CRC"
+    id: 19
+    peripheral_refs: ["CRC"]
+    desc: "CRC Interrupt"
+
+  - name: "ESM_LOW"
+    id: 20
+    peripheral_refs: ["ESM"]
+    desc: "ESM Low level interrupt"
+
+  - name: "SYSTEM_SSI"
+    id: 21
+    peripheral_refs: ["SYSTEM"]
+    desc: "Software interrupt (SSI)"
+
+  - name: "CPU_PMU"
+    id: 22
+    peripheral_refs: ["CPU"]
+    desc: "PMU Interrupt"
+
+  - name: "GIO_B"
+    id: 23
+    peripheral_refs: ["GIO"]
+    desc: "GIO interrupt B"
+
+  - name: "N2HET1_LVL1"
+    id: 24
+    peripheral_refs: ["N2HET1"]
+    desc: "N2HET1 level 1 interrupt"
+
+  - name: "HTU1_LVL1"
+    id: 25
+    peripheral_refs: ["HTU1"]
+    desc: "HTU1 level 1 interrupt"
+
+  - name: "MIBSPI1_LVL1"
+    id: 26
+    peripheral_refs: ["MIBSPI1"]
+    desc: "MIBSPI1 level 1 interrupt"
+
+  - name: "LIN_LVL1"
+    id: 27
+    peripheral_refs: ["LIN"]
+    desc: "LIN level 1 interrupt"
+
+  - name: "MIBADC1_SW_GRP2"
+    id: 28
+    peripheral_refs: ["MIBADC1"]
+    desc: "MIBADC1 sw group 2 interrupt"
+
+  - name: "DCAN1_LVL1"
+    id: 29
+    peripheral_refs: ["DCAN1"]
+    desc: "DCAN1 level 1 interrupt"
+
+  - name: "SPI2_LVL1"
+    id: 30
+    peripheral_refs: ["SPI2"]
+    desc: "SPI2 level 1 interrupt"
+
+  - name: "MIBADC1_MAG_CMP"
+    id: 31
+    peripheral_refs: ["MIBADC1"]
+    desc: "MIBADC1 magnitude compare interrupt"
+
+  - name: "RESERVED_32"
+    id: 32
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "DMA_FTCA"
+    id: 33
+    peripheral_refs: ["DMA"]
+    desc: "FTCA interrupt"
+
+  - name: "DMA_LFSA"
+    id: 34
+    peripheral_refs: ["DMA"]
+    desc: "LFSA interrupt"
+
+  - name: "DCAN2_LVL0"
+    id: 35
+    peripheral_refs: ["DCAN2"]
+    desc: "DCAN2 level 0 interrupt"
+
+  - name: "RESERVED_36"
+    id: 36
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "MIBSPI3_LVL0"
+    id: 37
+    peripheral_refs: ["MIBSPI3"]
+    desc: "MIBSPI3 level 0 interrupt"
+
+  - name: "MIBSPI3_LVL1"
+    id: 38
+    peripheral_refs: ["MIBSPI3"]
+    desc: "MIBSPI3 level 1 interrupt"
+
+  - name: "DMA_HBCA"
+    id: 39
+    peripheral_refs: ["DMA"]
+    desc: "HBCA interrupt"
+
+  - name: "DMA_BTCA"
+    id: 40
+    peripheral_refs: ["DMA"]
+    desc: "BTCA interrupt"
+
+  - name: "EMIF_AEMIFINT3"
+    id: 41
+    peripheral_refs: ["EMIF"]
+    desc: "AEMIFINT3"
+
+  - name: "DCAN2_LVL1"
+    id: 42
+    peripheral_refs: ["DCAN2"]
+    desc: "DCAN2 level 1 interrupt"
+
+  - name: "RESERVED_43"
+    id: 43
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "DCAN1_IF3"
+    id: 44
+    peripheral_refs: ["DCAN1"]
+    desc: "DCAN1 IF3 interrupt"
+
+  - name: "DCAN3_LVL0"
+    id: 45
+    peripheral_refs: ["DCAN3"]
+    desc: "DCAN3 level 0 interrupt"
+
+  - name: "DCAN2_IF3"
+    id: 46
+    peripheral_refs: ["DCAN2"]
+    desc: "DCAN2 IF3 interrupt"
+
+  - name: "FPU"
+    id: 47
+    peripheral_refs: ["FPU"]
+    desc: "FPU interrupt"
+
+  - name: "RESERVED_48"
+    id: 48
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "SPI4_LVL0"
+    id: 49
+    peripheral_refs: ["SPI4"]
+    desc: "SPI4 level 0 interrupt"
+
+  - name: "MIBADC2_EVT_GRP"
+    id: 50
+    peripheral_refs: ["MIBADC2"]
+    desc: "MibADC2 event group interrupt"
+
+  - name: "MIBADC2_SW_GRP1"
+    id: 51
+    peripheral_refs: ["MIBADC2"]
+    desc: "MibADC2 sw group1 interrupt"
+
+  - name: "RESERVED_52"
+    id: 52
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "MIBSPI5_LVL0"
+    id: 53
+    peripheral_refs: ["MIBSPI5"]
+    desc: "MIBSPI5 level 0 interrupt"
+
+  - name: "SPI4_LVL1"
+    id: 54
+    peripheral_refs: ["SPI4"]
+    desc: "SPI4 level 1 interrupt"
+
+  - name: "DCAN3_LVL1"
+    id: 55
+    peripheral_refs: ["DCAN3"]
+    desc: "DCAN3 level 1 interrupt"
+
+  - name: "MIBSPI5_LVL1"
+    id: 56
+    peripheral_refs: ["MIBSPI5"]
+    desc: "MIBSPI5 level 1 interrupt"
+
+  - name: "MIBADC2_SW_GRP2"
+    id: 57
+    peripheral_refs: ["MIBADC2"]
+    desc: "MibADC2 sw group2 interrupt"
+
+  - name: "RESERVED_58"
+    id: 58
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "MIBADC2_MAG_CMP"
+    id: 59
+    peripheral_refs: ["MIBADC2"]
+    desc: "MibADC2 magnitude compare interrupt"
+
+  - name: "DCAN3_IF3"
+    id: 60
+    peripheral_refs: ["DCAN3"]
+    desc: "DCAN3 IF3 interrupt"
+
+  - name: "FMC_FSM_DONE"
+    id: 61
+    peripheral_refs: ["FMC"]
+    desc: "FSM_DONE interrupt"
+
+  - name: "RESERVED_62"
+    id: 62
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "N2HET2_LVL0"
+    id: 63
+    peripheral_refs: ["N2HET2"]
+    desc: "N2HET2 level 0 interrupt"
+
+  - name: "SCI_LVL0"
+    id: 64
+    peripheral_refs: ["SCI"]
+    desc: "SCI level 0 interrupt"
+
+  - name: "HTU2_LVL0"
+    id: 65
+    peripheral_refs: ["HTU2"]
+    desc: "HTU2 level 0 interrupt"
+
+  - name: "I2C_LVL0"
+    id: 66
+    peripheral_refs: ["I2C"]
+    desc: "I2C level 0 interrupt"
+
+  - name: "USBH_OHCI_INT"
+    id: 67
+    peripheral_refs: ["USB_HOST"]
+    desc: "USB Host OHCI_INT"
+
+  - name: "USBD_IRQISOON"
+    id: 68
+    peripheral_refs: ["USB_DEVICE"]
+    desc: "USB Device USB_FUNC.IRQISOON"
+
+  - name: "USBD_IRQGENION"
+    id: 69
+    peripheral_refs: ["USB_DEVICE"]
+    desc: "USB Device USB_FUNC.IRQGENION"
+
+  - name: "USBD_IRQNONISOON"
+    id: 70
+    peripheral_refs: ["USB_DEVICE"]
+    desc: "USB Device USB_FUNC.IRQNONISOON"
+
+  - name: "USBD_NOT_DSWAKEREQON"
+    id: 71
+    peripheral_refs: ["USB_DEVICE"]
+    desc: "USB Device not (USB_FUNC.DSWAKEREQON)"
+
+  - name: "USBD_USBRESETO"
+    id: 72
+    peripheral_refs: ["USB_DEVICE"]
+    desc: "USB Device USB_FUNC.USBRESETO"
+
+  - name: "N2HET2_LVL1"
+    id: 73
+    peripheral_refs: ["N2HET2"]
+    desc: "N2HET2 level 1 interrupt"
+
+  - name: "SCI_LVL1"
+    id: 74
+    peripheral_refs: ["SCI"]
+    desc: "SCI level 1 interrupt"
+
+  - name: "HTU2_LVL1"
+    id: 75
+    peripheral_refs: ["HTU2"]
+    desc: "HTU2 level 1 interrupt"
+
+  - name: "ETH_C0_MISC_PULSE"
+    id: 76
+    peripheral_refs: ["ETHERNET"]
+    desc: "Ethernet C0_MISC_PULSE"
+
+  - name: "ETH_C0_TX_PULSE"
+    id: 77
+    peripheral_refs: ["ETHERNET"]
+    desc: "Ethernet C0_TX_PULSE"
+
+  - name: "ETH_C0_THRESH_PULSE"
+    id: 78
+    peripheral_refs: ["ETHERNET"]
+    desc: "Ethernet C0_THRESH_PULSE"
+
+  - name: "ETH_C0_RX_PULSE"
+    id: 79
+    peripheral_refs: ["ETHERNET"]
+    desc: "Ethernet C0_RX_PULSE"
+
+  - name: "HWAG1_INT_REQ_H"
+    id: 80
+    peripheral_refs: ["HWAG1"]
+    desc: "HWA_INT_REQ_H"
+
+  - name: "HWAG2_INT_REQ_H"
+    id: 81
+    peripheral_refs: ["HWAG2"]
+    desc: "HWA_INT_REQ_H"
+
+  - name: "DCC1_DONE"
+    id: 82
+    peripheral_refs: ["DCC1"]
+    desc: "DCC done interrupt"
+
+  - name: "DCC2_DONE"
+    id: 83
+    peripheral_refs: ["DCC2"]
+    desc: "DCC2 done interrupt"
+
+  - name: "RESERVED_84"
+    id: 84
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "PBIST_DONE"
+    id: 85
+    peripheral_refs: ["PBIST"]
+    desc: "PBIST Done Interrupt"
+
+  - name: "RESERVED_86"
+    id: 86
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "RESERVED_87"
+    id: 87
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "HWAG1_INT_REQ_L"
+    id: 88
+    peripheral_refs: ["HWAG1"]
+    desc: "HWA_INT_REQ_L"
+
+  - name: "HWAG2_INT_REQ_L"
+    id: 89
+    peripheral_refs: ["HWAG2"]
+    desc: "HWA_INT_REQ_L"
+
+  - name: "EPWM1_INT"
+    id: 90
+    peripheral_refs: ["ePWM1"]
+    desc: "ePWM1 Interrupt"
+
+  - name: "EPWM1_TZINT"
+    id: 91
+    peripheral_refs: ["ePWM1"]
+    desc: "ePWM1 Trip Zone Interrupt"
+
+  - name: "EPWM2_INT"
+    id: 92
+    peripheral_refs: ["ePWM2"]
+    desc: "ePWM2 Interrupt"
+
+  - name: "EPWM2_TZINT"
+    id: 93
+    peripheral_refs: ["ePWM2"]
+    desc: "ePWM2 Trip Zone Interrupt"
+
+  - name: "EPWM3_INT"
+    id: 94
+    peripheral_refs: ["ePWM3"]
+    desc: "ePWM3 Interrupt"
+
+  - name: "EPWM3_TZINT"
+    id: 95
+    peripheral_refs: ["ePWM3"]
+    desc: "ePWM3 Trip Zone Interrupt"
+
+  - name: "EPWM4_INT"
+    id: 96
+    peripheral_refs: ["ePWM4"]
+    desc: "ePWM4 Interrupt"
+
+  - name: "EPWM4_TZINT"
+    id: 97
+    peripheral_refs: ["ePWM4"]
+    desc: "ePWM4 Trip Zone Interrupt"
+
+  - name: "EPWM5_INT"
+    id: 98
+    peripheral_refs: ["ePWM5"]
+    desc: "ePWM5 Interrupt"
+
+  - name: "EPWM5_TZINT"
+    id: 99
+    peripheral_refs: ["ePWM5"]
+    desc: "ePWM5 Trip Zone Interrupt"
+
+  - name: "EPWM6_INT"
+    id: 100
+    peripheral_refs: ["ePWM6"]
+    desc: "ePWM6 Interrupt"
+
+  - name: "EPWM6_TZINT"
+    id: 101
+    peripheral_refs: ["ePWM6"]
+    desc: "ePWM6 Trip Zone Interrupt"
+
+  - name: "EPWM7_INT"
+    id: 102
+    peripheral_refs: ["ePWM7"]
+    desc: "ePWM7 Interrupt"
+
+  - name: "EPWM7_TZINT"
+    id: 103
+    peripheral_refs: ["ePWM7"]
+    desc: "ePWM7 Trip Zone Interrupt"
+
+  - name: "ECAP1_INT"
+    id: 104
+    peripheral_refs: ["eCAP1"]
+    desc: "eCAP1 Interrupt"
+
+  - name: "ECAP2_INT"
+    id: 105
+    peripheral_refs: ["eCAP2"]
+    desc: "eCAP2 Interrupt"
+
+  - name: "ECAP3_INT"
+    id: 106
+    peripheral_refs: ["eCAP3"]
+    desc: "eCAP3 Interrupt"
+
+  - name: "ECAP4_INT"
+    id: 107
+    peripheral_refs: ["eCAP4"]
+    desc: "eCAP4 Interrupt"
+
+  - name: "ECAP5_INT"
+    id: 108
+    peripheral_refs: ["eCAP5"]
+    desc: "eCAP5 Interrupt"
+
+  - name: "ECAP6_INT"
+    id: 109
+    peripheral_refs: ["eCAP6"]
+    desc: "eCAP6 Interrupt"
+
+  - name: "EQEP1_INT"
+    id: 110
+    peripheral_refs: ["eQEP1"]
+    desc: "eQEP1 Interrupt"
+
+  - name: "EQEP2_INT"
+    id: 111
+    peripheral_refs: ["eQEP2"]
+    desc: "eQEP2 Interrupt"
+
+  - name: "RESERVED_112"
+    id: 112
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "RESERVED_113"
+    id: 113
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "RESERVED_114"
+    id: 114
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "RESERVED_115"
+    id: 115
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "RESERVED_116"
+    id: 116
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "RESERVED_117"
+    id: 117
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "RESERVED_118"
+    id: 118
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "RESERVED_119"
+    id: 119
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "RESERVED_120"
+    id: 120
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "RESERVED_121"
+    id: 121
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "RESERVED_122"
+    id: 122
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "RESERVED_123"
+    id: 123
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "RESERVED_124"
+    id: 124
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "RESERVED_125"
+    id: 125
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "RESERVED_126"
+    id: 126
+    peripheral_refs: []
+    desc: "Reserved"
+
+  - name: "RESERVED_127"
+    id: 127
+    peripheral_refs: []
+    desc: "Reserved"
+
+priorities: {}
+
+provenance:
+  notes:
+    - "Default VIM interrupt channel assignments from RM46L852 datasheet Table 6-32 (Interrupt Request Assignments). Channel 0..126 usable; channel 127 reserved; phantom vector occupies vector table entry 0 (channels are offset by +1 in VIM RAM)."
