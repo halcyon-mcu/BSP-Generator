@@ -1,0 +1,1434 @@
+ir_schema_version: 1.1.0
+interrupt_controller:
+  name: VIM
+  type: vim
+  vector_table:
+    base_address: '0xFFF82000'
+    entries: 128
+    entry_size_bytes: 4
+    phantom_entry: 0
+    valid_channels:
+    - 0
+    - 126
+    reserved_channels:
+    - 127
+irqs:
+- name: RESERVED
+  id: 1
+  desc: ''
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: RTI_COMPARE0
+  id: 2
+  desc: ''
+  peripheral_refs:
+  - RTI
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: RTI_COMPARE1
+  id: 3
+  desc: ''
+  peripheral_refs:
+  - RTI
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: RTI_COMPARE2
+  id: 4
+  desc: ''
+  peripheral_refs:
+  - RTI
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: RTI_COMPARE3
+  id: 5
+  desc: ''
+  peripheral_refs:
+  - RTI
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: RTI_OVERFLOW0
+  id: 6
+  desc: ''
+  peripheral_refs:
+  - RTI
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: RTI_OVERFLOW1
+  id: 7
+  desc: ''
+  peripheral_refs:
+  - RTI
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: RTI_TIMEBASE
+  id: 8
+  desc: ''
+  peripheral_refs:
+  - RTI
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: GIO_A
+  id: 9
+  desc: ''
+  peripheral_refs:
+  - GIO
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: N2HET1_LVL0
+  id: 10
+  desc: ''
+  peripheral_refs:
+  - N2HET1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: HTU1_LVL0
+  id: 11
+  desc: ''
+  peripheral_refs:
+  - HTU1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: MIBSPI1_LVL0
+  id: 12
+  desc: ''
+  peripheral_refs:
+  - MIBSPI1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: LIN_LVL0
+  id: 13
+  desc: ''
+  peripheral_refs:
+  - LIN
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: MIBADC1_EVT_GRP
+  id: 14
+  desc: ''
+  peripheral_refs:
+  - MIBADC1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: MIBADC1_SW_GRP1
+  id: 15
+  desc: ''
+  peripheral_refs:
+  - MIBADC1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: DCAN1_LVL0
+  id: 16
+  desc: ''
+  peripheral_refs:
+  - DCAN1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: SPI2_LVL0
+  id: 17
+  desc: ''
+  peripheral_refs:
+  - SPI2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: RESERVED
+  id: 18
+  desc: ''
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: CRC_INT
+  id: 19
+  desc: ''
+  peripheral_refs:
+  - CRC
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: ESM_LOW
+  id: 20
+  desc: ''
+  peripheral_refs:
+  - ESM
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: SYSTEM_SSI
+  id: 21
+  desc: ''
+  peripheral_refs:
+  - SYSTEM
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: CPU_PMU
+  id: 22
+  desc: ''
+  peripheral_refs:
+  - CPU
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: GIO_B
+  id: 23
+  desc: ''
+  peripheral_refs:
+  - GIO
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: N2HET1_LVL1
+  id: 24
+  desc: ''
+  peripheral_refs:
+  - N2HET1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: HTU1_LVL1
+  id: 25
+  desc: ''
+  peripheral_refs:
+  - HTU1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: MIBSPI1_LVL1
+  id: 26
+  desc: ''
+  peripheral_refs:
+  - MIBSPI1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: LIN_LVL1
+  id: 27
+  desc: ''
+  peripheral_refs:
+  - LIN
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: MIBADC1_SW_GRP2
+  id: 28
+  desc: ''
+  peripheral_refs:
+  - MIBADC1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: DCAN1_LVL1
+  id: 29
+  desc: ''
+  peripheral_refs:
+  - DCAN1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: SPI2_LVL1
+  id: 30
+  desc: ''
+  peripheral_refs:
+  - SPI2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: MIBADC1_MAG_CMP
+  id: 31
+  desc: ''
+  peripheral_refs:
+  - MIBADC1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: RESERVED
+  id: 32
+  desc: ''
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: DMA_FTCA
+  id: 33
+  desc: ''
+  peripheral_refs:
+  - DMA
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: DMA_LFSA
+  id: 34
+  desc: ''
+  peripheral_refs:
+  - DMA
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: DCAN2_LVL0
+  id: 35
+  desc: ''
+  peripheral_refs:
+  - DCAN2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: RESERVED
+  id: 36
+  desc: ''
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: MIBSPI3_LVL0
+  id: 37
+  desc: ''
+  peripheral_refs:
+  - MIBSPI3
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: MIBSPI3_LVL1
+  id: 38
+  desc: ''
+  peripheral_refs:
+  - MIBSPI3
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: DMA_HBCA
+  id: 39
+  desc: ''
+  peripheral_refs:
+  - DMA
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: DMA_BTCA
+  id: 40
+  desc: ''
+  peripheral_refs:
+  - DMA
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: EMIF_AEMIFINT3
+  id: 41
+  desc: ''
+  peripheral_refs:
+  - EMIF
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: DCAN2_LVL1
+  id: 42
+  desc: ''
+  peripheral_refs:
+  - DCAN2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: RESERVED
+  id: 43
+  desc: ''
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: DCAN1_IF3
+  id: 44
+  desc: ''
+  peripheral_refs:
+  - DCAN1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: DCAN3_LVL0
+  id: 45
+  desc: ''
+  peripheral_refs:
+  - DCAN3
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: DCAN2_IF3
+  id: 46
+  desc: ''
+  peripheral_refs:
+  - DCAN2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: FPU_INT
+  id: 47
+  desc: ''
+  peripheral_refs:
+  - FPU
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: RESERVED
+  id: 48
+  desc: ''
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: SPI4_LVL0
+  id: 49
+  desc: ''
+  peripheral_refs:
+  - SPI4
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: MIBADC2_EVT_GRP
+  id: 50
+  desc: ''
+  peripheral_refs:
+  - MIBADC2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: MIBADC2_SW_GRP1
+  id: 51
+  desc: ''
+  peripheral_refs:
+  - MIBADC2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: RESERVED
+  id: 52
+  desc: ''
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: MIBSPI5_LVL0
+  id: 53
+  desc: ''
+  peripheral_refs:
+  - MIBSPI5
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: SPI4_LVL1
+  id: 54
+  desc: ''
+  peripheral_refs:
+  - SPI4
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: DCAN3_LVL1
+  id: 55
+  desc: ''
+  peripheral_refs:
+  - DCAN3
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: MIBSPI5_LVL1
+  id: 56
+  desc: ''
+  peripheral_refs:
+  - MIBSPI5
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: MIBADC2_SW_GRP2
+  id: 57
+  desc: ''
+  peripheral_refs:
+  - MIBADC2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: RESERVED
+  id: 58
+  desc: ''
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: MIBADC2_MAG_CMP
+  id: 59
+  desc: ''
+  peripheral_refs:
+  - MIBADC2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: DCAN3_IF3
+  id: 60
+  desc: ''
+  peripheral_refs:
+  - DCAN3
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: FMC_FSM_DONE
+  id: 61
+  desc: ''
+  peripheral_refs:
+  - FMC
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: RESERVED
+  id: 62
+  desc: ''
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: N2HET2_LVL0
+  id: 63
+  desc: ''
+  peripheral_refs:
+  - N2HET2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: SCI_LVL0
+  id: 64
+  desc: ''
+  peripheral_refs:
+  - SCI
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: HTU2_LVL0
+  id: 65
+  desc: ''
+  peripheral_refs:
+  - HTU2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: I2C_LVL0
+  id: 66
+  desc: ''
+  peripheral_refs:
+  - I2C
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: USB_OHCI_INT
+  id: 67
+  desc: ''
+  peripheral_refs:
+  - USB_HOST
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: USB_FUNC_IRQISOON
+  id: 68
+  desc: ''
+  peripheral_refs:
+  - USB_DEVICE
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: USB_FUNC_IRQGENION
+  id: 69
+  desc: ''
+  peripheral_refs:
+  - USB_DEVICE
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: USB_FUNC_IRQNONISOON
+  id: 70
+  desc: ''
+  peripheral_refs:
+  - USB_DEVICE
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: USB_FUNC_NOT_DSWAKEREQON
+  id: 71
+  desc: ''
+  peripheral_refs:
+  - USB_DEVICE
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: USB_FUNC_USBRESETO
+  id: 72
+  desc: ''
+  peripheral_refs:
+  - USB_DEVICE
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: N2HET2_LVL1
+  id: 73
+  desc: ''
+  peripheral_refs:
+  - N2HET2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: SCI_LVL1
+  id: 74
+  desc: ''
+  peripheral_refs:
+  - SCI
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: HTU2_LVL1
+  id: 75
+  desc: ''
+  peripheral_refs:
+  - HTU2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 104
+      confidence: high
+- name: EMAC_C0_MISC_PULSE
+  id: 76
+  desc: ''
+  peripheral_refs:
+  - EMAC
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: EMAC_C0_TX_PULSE
+  id: 77
+  desc: ''
+  peripheral_refs:
+  - EMAC
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: EMAC_C0_THRESH_PULSE
+  id: 78
+  desc: ''
+  peripheral_refs:
+  - EMAC
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: EMAC_C0_RX_PULSE
+  id: 79
+  desc: ''
+  peripheral_refs:
+  - EMAC
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: HWAG1_INT_REQ_H
+  id: 80
+  desc: ''
+  peripheral_refs:
+  - HWAG1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: HWAG2_INT_REQ_H
+  id: 81
+  desc: ''
+  peripheral_refs:
+  - HWAG2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: DCC1_DONE
+  id: 82
+  desc: ''
+  peripheral_refs:
+  - DCC1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: DCC2_DONE
+  id: 83
+  desc: ''
+  peripheral_refs:
+  - DCC2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: RESERVED
+  id: 84
+  desc: ''
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: PBIST_DONE
+  id: 85
+  desc: ''
+  peripheral_refs:
+  - PBIST
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: RESERVED
+  id: 86
+  desc: ''
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: RESERVED
+  id: 87
+  desc: ''
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: HWAG1_INT_REQ_L
+  id: 88
+  desc: ''
+  peripheral_refs:
+  - HWAG1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: HWAG2_INT_REQ_L
+  id: 89
+  desc: ''
+  peripheral_refs:
+  - HWAG2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: EPWM1INTn
+  id: 90
+  desc: ''
+  peripheral_refs:
+  - EPWM1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: EPWM1TZINTn
+  id: 91
+  desc: ''
+  peripheral_refs:
+  - EPWM1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: EPWM2INTn
+  id: 92
+  desc: ''
+  peripheral_refs:
+  - EPWM2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: EPWM2TZINTn
+  id: 93
+  desc: ''
+  peripheral_refs:
+  - EPWM2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: EPWM3INTn
+  id: 94
+  desc: ''
+  peripheral_refs:
+  - EPWM3
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: EPWM3TZINTn
+  id: 95
+  desc: ''
+  peripheral_refs:
+  - EPWM3
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: EPWM4INTn
+  id: 96
+  desc: ''
+  peripheral_refs:
+  - EPWM4
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: EPWM4TZINTn
+  id: 97
+  desc: ''
+  peripheral_refs:
+  - EPWM4
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: EPWM5INTn
+  id: 98
+  desc: ''
+  peripheral_refs:
+  - EPWM5
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: EPWM5TZINTn
+  id: 99
+  desc: ''
+  peripheral_refs:
+  - EPWM5
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: EPWM6INTn
+  id: 100
+  desc: ''
+  peripheral_refs:
+  - EPWM6
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: EPWM6TZINTn
+  id: 101
+  desc: ''
+  peripheral_refs:
+  - EPWM6
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: EPWM7INTn
+  id: 102
+  desc: ''
+  peripheral_refs:
+  - EPWM7
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: EPWM7TZINTn
+  id: 103
+  desc: ''
+  peripheral_refs:
+  - EPWM7
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: ECAP1INTn
+  id: 104
+  desc: ''
+  peripheral_refs:
+  - ECAP1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: ECAP2INTn
+  id: 105
+  desc: ''
+  peripheral_refs:
+  - ECAP2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: ECAP3INTn
+  id: 106
+  desc: ''
+  peripheral_refs:
+  - ECAP3
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: ECAP4INTn
+  id: 107
+  desc: ''
+  peripheral_refs:
+  - ECAP4
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: ECAP5INTn
+  id: 108
+  desc: ''
+  peripheral_refs:
+  - ECAP5
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: ECAP6INTn
+  id: 109
+  desc: ''
+  peripheral_refs:
+  - ECAP6
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: EQEP1INTn
+  id: 110
+  desc: ''
+  peripheral_refs:
+  - EQEP1
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high
+- name: EQEP2INTn
+  id: 111
+  desc: ''
+  peripheral_refs:
+  - EQEP2
+  x-ext:
+    default_priority: 0
+    x-source:
+      pdf: RM46_datasheet.pdf
+      pages:
+      - 103
+      - 105
+      confidence: high

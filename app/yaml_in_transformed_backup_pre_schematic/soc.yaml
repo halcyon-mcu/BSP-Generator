@@ -1,0 +1,1359 @@
+ir_schema_version: 1.1.0
+chip: RM46L852
+vendor: Texas Instruments
+family: Hercules RM46
+revision: Rev B
+
+soc:
+  cpu:
+    cores:
+    - name: Cortex-R4F
+      arch: armv7-r
+      endianness: little
+      word_size_bits: 32
+      fpu: VFPv3-D16
+
+  peripherals:
+  - name: ADC
+    type: adc
+    instance: 1
+    regs_ref: ADC
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "ADRSTCR", op: set_bits, value: "0x00000000" }
+        - { reg: "ADOPMODECR", op: set_bits, value: "0x00000001" }
+        - { reg: "ADCLOCKCR", op: write, value: "0x00000000" }
+        - { reg: "ADG1SAMP", op: write, value: "0x00000000" }
+        - { reg: "ADG1SEL", op: write, value: "0x00000000" }
+        - { reg: "ADG1SR", op: write, value: "0x00000000" }
+        - { reg: "ADG1BUFFER", op: write, value: "0x00000000" }
+      dma_refs:
+      -
+        channel: null
+        description: Event Group DMA request
+        trigger: EV_DMA_EN or EV_BLK_XFER or DMA_EV_END
+        control_register: ADEVDMACR
+        x-source: { pdf: "22_Analog_To_Digital_Converter_ADC_Module.pdf", pages: [22], confidence: high }
+        x-note: DMA channel is software-configured at runtime, not fixed in hardware
+      -
+        channel: null
+        description: Group1 DMA request
+        trigger: G1_DMA_EN or G1_BLK_XFER or DMA_G1_END
+        control_register: ADG1DMACR
+        x-source: { pdf: "22_Analog_To_Digital_Converter_ADC_Module.pdf", pages: [22], confidence: high }
+        x-note: DMA channel is software-configured at runtime, not fixed in hardware
+      -
+        channel: null
+        description: Group2 DMA request
+        trigger: G2_DMA_EN or G2_BLK_XFER or DMA_G2_END
+        control_register: ADG2DMACR
+        x-source: { pdf: "22_Analog_To_Digital_Converter_ADC_Module.pdf", pages: [22], confidence: high }
+        x-note: DMA channel is software-configured at runtime, not fixed in hardware
+      x-source: { pdf: "22_Analog_To_Digital_Converter_ADC_Module.pdf", pages: [1, 2, 3, 34], confidence: high }
+
+  - name: CCM
+    type: compare
+    instance: 1
+    regs_ref: CCM
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "", op: set_bits, value: "0x00000000" }
+        - { reg: "", op: write, value: "0x00000000" }
+        - { reg: "CCMKEYR", op: write, value: "0x00000006" }
+        - { reg: "CCMSR", op: write, value: "0x00000000" }
+        - { reg: "CCMSR", op: write, value: "0x00000000" }
+        - { reg: "CCMKEYR", op: write, value: "0x00000000" }
+      base_address: '0xFFFFF600'
+      x-source: { pdf: "9_CPU_Compare_Module_for_Cortex-R4F_CCM-R4F.pdf", pages: [1, 2, 3, 6], confidence: high }
+
+  - name: CRC
+    type: crc
+    instance: 1
+    regs_ref: CRC
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "CRC_CTRL0", op: set_bits, value: "0x00000001 or 0x00000100" }
+        - { reg: "CRC_PCOUNT_REG1 or CRC_PCOUNT_REG2", op: write, value: "0x00000000" }
+        - { reg: "CRC_SCOUNT_REG1 or CRC_SCOUNT_REG2", op: write, value: "0x00000000" }
+        - { reg: "CRC_WDTOPLD1 or CRC_WDTOPLD2", op: write, value: "0x00000000" }
+        - { reg: "CRC_BCTOPLD1 or CRC_BCTOPLD2", op: write, value: "0x00000000" }
+        - { reg: "CRC_INTS", op: set_bits, value: "0x00000000" }
+        - { reg: "CRC_CTRL2", op: write, value: "0x00000000" }
+        - { reg: "CRC_CTRL0", op: set_bits, value: "0x00000000" }
+        - { reg: "", op: set_bits, value: "0x00000000" }
+      dma_refs:
+      -
+        channel: null
+        description: Channel for transferring CRC values (AUTO mode)
+        trigger: CRC Controller DMA request after sector compression
+        x-source: { pdf: "14_Cyclic_Redundancy_Check_CRC_Controller_Module.pdf", pages: [6, 7, 8], confidence: medium }
+        x-note: DMA channel assignment varies based on system configuration
+      -
+        channel: null
+        description: Channel for transferring data patterns to PSA Signature Register
+        trigger: Timer or software trigger
+        x-source: { pdf: "14_Cyclic_Redundancy_Check_CRC_Controller_Module.pdf", pages: [6, 7, 8], confidence: medium }
+        x-note: DMA channel assignment varies based on system configuration
+      base_address:
+        base: '0xFE000000'
+        size: '0x200'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+      x-source: { pdf: "14_Cyclic_Redundancy_Check_CRC_Controller_Module.pdf", pages: [1, 2, 17], confidence: high }
+
+  - name: DCAN
+    type: can
+    instance: 1
+    regs_ref: DCAN
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "DCAN_CTL", op: set_bits, value: "0x00000001" }
+        - { reg: "DCAN_CTL", op: set_bits, value: "0x00000041" }
+        - { reg: "DCAN_CTL", op: set_bits, value: "0x00000000" }
+        - { reg: "DCAN_BTR", op: write, value: "0x00000000" }
+        - { reg: "", op: write, value: "0x00000000" }
+        - { reg: "DCAN_CTL", op: clear_bits, value: "0x00000000" }
+        - { reg: "DCAN_CTL", op: clear_bits, value: "0x00000000" }
+        - { reg: "DCAN_CTL", op: clear_bits, value: "0x00000000" }
+      dma_refs:
+      -
+        channel: IF1_DMA
+        description: DMA request for IF1 interface register set
+        trigger: IF1 interface update complete
+        x-source: { pdf: "26_Controller_Area_Network_DCAN_Module.pdf", pages: [38, 56, 57], confidence: high }
+      -
+        channel: IF2_DMA
+        description: DMA request for IF2 interface register set
+        trigger: IF2 interface update complete
+        x-source: { pdf: "26_Controller_Area_Network_DCAN_Module.pdf", pages: [38, 56, 57], confidence: high }
+      -
+        channel: IF3_DMA
+        description: >-
+          DMA request for IF3 interface register set (automatic update on message reception)
+        trigger: IF3 interface auto-update complete
+        x-source: { pdf: "26_Controller_Area_Network_DCAN_Module.pdf", pages: [17, 38, 63, 64], confidence: high }
+      x-source: { pdf: "26_Controller_Area_Network_DCAN_Module.pdf", pages: [1, 2, 3, 37], confidence: high }
+
+  - name: DCC
+    type: compare
+    instance: 1
+    regs_ref: DCC
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "DCCCNT0SEED", op: write, value: "Non-zero value" }
+        - { reg: "DCCVALID0SEED", op: write, value: ">=0x4" }
+        - { reg: "DCCCNT1SEED", op: write, value: "Non-zero value" }
+        - { reg: "DCCCNT1CLKSRC", op: write, value: "KEY=0xA and CNT1_CLKSRC=desired source" }
+        - { reg: "DCCCNT0CLKSRC", op: write, value: "CNT0_CLKSRC=desired source" }
+        - { reg: "DCCGCTRL", op: write, value: "SINGLE_SHOT field: Ah for stop on counter0/valid0=0, Bh for stop on counter1=0, Others for continuous" }
+        - { reg: "DCCGCTRL", op: set_bits, value: "ERR_ENA!=5h for error interrupt, DONE_INT_ENA!=5h for done interrupt" }
+        - { reg: "DCCGCTRL", op: set_bits, value: "DCC_ENA=0xA (recommended)" }
+      x-source: { pdf: "11_Dual-Clock_Comparator_DCC_Module.pdf", pages: [1, 2, 8], confidence: high }
+
+  - name: DMA
+    type: dma
+    instance: 1
+    regs_ref: DMA
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "Control Packet RAM", op: write, value: "Write known values or use auto-initialization" }
+        - { reg: "DMAPCR", op: set_bits, value: "Write 0xA to PARITY_ENA field (bits 3:0)" }
+        - { reg: "ISADDR, IDADDR, ITCOUNT, CHCTRL, EIOFF, FIOFF", op: set_bits, value: "Configure source/destination addresses, transfer counts, channel control, and offsets" }
+        - { reg: "DREQASI0, DREQASI1, DREQASI2, DREQASI3", op: write, value: "Configure which DMA request lines trigger which channels" }
+        - { reg: "PAR0, PAR1", op: write, value: "Assign channels to Port B (write 1xx to CHxPA fields)" }
+        - { reg: "CHPRIOS", op: write, value: "Write 1 to assign channels to high priority queue" }
+        - { reg: "PTCRL", op: write, value: "Set PSFRHQPB and PSFRLQPB for fixed or rotating priority" }
+        - { reg: "FTCINTENAS, LFSINTENAS, HBCINTENAS, BTCINTENAS", op: set_bits, value: "Write 1 to enable desired interrupt types per channel" }
+        - { reg: "FTCMAP, LFSMAP, HBCMAP, BTCMAP", op: write, value: "Configure interrupt routing (0=Group A, 1=Group B)" }
+        - { reg: "GCHIENAS", op: set_bits, value: "Write 1 to enable interrupts for desired channels" }
+        - { reg: "DMAMPR0S, DMAMPR0E, DMAMPR1S, DMAMPR1E, DMAMPR2S, DMAMPR2E, DMAMPR3S, DMAMPR3E, DMAMPCTRL", op: write, value: "Define protected memory regions and access permissions" }
+        - { reg: "GCTRL", op: set_bits, value: "Set DMA_EN bit (bit 16) to 1" }
+        - { reg: "HWCHENAS or SWCHENAS", op: set_bits, value: "Write 1 to enable HW trigger or SW trigger for desired channels" }
+      dma_refs:
+      -
+        channel: 0
+        trigger: Configurable via DREQASI0[29:24] - default DMAREQ[0]
+        x-source: { pdf: "16_Direct_Memory_Access_Controller_DMA_Module.pdf", pages: [13, 31], confidence: high }
+      -
+        channel: 1
+        trigger: Configurable via DREQASI0[21:16] - default DMAREQ[1]
+        x-source: { pdf: "16_Direct_Memory_Access_Controller_DMA_Module.pdf", pages: [13, 31], confidence: high }
+      -
+        channel: 2
+        trigger: Configurable via DREQASI0[13:8] - default DMAREQ[2]
+        x-source: { pdf: "16_Direct_Memory_Access_Controller_DMA_Module.pdf", pages: [13, 31], confidence: high }
+      -
+        channel: 3
+        trigger: Configurable via DREQASI0[5:0] - default DMAREQ[3]
+        x-source: { pdf: "16_Direct_Memory_Access_Controller_DMA_Module.pdf", pages: [13, 31], confidence: high }
+      -
+        channel: 4
+        trigger: Configurable via DREQASI1[29:24] - default DMAREQ[4]
+        x-source: { pdf: "16_Direct_Memory_Access_Controller_DMA_Module.pdf", pages: [13, 32], confidence: high }
+      -
+        channel: 5
+        trigger: Configurable via DREQASI1[21:16] - default DMAREQ[5]
+        x-source: { pdf: "16_Direct_Memory_Access_Controller_DMA_Module.pdf", pages: [13, 32], confidence: high }
+      -
+        channel: 6
+        trigger: Configurable via DREQASI1[13:8] - default DMAREQ[6]
+        x-source: { pdf: "16_Direct_Memory_Access_Controller_DMA_Module.pdf", pages: [13, 32], confidence: high }
+      -
+        channel: 7
+        trigger: Configurable via DREQASI1[5:0] - default DMAREQ[7]
+        x-source: { pdf: "16_Direct_Memory_Access_Controller_DMA_Module.pdf", pages: [13, 32], confidence: high }
+      -
+        channel: 8
+        trigger: Configurable via DREQASI2[29:24] - default DMAREQ[8]
+        x-source: { pdf: "16_Direct_Memory_Access_Controller_DMA_Module.pdf", pages: [13, 33], confidence: high }
+      -
+        channel: 9
+        trigger: Configurable via DREQASI2[21:16] - default DMAREQ[9]
+        x-source: { pdf: "16_Direct_Memory_Access_Controller_DMA_Module.pdf", pages: [13, 33], confidence: high }
+      -
+        channel: 10
+        trigger: Configurable via DREQASI2[13:8] - default DMAREQ[10]
+        x-source: { pdf: "16_Direct_Memory_Access_Controller_DMA_Module.pdf", pages: [13, 33], confidence: high }
+      -
+        channel: 11
+        trigger: Configurable via DREQASI2[5:0] - default DMAREQ[11]
+        x-source: { pdf: "16_Direct_Memory_Access_Controller_DMA_Module.pdf", pages: [13, 33], confidence: high }
+      -
+        channel: 12
+        trigger: Configurable via DREQASI3[29:24] - default DMAREQ[12]
+        x-source: { pdf: "16_Direct_Memory_Access_Controller_DMA_Module.pdf", pages: [13, 34], confidence: high }
+      -
+        channel: 13
+        trigger: Configurable via DREQASI3[21:16] - default DMAREQ[13]
+        x-source: { pdf: "16_Direct_Memory_Access_Controller_DMA_Module.pdf", pages: [13, 34], confidence: high }
+      -
+        channel: 14
+        trigger: Configurable via DREQASI3[13:8] - default DMAREQ[14]
+        x-source: { pdf: "16_Direct_Memory_Access_Controller_DMA_Module.pdf", pages: [13, 34], confidence: high }
+      -
+        channel: 15
+        trigger: Configurable via DREQASI3[5:0] - default DMAREQ[15]
+        x-source: { pdf: "16_Direct_Memory_Access_Controller_DMA_Module.pdf", pages: [13, 34], confidence: high }
+      base_address:
+        base: '0xFFFFF000'
+        size: '0x400'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 85], confidence: high }
+      x-source: { pdf: "16_Direct_Memory_Access_Controller_DMA_Module.pdf", pages: [1, 2, 22, 23], confidence: high }
+
+  - name: ECAP
+    type: ecap
+    instance: 1
+    regs_ref: ECAP
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "N/A", op: clear_bits, value: "N/A" }
+        - { reg: "ECCTL2", op: write, value: "TSCTRSTOP = 0" }
+        - { reg: "ECEINT", op: clear_bits, value: "0x0000" }
+        - { reg: "ECCTL1, ECCTL2", op: write, value: "Application specific" }
+        - { reg: "ECCLR", op: clear_bits, value: "0x00FF" }
+        - { reg: "ECEINT", op: set_bits, value: "Application specific" }
+        - { reg: "ECCTL2", op: write, value: "TSCTRSTOP = 1" }
+        - { reg: "N/A", op: set_bits, value: "N/A" }
+      dma_refs:
+      -
+      x-source: { pdf: "20_Enhanced_Capture_eCAP_Module.pdf", pages: [1, 2, 10], confidence: high }
+
+  - name: EFUSE
+    type: efuse
+    instance: 1
+    regs_ref: EFUSE
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "N/A", op: set_bits, value: "N/A" }
+        - { reg: "EFCERRSTAT", op: set_bits, value: "Check bits 4:0" }
+        - { reg: "ESM", op: write, value: "N/A" }
+        - { reg: "EFCBOUND", op: set_bits, value: "0x003FC000" }
+        - { reg: "EFCPINS", op: set_bits, value: "Verify bits set" }
+        - { reg: "EFCBOUND", op: clear_bits, value: "0x003C0000" }
+        - { reg: "ESM", op: set_bits, value: "N/A" }
+        - { reg: "EFCSTCY", op: write, value: "0x00000258" }
+        - { reg: "EFCSTSIG", op: write, value: "0x5362F97F" }
+        - { reg: "EFCBOUND", op: write, value: "0x0000200F" }
+        - { reg: "EFCPINS", op: write, value: "Check bit 15" }
+        - { reg: "ESM", op: set_bits, value: "N/A" }
+        - { reg: "EFCERRSTAT", op: write, value: "0x00000000" }
+      base_address: '0xFFF8C000'
+      x-source: { pdf: "33_eFuse_Controller.pdf", pages: [1, 2, 5], confidence: high }
+
+  - name: EMACMDIO
+    type: ethernet
+    instance: 1
+    regs_ref: EMACMDIO
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "MDIO_CONTROL", op: set_bits, value: "0x00000000" }
+        - { reg: "C0RXTHRESHEN, C0RXEN, C0TXEN, C0MISCEN", op: set_bits, value: "0x00000000" }
+        - { reg: "MACCONTROL, RXCONTROL, TXCONTROL", op: clear_bits, value: "0x00000000" }
+        - { reg: "RXnHDP, TXnHDP", op: write, value: "0x00000000" }
+        - { reg: "Statistics registers", op: clear_bits, value: "0x00000000" }
+        - { reg: "MACINDEX, MACADDRHI, MACADDRLO", op: set_bits, value: "0x00000000" }
+        - { reg: "RXnFREEBUFFER, RXnFLOWTHRESH, RXFILTERLOWTHRESH", op: set_bits, value: "0x00000000" }
+        - { reg: "MACHASH1, MACHASH2", op: clear_bits, value: "0x00000000" }
+        - { reg: "RXBUFFEROFFSET", op: set_bits, value: "0x00000000" }
+        - { reg: "RXUNICASTCLEAR", op: clear_bits, value: "0x00000000" }
+        - { reg: "RXMBPENABLE", op: set_bits, value: "0x00000000" }
+        - { reg: "MACCONTROL", op: set_bits, value: "0x00000000" }
+        - { reg: "RXINTMASKCLEAR, TXINTMASKCLEAR", op: clear_bits, value: "0x00000000" }
+        - { reg: "RXINTMASKSET, TXINTMASKSET, MACINTMASKSET", op: set_bits, value: "0x00000000" }
+        - { reg: "N/A", op: write, value: "0x00000000" }
+        - { reg: "RXnHDP", op: write, value: "0x00000000" }
+        - { reg: "RXCONTROL, TXCONTROL, MACCONTROL", op: set_bits, value: "0x00000000" }
+        - { reg: "C0RXTHRESHEN, C0RXEN, C0TXEN, C0MISCEN", op: set_bits, value: "0x00000000" }
+      dma_refs:
+      -
+        channel: TX0-TX7
+        description: Eight transmit DMA channels for packet transmission
+        trigger: Transmit packet completion
+        x-source: { pdf: "31_EMACMDIO_Module.pdf", pages: [41], confidence: high }
+      -
+        channel: RX0-RX7
+        description: Eight receive DMA channels for packet reception with VLAN tag discrimination
+        trigger: Receive packet completion
+        x-source: { pdf: "31_EMACMDIO_Module.pdf", pages: [2, 41], confidence: high }
+      x-source: { pdf: "31_EMACMDIO_Module.pdf", pages: [1, 2, 51, 64], confidence: high }
+
+  - name: EMIF
+    type: memory
+    instance: 1
+    regs_ref: EMIF
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "", op: write, value: "0x00000000" }
+        - { reg: "SDCR", op: write, value: "1" }
+        - { reg: "SDCR", op: write, value: "0" }
+        - { reg: "SDTIMR", op: write, value: "0x00000000" }
+        - { reg: "SDSRETR", op: write, value: "0x00000000" }
+        - { reg: "SDRCR", op: write, value: "0x00000000" }
+        - { reg: "SDCR", op: write, value: "0x00000000" }
+        - { reg: "CE2CFG, CE3CFG, CE4CFG", op: write, value: "0x00000000" }
+      base_address:
+        base: '0xFCFFE800'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+      x-source: { pdf: "17_External_Memory_Interface_EMIF.pdf", pages: [1, 2, 3, 33], confidence: high }
+
+  - name: EPWM
+    type: epwm
+    instance: 1
+    regs_ref: EPWM
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "IOMM control registers", op: set_bits, value: "None" }
+        - { reg: "PINMMR37", op: set_bits, value: "0x00000000" }
+        - { reg: "Multiple ePWM registers", op: write, value: "None" }
+        - { reg: "PINMMR37", op: set_bits, value: "0x00000002" }
+        - { reg: "TBPRD", op: write, value: "None" }
+        - { reg: "TBCTL[CTRMODE]", op: write, value: "None" }
+        - { reg: "CMPA, CMPB", op: write, value: "None" }
+        - { reg: "AQCTLA, AQCTLB", op: write, value: "None" }
+        - { reg: "DBCTL, DBRED, DBFED", op: write, value: "None" }
+        - { reg: "TZSEL, TZCTL", op: write, value: "None" }
+        - { reg: "ETSEL, ETPS", op: write, value: "None" }
+      x-source: { pdf: "19_Enhanced_Pulse_Width_Modulator_ePWM_Module.pdf", pages: [1, 2, 80], confidence: high }
+
+  - name: ESM
+    type: error
+    instance: 1
+    regs_ref: ESM
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "", op: write, value: "0x00000000" }
+        - { reg: "", op: set_bits, value: "0x00000000" }
+        - { reg: "ESMILSR1, ESMILCR1, ESMILSR4, ESMILCR4", op: write, value: "0x00000000" }
+        - { reg: "ESMLTCPR", op: write, value: "0x00000000" }
+        - { reg: "ESMIEPSR1, ESMIEPCR1, ESMIESR1, ESMIECR1, ESMIEPSR4, ESMIEPCR4, ESMIESR4, ESMIECR4", op: set_bits, value: "0x00000000" }
+        - { reg: "ESMEKR", op: write, value: "0x00000000" }
+      base_address:
+        base: '0xFFFFF500'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 85], confidence: high }
+      x-source: { pdf: "12_Error_Signaling_Module_ESM.pdf", pages: [1, 2], confidence: high }
+
+  - name: FMC
+    type: flash
+    instance: 1
+    regs_ref: FMC
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "FEDACCTRL1", op: set_bits, value: "Write non-5h value to EDACEN field" }
+        - { reg: "FRDCNTL", op: write, value: "Configure RWAIT field per device data manual" }
+        - { reg: "FRDCNTL", op: set_bits, value: "Set ASWSTEN bit per device data manual" }
+        - { reg: "FRDCNTL", op: set_bits, value: "Set ENPIPE bit to 1" }
+        - { reg: "Not specified", op: set_bits, value: "See initialization application report SPNA106" }
+        - { reg: "CPU registers", op: set_bits, value: "See initialization application report SPNA106" }
+        - { reg: "FBFALLBACK, FPAC1, FPAC2", op: write, value: "Configure fallback modes and grace periods" }
+        - { reg: "FBPROT", op: clear_bits, value: "Set PROTL1DIS bit to 1" }
+      base_address: '0xFFF87000'
+      x-source: { pdf: "5_F021_Flash_Module_Controller_FMC.pdf", pages: [1, 2, 8, 9], confidence: high }
+
+  - name: GIO
+    type: gpio
+    instance: 1
+    regs_ref: GIO
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "Clock Control Register", op: set_bits, value: "Set PENA bit" }
+        - { reg: "PCR", op: set_bits, value: "Device-specific" }
+        - { reg: "GIOGCR0", op: set_bits, value: "0x00000001" }
+        - { reg: "GIODIRx", op: write, value: "0=input, 1=output per pin" }
+        - { reg: "GIOPULDISx, GIOPSLx", op: write, value: "GIOPULDIS: 0=enable pull, 1=disable pull; GIOPSL: 0=pull down, 1=pull up" }
+        - { reg: "GIOPDRx", op: write, value: "0=push/pull, 1=open drain" }
+        - { reg: "GIOFLG", op: clear_bits, value: "0xFFFFFFFF" }
+        - { reg: "GIOINTDET", op: write, value: "0=single edge per GIOPOL, 1=both edges" }
+        - { reg: "GIOPOL", op: write, value: "0=falling edge, 1=rising edge" }
+        - { reg: "GIOLVLSET/GIOLVLCLR", op: set_bits, value: "Write 1 to GIOLVLSET for high-level, write 1 to GIOLVLCLR for low-level" }
+        - { reg: "VIM registers", op: write, value: "Map GIO low-level and/or high-level interrupt service routines" }
+        - { reg: "VIM channel enable register", op: set_bits, value: "Device-specific VIM channel" }
+        - { reg: "CPSR", op: set_bits, value: "Clear bit 7 (IRQ) or bit 6 (FIQ)" }
+        - { reg: "GIOENASET", op: set_bits, value: "Write 1 to corresponding bits to enable interrupt" }
+      base_address:
+        base: '0xFFF7BC00'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 84], confidence: high }
+      x-source: { pdf: "25_General-Purpose_InputOutput_GIO_Module.pdf", pages: [1, 2, 5, 9], confidence: high }
+
+  - name: HTU
+    type: timer
+    instance: 1
+    regs_ref: HTU
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "HTU_GC", op: set_bits, value: "0x00000001" }
+        - { reg: "HTU_GC", op: set_bits, value: "Wait for bit 0 = 0" }
+        - { reg: "DCP_RAM", op: write, value: "Application-specific" }
+        - { reg: "CDCP_RAM", op: clear_bits, value: "0x00000000" }
+        - { reg: "HTU_PCR", op: write, value: "0x0000000A (enable with 0xA key)" }
+        - { reg: "HTU_MPCS, HTU_MP0S, HTU_MP0E", op: write, value: "Application-specific" }
+        - { reg: "HTU_INTMAP, HTU_BFINTS, HTU_RLBECTRL", op: set_bits, value: "Application-specific" }
+        - { reg: "HTU_CPENA", op: set_bits, value: "Application-specific (01 for CPA, 10 for CPB)" }
+        - { reg: "HTU_GC", op: set_bits, value: "0x00010000" }
+      dma_refs:
+      -
+        channel: 0
+        description: DCP 0 triggered by N2HET instruction with reqnum=0
+        trigger: N2HET Request 0
+        x-source: { pdf: "24_High-End_Timer_Transfer_Unit_HTU_Module.pdf", pages: [2, 4, 12], confidence: high }
+      -
+        channel: 1
+        description: DCP 1 triggered by N2HET instruction with reqnum=1
+        trigger: N2HET Request 1
+        x-source: { pdf: "24_High-End_Timer_Transfer_Unit_HTU_Module.pdf", pages: [2, 4, 12], confidence: high }
+      -
+        channel: 2
+        description: DCP 2 triggered by N2HET instruction with reqnum=2
+        trigger: N2HET Request 2
+        x-source: { pdf: "24_High-End_Timer_Transfer_Unit_HTU_Module.pdf", pages: [2, 4, 12], confidence: high }
+      -
+        channel: 3
+        description: DCP 3 triggered by N2HET instruction with reqnum=3
+        trigger: N2HET Request 3
+        x-source: { pdf: "24_High-End_Timer_Transfer_Unit_HTU_Module.pdf", pages: [2, 4, 12], confidence: high }
+      -
+        channel: 4
+        description: DCP 4 triggered by N2HET instruction with reqnum=4
+        trigger: N2HET Request 4
+        x-source: { pdf: "24_High-End_Timer_Transfer_Unit_HTU_Module.pdf", pages: [2, 4, 12], confidence: high }
+      -
+        channel: 5
+        description: DCP 5 triggered by N2HET instruction with reqnum=5
+        trigger: N2HET Request 5
+        x-source: { pdf: "24_High-End_Timer_Transfer_Unit_HTU_Module.pdf", pages: [2, 4, 12], confidence: high }
+      -
+        channel: 6
+        description: DCP 6 triggered by N2HET instruction with reqnum=6
+        trigger: N2HET Request 6
+        x-source: { pdf: "24_High-End_Timer_Transfer_Unit_HTU_Module.pdf", pages: [2, 4, 12], confidence: high }
+      -
+        channel: 7
+        description: DCP 7 triggered by N2HET instruction with reqnum=7
+        trigger: N2HET Request 7
+        x-source: { pdf: "24_High-End_Timer_Transfer_Unit_HTU_Module.pdf", pages: [2, 4, 12], confidence: high }
+      x-source: { pdf: "24_High-End_Timer_Transfer_Unit_HTU_Module.pdf", pages: [1, 2, 3], confidence: high }
+
+  - name: INTER
+    type: inter
+    instance: 1
+    regs_ref: INTER
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "I2CMDR", op: set_bits, value: "0" }
+        - { reg: "I2CPSC", op: write, value: "Calculated based on VBUS_CLK" }
+        - { reg: "I2CCKL/I2CCKH", op: write, value: "Calculated based on module clock and desired bus frequency" }
+        - { reg: "I2COAR", op: write, value: "Device-specific address" }
+        - { reg: "I2CMDR", op: write, value: "Based on application requirements" }
+        - { reg: "I2CIMR", op: set_bits, value: "Based on application requirements" }
+        - { reg: "I2CMDR", op: set_bits, value: "1" }
+      dma_refs:
+      -
+        channel: null
+        description: I2C Receive DMA event
+        trigger: I2CREVNT
+        x-source: { pdf: "30_Inter-Integrated_Circuit_I2C_Module.pdf", pages: [15, 32], confidence: high }
+        x-note: DMA channel assignment not specified in TRM
+      -
+        channel: null
+        description: I2C Transmit DMA event
+        trigger: I2CWEVNT
+        x-source: { pdf: "30_Inter-Integrated_Circuit_I2C_Module.pdf", pages: [15, 32], confidence: high }
+        x-note: DMA channel assignment not specified in TRM
+      base_address: '0xFFF7D400'
+      x-source: { pdf: "30_Inter-Integrated_Circuit_I2C_Module.pdf", pages: [1, 2, 17], confidence: high }
+
+  - name: IOMM
+    type: pinmux
+    instance: 1
+    regs_ref: IOMM
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "KICK_REG0", op: write, value: "0x83E70B13" }
+        - { reg: "KICK_REG1", op: write, value: "0x95A4F1E0" }
+        - { reg: "PINMMRn", op: write, value: "application specific" }
+        - { reg: "KICK_REG0 or KICK_REG1", op: write, value: "any value except unlock sequence" }
+        - { reg: "PINMMR37-PINMMR38", op: set_bits, value: "Set appropriate clock enable bits" }
+        - { reg: "PINMMR37", op: set_bits, value: "Clear bit 1" }
+        - { reg: "ePWM module registers", op: write, value: "application specific" }
+        - { reg: "PINMMR37", op: set_bits, value: "Set bit 1" }
+      base_address:
+        base: '0xFFFFEA00'
+        size: '0x200'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 85], confidence: high }
+      x-source: { pdf: "4_IO_Multiplexing_and_Control_Module_IOMM.pdf", pages: [1, 2, 13, 14], confidence: high }
+
+  - name: LIN
+    type: lin
+    instance: 1
+    regs_ref: LIN
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "SCIGCR0", op: set_bits, value: "0x1" }
+        - { reg: "SCIGCR1", op: clear_bits, value: "0x0" }
+        - { reg: "SCIGCR1", op: write, value: "0x00000000" }
+        - { reg: "SCIPIO0", op: write, value: "0x3" }
+        - { reg: "SCIGCR1", op: write, value: "0x00000000" }
+        - { reg: "SCIGCR1", op: write, value: "0x00000000" }
+        - { reg: "SCIGCR1", op: set_bits, value: "0x1" }
+        - { reg: "BRS", op: write, value: "0x00000000" }
+        - { reg: "MBRS", op: set_bits, value: "0x00000000" }
+        - { reg: "SCIGCR1", op: write, value: "0x1" }
+        - { reg: "SCIGCR1", op: write, value: "0x00000000" }
+        - { reg: "SCIGCR1", op: set_bits, value: "0x1" }
+        - { reg: "SCIGCR1", op: set_bits, value: "0x1" }
+        - { reg: "LINMASK", op: write, value: "0x00000000" }
+        - { reg: "SCIGCR1", op: set_bits, value: "0x1" }
+      dma_refs:
+      -
+        channel: RX_DMA
+        description: >-
+          Receive DMA request. Generated when RXRDY set (per byte or per frame depending on MBUF_MODE)
+        trigger: RXRDY flag
+        control_register: SCISETINT
+        x-source: { pdf: "28_Serial_Communication_Interface_SCI_Local_Interconnect_Network_LIN_Module.pdf", pages: [18, 40], confidence: high }
+      -
+        channel: TX_DMA
+        description: >-
+          Transmit DMA request. Generated when TXRDY set (per byte or per frame depending on MBUF_MODE)
+        trigger: TXRDY flag
+        control_register: SCISETINT
+        x-source: { pdf: "28_Serial_Communication_Interface_SCI_Local_Interconnect_Network_LIN_Module.pdf", pages: [18, 40], confidence: high }
+      base_address:
+        base: '0xFFF7E400'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 84], confidence: high }
+      x-source: { pdf: "28_Serial_Communication_Interface_SCI_Local_Interconnect_Network_LIN_Module.pdf", pages: [1, 2, 3, 46], confidence: high }
+
+  - name: PBIST
+    type: bist
+    instance: 1
+    regs_ref: PBIST
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "N/A", op: write, value: "N/A" }
+        - { reg: "MSTGCR", op: write, value: "Refer to device datasheet for max PBIST ROM clock frequency" }
+        - { reg: "MSIENA", op: set_bits, value: "0x00000001" }
+        - { reg: "MSTGCR", op: set_bits, value: "0x0000000A" }
+        - { reg: "N/A", op: write, value: "N=16 (1:1), 32 (1:2), 64 (1:4 or 1:8)" }
+        - { reg: "PACT", op: set_bits, value: "0x00000001" }
+        - { reg: "ALGO, RINFOL, RINFOU", op: write, value: "Select desired algorithms and RAM groups" }
+        - { reg: "OVER", op: write, value: "0x00000001 (no override) or 0x00000000 (with override)" }
+        - { reg: "ROM", op: set_bits, value: "0x00000003" }
+        - { reg: "DLR", op: write, value: "0x00000014" }
+        - { reg: "MSTCGSTAT", op: write, value: "Poll until MSTDONE=1" }
+        - { reg: "FSRF0", op: write, value: "If FSRF0=1, read RAMT, FSRC0/1, FSRA0/1, FSRDL0/1 for failure info" }
+        - { reg: "STR (resume) or PACT=0, MSTGCR=0x05 (disable)", op: clear_bits, value: "STR=0x02 to resume, or disable for completion" }
+      base_address:
+        base: '0xFFFFE400'
+        size: '0x200'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 85], confidence: high }
+      x-source: { pdf: "7_Programmable_Built-In_Self-Test_PBIST_Module.pdf", pages: [1, 2, 3, 6, 7, 8], confidence: high }
+
+  - name: PIN
+    type: pin
+    instance: 1
+    regs_ref: PIN
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "SPIGCR0", op: set_bits, value: "1" }
+        - { reg: "SPIPC0", op: write, value: "0x00000000" }
+        - { reg: "SPIGCR1", op: write, value: "0x00000000" }
+        - { reg: "SPIFMT0-3", op: write, value: "0x00000000" }
+        - { reg: "SPIDELAY", op: write, value: "0x00000000" }
+        - { reg: "SPIINT0", op: set_bits, value: "0x00000000" }
+        - { reg: "MIBSPIE", op: set_bits, value: "1" }
+        - { reg: "SPIFLG", op: write, value: "0x00000000" }
+        - { reg: "SPIGCR1", op: set_bits, value: "1" }
+      dma_refs:
+      -
+        channel: 0
+        description: Generated when TX data copied to shift register
+        x-source: { pdf: "27_Multi-Buffered_Serial_Peripheral_Interface_Module_MibSPI_with_Parallel_Pin_Option_MibSPIP.pdf", pages: [29], confidence: high }
+      -
+        channel: 1
+        description: Generated when received data copied to SPIBUF
+        x-source: { pdf: "27_Multi-Buffered_Serial_Peripheral_Interface_Module_MibSPI_with_Parallel_Pin_Option_MibSPIP.pdf", pages: [29], confidence: high }
+      x-source: { pdf: "27_Multi-Buffered_Serial_Peripheral_Interface_Module_MibSPI_with_Parallel_Pin_Option_MibSPIP.pdf", pages: [1, 2, 32], confidence: high }
+
+  - name: PLL
+    type: clock
+    instance: 1
+    regs_ref: PLL
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "", op: set_bits, value: "0x00000000" }
+        - { reg: "OTP_ADDRESS", op: write, value: "0xF00801B4" }
+        - { reg: "LPOMONCTL", op: write, value: "0x00000000" }
+        - { reg: "CSVSTAT", op: write, value: "0x00000000" }
+        - { reg: "PLLCTL1", op: write, value: "0x00000000" }
+        - { reg: "PLLCTL2", op: write, value: "0x00000000" }
+        - { reg: "CSDISCLR", op: set_bits, value: "0x00000002" }
+        - { reg: "CSVSTAT", op: write, value: "0x00000000" }
+        - { reg: "CSVSTAT", op: write, value: "0x00000000" }
+        - { reg: "", op: write, value: "0x00000000" }
+        - { reg: "", op: write, value: "0x00000000" }
+        - { reg: "PLLCTL3", op: write, value: "0x00000000" }
+        - { reg: "CSDISCLR", op: set_bits, value: "0x00000040" }
+      x-source: { pdf: "10_Oscillator_and_PLL.pdf", pages: [1, 2, 3, 4, 5, 6, 18], confidence: high }
+
+  - name: PMM
+    type: power
+    instance: 1
+    regs_ref: PMM
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "PDCLK_DISx", op: clear_bits, value: "Write to disable all clocks to power domain" }
+        - { reg: "LOGICPDPWRCTRL0", op: write, value: "0xA to LOGICPDONx field" }
+        - { reg: "LOGICPDPWRSTATx", op: write, value: "Poll LOGICPDPWR_STATx until it becomes 0x00" }
+        - { reg: "MEMPDONx", op: write, value: "Write 0xA to power down the domain" }
+        - { reg: "MEMPDPWRSTATx", op: write, value: "Poll MEMPDPWR_STATx until it becomes 0x00" }
+        - { reg: "LOGICPDPWRCTRL0.LOGICPDONx or MEMPDPWRCTRL0.MEMPDONx", op: write, value: "Write any value other than 0xA to command Active state" }
+        - { reg: "LOGICPDPWRSTATx.DOMAIN_ONx", op: write, value: "Poll until power is fully restored" }
+        - { reg: "PDCLK_DIS", op: set_bits, value: "Clear bits to enable clocks to power domain" }
+      base_address:
+        base: '0xFFFF0000'
+        size: '0x200'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 85], confidence: high }
+      x-source: { pdf: "3_Power_Management_Module_PMM.pdf", pages: [1, 2, 3, 4], confidence: high }
+
+  - name: POM
+    type: overlay
+    instance: 1
+    regs_ref: POM
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "CP15", op: clear_bits, value: "N/A" }
+        - { reg: "POMGLBCTRL", op: set_bits, value: "0xA00" }
+        - { reg: "POMPROGSTARTx", op: write, value: "Region-specific" }
+        - { reg: "POMOVLSTARTx", op: write, value: "Region-specific" }
+        - { reg: "POMREGSIZEx", op: write, value: "1h-Dh (64B to 256KB)" }
+        - { reg: "POMGLBCTRL", op: write, value: "0x60xxxxxx (OTADDR=60h)" }
+        - { reg: "POMGLBCTRL", op: set_bits, value: "0x60000A0A" }
+      base_address: '0xFFA04000'
+      x-source: { pdf: "18_Parameter_Overlay_Module_POM.pdf", pages: [1, 2, 5], confidence: high }
+
+  - name: PULSE
+    type: pulse
+    instance: 1
+    regs_ref: PULSE
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "QDECCTL", op: write, value: "0x00000000" }
+        - { reg: "QPOSMAX", op: write, value: "0x00000000" }
+        - { reg: "QPOSINIT", op: write, value: "0x00000000" }
+        - { reg: "QCAPCTL", op: write, value: "0x00000000" }
+        - { reg: "QEPCTL", op: write, value: "0x00000000" }
+        - { reg: "QEINT", op: set_bits, value: "0x00000000" }
+      x-source: { pdf: "21_Enhanced_Quadrature_Encoder_Pulse_eQEP_Module.pdf", pages: [1, 2, 5, 22], confidence: high }
+
+  - name: RAM
+    type: ram
+    instance: 1
+    regs_ref: RAM
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "PMNC", op: set_bits, value: "Set X-bit" }
+        - { reg: "DEVCR1.DEVPARSEL", op: write, value: "Odd or Even parity" }
+        - { reg: "RAMCTRL.ECC_DETECT_EN", op: set_bits, value: "Any value except 0x5" }
+        - { reg: "RAMTHRESHOLD.THRESHOLD", op: set_bits, value: "Non-zero value (1 to capture all addresses)" }
+        - { reg: "RAMOCCUR.SINGLE_ERROR_OCCURRENCES", op: clear_bits, value: "0x0" }
+        - { reg: "RAMINTCTRL.SERR_EN", op: set_bits, value: "0x1" }
+        - { reg: "INIT_DOMAIN.AUTO_MEM_INIT_ENABLE", op: set_bits, value: "Enable required power domains" }
+        - { reg: "SYS_TCRAMW_MMI_INIT_I", op: write, value: "Pulse signal" }
+      x-source: { pdf: "6_Tightly-Coupled_RAM_TCRAM_Module.pdf", pages: [3], confidence: high }
+
+  - name: RTI
+    type: timer
+    instance: 1
+    regs_ref: RTI
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "RTIGCTRL", op: set_bits, value: "Set CNT0EN (bit 0) or CNT1EN (bit 1) to 1" }
+        - { reg: "RTICPUC0 / RTICPUC1", op: write, value: "Set prescaler value to divide RTICLK frequency" }
+        - { reg: "RTICOMP0-3", op: write, value: "Set compare values for interrupt generation" }
+        - { reg: "RTIUDCP0-3", op: write, value: "Set values to be added on compare match for periodic interrupts" }
+        - { reg: "RTICOMPCTRL", op: write, value: "Set COMPSEL0-3 bits to select RTIFRC0 or RTIFRC1" }
+        - { reg: "RTISETINTENA", op: set_bits, value: "Set SETINT0-3 bits for interrupts or SETDMA0-3 for DMA requests" }
+        - { reg: "RTIDWDCTRL", op: set_bits, value: "Write 0xA98559DA to enable (cannot be disabled except by reset)" }
+        - { reg: "RTIDWDPRLD", op: write, value: "Set 12-bit preload value before enabling watchdog" }
+      dma_refs:
+      -
+        channel: 12
+        description: DMA request triggered by RTI Compare 0 event
+        trigger: RTI_COMP0
+        x-source: { pdf: "13_Real-Time_Interrupt_RTI_Module.pdf", pages: [3, 29, 30], confidence: high }
+      -
+        channel: 13
+        description: DMA request triggered by RTI Compare 1 event
+        trigger: RTI_COMP1
+        x-source: { pdf: "13_Real-Time_Interrupt_RTI_Module.pdf", pages: [3, 29, 30], confidence: high }
+      -
+        channel: 18
+        description: DMA request triggered by RTI Compare 2 event
+        trigger: RTI_COMP2
+        x-source: { pdf: "13_Real-Time_Interrupt_RTI_Module.pdf", pages: [3, 29, 30], confidence: high }
+      -
+        channel: 19
+        description: DMA request triggered by RTI Compare 3 event
+        trigger: RTI_COMP3
+        x-source: { pdf: "13_Real-Time_Interrupt_RTI_Module.pdf", pages: [3, 29, 30], confidence: high }
+      base_address:
+        base: '0xFFFFFC00'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 85], confidence: high }
+      x-source: { pdf: "13_Real-Time_Interrupt_RTI_Module.pdf", pages: [1, 2, 13], confidence: high }
+
+  - name: SCI
+    type: uart
+    instance: 1
+    regs_ref: SCI
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "SCIGCR0", op: set_bits, value: "1" }
+        - { reg: "SCIGCR1", op: set_bits, value: "0" }
+        - { reg: "SCIGCR1", op: write, value: "0x00000000" }
+        - { reg: "SCIPIO0", op: write, value: "0x00000000" }
+        - { reg: "BRS", op: write, value: "0x00000000" }
+        - { reg: "SCIGCR1", op: write, value: "1" }
+        - { reg: "SCIGCR1", op: set_bits, value: "1" }
+        - { reg: "SCIGCR1", op: set_bits, value: "1" }
+        - { reg: "SCIGCR1", op: set_bits, value: "1" }
+        - { reg: "SCIGCR1", op: set_bits, value: "1" }
+        - { reg: "SCIGCR1", op: set_bits, value: "1" }
+      dma_refs:
+      -
+        channel: SCI_RX_DMA
+        description: Receive DMA request
+        trigger: RXRDY flag set
+        x-source: { pdf: "29_Serial_Communication_Interface_SCI_Module.pdf", pages: [12, 21], confidence: high }
+      -
+        channel: SCI_TX_DMA
+        description: Transmit DMA request
+        trigger: TXRDY flag set
+        x-source: { pdf: "29_Serial_Communication_Interface_SCI_Module.pdf", pages: [12, 21], confidence: high }
+      base_address:
+        base: '0xFFF7E500'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 84], confidence: high }
+      x-source: { pdf: "29_Serial_Communication_Interface_SCI_Module.pdf", pages: [1, 2], confidence: high }
+
+  - name: STC
+    type: selftest
+    instance: 1
+    regs_ref: STC
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "STCCLKDIV[26:24]", op: write, value: "0x1" }
+        - { reg: "SYSESR[5]", op: clear_bits, value: "0x1" }
+        - { reg: "STCGCR0[31:16]", op: write, value: "0x18" }
+        - { reg: "STCTPR[31:0]", op: write, value: "0xFFFFFFFF" }
+        - { reg: "STCGCR1[3:0]", op: set_bits, value: "0xA" }
+        - { reg: "", op: write, value: "0x00000000" }
+        - { reg: "", op: write, value: "0x00000000" }
+        - { reg: "SYSESR[5]", op: set_bits, value: "0x00000000" }
+        - { reg: "STCGSTAT", op: write, value: "0x00000000" }
+      base_address:
+        base: '0xFFFFE600'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 85], confidence: high }
+      x-source: { pdf: "8_CPU_Self-Test_Controller_STC_Module.pdf", pages: [1, 2, 6, 7], confidence: high }
+
+  - name: SYSTEM
+    type: system
+    instance: 1
+    regs_ref: SYSTEM
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "CLKCNTL", op: set_bits, value: "0x00000100" }
+        - { reg: "CLKCNTL", op: write, value: "0x00010000" }
+        - { reg: "MINITGCR", op: set_bits, value: "0x0000000A" }
+        - { reg: "MSINENA", op: write, value: "0xFFFFFFFF" }
+        - { reg: "MSTCGSTAT", op: write, value: "0x00000100" }
+        - { reg: "MINITGCR", op: clear_bits, value: "0x00000005" }
+        - { reg: "PLLCTL1", op: write, value: "0x00000000" }
+        - { reg: "CSDISCLR", op: set_bits, value: "0x00000002" }
+        - { reg: "CSVSTAT", op: write, value: "0x00000000" }
+        - { reg: "GHVSRC", op: write, value: "0x00000001" }
+      base_address:
+        base: '0xFFFFFF00'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 85], confidence: high }
+      x-source: { pdf: "2_Architecture.pdf", pages: [1, 2, 101, 102, 105, 117, 120, 130], confidence: high }
+
+  - name: TIMER
+    type: timer
+    instance: 1
+    regs_ref: TIMER
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "PCR1", op: set_bits, value: "device-specific" }
+        - { reg: "HETPFR", op: write, value: "Set LRPFC and HRPFC bits" }
+        - { reg: "N2HET RAM", op: write, value: "Load instructions to RAM" }
+        - { reg: "HETPCR", op: set_bits, value: "0x0000000A (recommended)" }
+        - { reg: "HETDIR", op: write, value: "Set bits for output pins" }
+        - { reg: "HETPULDIS, HETPSL", op: write, value: "Device-specific" }
+        - { reg: "HETINTENAS, HETPRY", op: set_bits, value: "Set enable and priority bits" }
+        - { reg: "HETGCR", op: write, value: "Set CMS=1 and TO=1" }
+      dma_refs:
+      -
+        channel: device-specific
+        description: 8 N2HET request lines can trigger DMA or HTU
+        trigger: HETREQ[0:7]
+        x-source: { pdf: "23_High-End_Timer_N2HET_Module.pdf", pages: [1, 38, 78, 79], confidence: high }
+      x-source: { pdf: "23_High-End_Timer_N2HET_Module.pdf", pages: [1, 2, 11, 65], confidence: high }
+
+  - name: USB
+    type: usb
+    instance: 1
+    regs_ref: USB
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "", op: set_bits, value: "0x00000000" }
+        - { reg: "", op: set_bits, value: "0x00000000" }
+        - { reg: "", op: set_bits, value: "0x00000000" }
+        - { reg: "", op: write, value: "0x00000000" }
+        - { reg: "Multiple OHCI registers", op: write, value: "0x00000000" }
+      dma_refs:
+      -
+        channel: USB Device RX DMA 0
+        description: USB Device Controller Receive DMA Channel 0
+        control_register: RXDMA0
+        x-source: { pdf: "32_Universal_Serial_Bus_USB.pdf", pages: [30, 52, 56], confidence: high }
+      -
+        channel: USB Device RX DMA 1
+        description: USB Device Controller Receive DMA Channel 1
+        control_register: RXDMA1
+        x-source: { pdf: "32_Universal_Serial_Bus_USB.pdf", pages: [30, 52, 56], confidence: high }
+      -
+        channel: USB Device RX DMA 2
+        description: USB Device Controller Receive DMA Channel 2
+        control_register: RXDMA2
+        x-source: { pdf: "32_Universal_Serial_Bus_USB.pdf", pages: [30, 52, 56], confidence: high }
+      -
+        channel: USB Device TX DMA 0
+        description: USB Device Controller Transmit DMA Channel 0
+        control_register: TXDMA0
+        x-source: { pdf: "32_Universal_Serial_Bus_USB.pdf", pages: [30, 53, 55], confidence: high }
+      -
+        channel: USB Device TX DMA 1
+        description: USB Device Controller Transmit DMA Channel 1
+        control_register: TXDMA1
+        x-source: { pdf: "32_Universal_Serial_Bus_USB.pdf", pages: [30, 53, 55], confidence: high }
+      -
+        channel: USB Device TX DMA 2
+        description: USB Device Controller Transmit DMA Channel 2
+        control_register: TXDMA2
+        x-source: { pdf: "32_Universal_Serial_Bus_USB.pdf", pages: [30, 53, 55], confidence: high }
+      x-source: { pdf: "32_Universal_Serial_Bus_USB.pdf", pages: [1, 2, 5, 29, 30], confidence: high }
+
+  - name: VIM
+    type: interrupt
+    instance: 1
+    regs_ref: VIM
+    clock_ref: VCLK
+    x-ext:
+      init:
+        - { reg: "FBPARERR", op: write, value: "Address of ISR to restore Interrupt Vector Table" }
+        - { reg: "PARCTL", op: set_bits, value: "0x0000000A" }
+        - { reg: "VIM RAM", op: write, value: "ISR addresses for each channel" }
+        - { reg: "CHANCTRL[0:31]", op: write, value: "Map INT_REQ to priority channels" }
+        - { reg: "FIRQPR[0:3]", op: write, value: "Set bit to 1 for FIQ, 0 for IRQ" }
+        - { reg: "REQENASET[0:3]", op: set_bits, value: "Write 1 to enable desired channels" }
+        - { reg: "WAKEENASET[0:3]", op: write, value: "Write 1 to enable wake-up for desired channels" }
+        - { reg: "CP15 R1", op: set_bits, value: "Set VE bit (bit 24)" }
+        - { reg: "CPSR", op: set_bits, value: "Clear F bit (bit 6) and I bit (bit 7)" }
+      base_address:
+        base: '0xFFFFFE00'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 85], confidence: high }
+      x-source: { pdf: "15_Vectored_Interrupt_Manager_VIM_Module.pdf", pages: [1, 2, 16], confidence: high }
+
+  - name: MIBADC1
+    type: mibadc1
+    instance: 1
+    regs_ref: MIBADC1
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFFF7C000'
+        size: '0x200'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 84], confidence: high }
+
+  - name: MIBADC2
+    type: mibadc2
+    instance: 1
+    regs_ref: MIBADC2
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFFF7C200'
+        size: '0x200'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 84], confidence: high }
+
+  - name: I2C
+    type: i2c
+    instance: 1
+    regs_ref: I2C
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFFF7D400'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 84], confidence: high }
+
+  - name: DCAN1
+    type: can
+    instance: 1
+    regs_ref: DCAN1
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFFF7DC00'
+        size: '0x200'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 84], confidence: high }
+
+  - name: DCAN2
+    type: can
+    instance: 1
+    regs_ref: DCAN2
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFFF7DE00'
+        size: '0x200'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 84], confidence: high }
+
+  - name: DCAN3
+    type: can
+    instance: 1
+    regs_ref: DCAN3
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFFF7E000'
+        size: '0x200'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 84], confidence: high }
+
+  - name: MIBSPI1
+    type: spi
+    instance: 1
+    regs_ref: MIBSPI1
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFFF7F400'
+        size: '0x200'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 84], confidence: high }
+
+  - name: SPI2
+    type: spi
+    instance: 1
+    regs_ref: SPI2
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFFF7F600'
+        size: '0x200'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 84], confidence: high }
+
+  - name: MIBSPI3
+    type: spi
+    instance: 1
+    regs_ref: MIBSPI3
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFFF7F800'
+        size: '0x200'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 84], confidence: high }
+
+  - name: SPI4
+    type: spi
+    instance: 1
+    regs_ref: SPI4
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFFF7FA00'
+        size: '0x200'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 84], confidence: high }
+
+  - name: MIBSPI5
+    type: spi
+    instance: 1
+    regs_ref: MIBSPI5
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFFF7FC00'
+        size: '0x200'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 84], confidence: high }
+
+  - name: N2HET1
+    type: timer
+    instance: 1
+    regs_ref: N2HET1
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFFF7B800'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 84], confidence: high }
+
+  - name: N2HET2
+    type: timer
+    instance: 1
+    regs_ref: N2HET2
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFFF7B900'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 84], confidence: high }
+
+  - name: HTU1
+    type: timer
+    instance: 1
+    regs_ref: HTU1
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFFF7A400'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 84], confidence: high }
+
+  - name: HTU2
+    type: timer
+    instance: 1
+    regs_ref: HTU2
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFFF7A500'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 84], confidence: high }
+
+  - name: PCR
+    type: power
+    instance: 1
+    regs_ref: PCR
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFFFFE000'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 85], confidence: high }
+
+  - name: EMAC
+    type: ethernet
+    instance: 1
+    regs_ref: EMAC
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFCF78800'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+
+  - name: MDIO
+    type: ethernet
+    instance: 1
+    regs_ref: MDIO
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFCF78900'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+
+  - name: USB_DEVICE
+    type: usb
+    instance: 1
+    regs_ref: USB_DEVICE
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFCF78A00'
+        size: '0x80'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+
+  - name: USB_OHCI
+    type: usb
+    instance: 1
+    regs_ref: USB_OHCI
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFCF78B00'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+
+  - name: EPWM1
+    type: epwm1
+    instance: 1
+    regs_ref: EPWM1
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFCF78C00'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+
+  - name: EPWM2
+    type: epwm2
+    instance: 1
+    regs_ref: EPWM2
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFCF78D00'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+
+  - name: EPWM3
+    type: epwm3
+    instance: 1
+    regs_ref: EPWM3
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFCF78E00'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+
+  - name: EPWM4
+    type: epwm4
+    instance: 1
+    regs_ref: EPWM4
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFCF78F00'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+
+  - name: EPWM5
+    type: epwm5
+    instance: 1
+    regs_ref: EPWM5
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFCF79000'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+
+  - name: EPWM6
+    type: epwm6
+    instance: 1
+    regs_ref: EPWM6
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFCF79100'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+
+  - name: EPWM7
+    type: epwm7
+    instance: 1
+    regs_ref: EPWM7
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFCF79200'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+
+  - name: ECAP1
+    type: ecap1
+    instance: 1
+    regs_ref: ECAP1
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFCF79300'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+
+  - name: ECAP2
+    type: ecap2
+    instance: 1
+    regs_ref: ECAP2
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFCF79400'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+
+  - name: ECAP3
+    type: ecap3
+    instance: 1
+    regs_ref: ECAP3
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFCF79500'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+
+  - name: ECAP4
+    type: ecap4
+    instance: 1
+    regs_ref: ECAP4
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFCF79600'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+
+  - name: ECAP5
+    type: ecap5
+    instance: 1
+    regs_ref: ECAP5
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFCF79700'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+
+  - name: ECAP6
+    type: ecap6
+    instance: 1
+    regs_ref: ECAP6
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFCF79800'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+
+  - name: EQEP1
+    type: eqep1
+    instance: 1
+    regs_ref: EQEP1
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFCF79900'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+
+  - name: EQEP2
+    type: eqep2
+    instance: 1
+    regs_ref: EQEP2
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFCF79A00'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 83], confidence: high }
+
+  - name: FLASH_MODULE
+    type: flash
+    instance: 1
+    regs_ref: FLASH_MODULE
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFFF87000'
+        size: '0x1000'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 85], confidence: high }
+
+  - name: DCC1
+    type: compare
+    instance: 1
+    regs_ref: DCC1
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFFFFEC00'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 85], confidence: high }
+
+  - name: DCC2
+    type: compare
+    instance: 1
+    regs_ref: DCC2
+    clock_ref: VCLK
+    x-ext:
+      base_address:
+        base: '0xFFFFF400'
+        size: '0x100'
+        x-source: { pdf: "RM46_datasheet.pdf", pages: [81, 85], confidence: high }
