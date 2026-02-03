@@ -7,7 +7,6 @@ provenance:
   schematic_source: "RM46_schematic.pdf"
   table: "Table 4-21. Output Multiplexing and Control"
 pins:
-  # PINMMR0 [7:0]
   - package_pin: 132
     name: "GIOB[3]"
     board:
@@ -19,7 +18,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR0", bit: 3 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR0", bit: 4 } }
 
-  # PINMMR0 [15:8]
   - package_pin: 5
     name: "GIOA[0]"
     board:
@@ -31,7 +29,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR0", bit: 11 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR0", bit: 12 } }
 
-  # PINMMR0 [23:16]
   - package_pin: 3
     name: "MIBSPI3NCS[3]"
     board:
@@ -43,7 +40,6 @@ pins:
       - { af: "3", signal: "nTZ1", mux: { register: "PINMMR0", bit: 19 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR0", bit: 20 } }
 
-  # PINMMR0 [31:24]
   - package_pin: 2
     name: "MIBSPI3NCS[2]"
     board:
@@ -55,7 +51,6 @@ pins:
       - { af: "3", signal: "nTZ2", mux: { register: "PINMMR0", bit: 27 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR0", bit: 28 } }
 
-  # PINMMR1 [7:0]
   - package_pin: 15
     name: "GIOA[1]"
     board:
@@ -67,7 +62,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR1", bit: 3 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR1", bit: 4 } }
 
-  # PINMMR1 [15:8]
   - package_pin: 125
     name: "N2HET1[11]"
     board:
@@ -80,7 +74,6 @@ pins:
       - { af: "4", signal: "USB_FUNC.VBUSI", mux: { register: "PINMMR1", bit: 12 } }
       - { af: "5", signal: "EPWM1SYNCO", mux: { register: "PINMMR1", bit: 13 } }
 
-  # PINMMR2 [7:0]
   - package_pin: 14
     name: "GIOA[2]"
     board:
@@ -93,7 +86,6 @@ pins:
       - { af: "4", signal: "EQEP2I", mux: { register: "PINMMR2", bit: 4 } }
       - { af: "5", signal: "RESERVED", mux: { register: "PINMMR2", bit: 5 } }
 
-  # PINMMR2 [23:16]
   - package_pin: 16
     name: "GIOA[3]"
     board:
@@ -105,7 +97,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR2", bit: 19 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR2", bit: 20 } }
 
-  # PINMMR2 [31:24]
   - package_pin: 22
     name: "GIOA[5]"
     board:
@@ -117,7 +108,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR2", bit: 27 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR2", bit: 28 } }
 
-  # PINMMR3 [15:8]
   - package_pin: 26
     name: "N2HET1[22]"
     board:
@@ -129,7 +119,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR3", bit: 11 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR3", bit: 12 } }
 
-  # PINMMR3 [23:16]
   - package_pin: 25
     name: "GIOA[6]"
     board:
@@ -141,7 +130,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR3", bit: 19 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR3", bit: 20 } }
 
-  # PINMMR4 [7:0]
   - package_pin: 23
     name: "GIOA[7]"
     board:
@@ -153,7 +141,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR4", bit: 3 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR4", bit: 4 } }
 
-  # PINMMR4 [23:16]
   - package_pin: 36
     name: "N2HET1[01]"
     board:
@@ -166,7 +153,6 @@ pins:
       - { af: "4", signal: "N2HET2[8]", mux: { register: "PINMMR4", bit: 20 } }
       - { af: "5", signal: "EQEP2A", mux: { register: "PINMMR4", bit: 21 } }
 
-  # PINMMR4 [31:24]
   - package_pin: 33
     name: "N2HET1[03]"
     board:
@@ -179,7 +165,6 @@ pins:
       - { af: "4", signal: "N2HET2[10]", mux: { register: "PINMMR4", bit: 28 } }
       - { af: "5", signal: "EQEP2B", mux: { register: "PINMMR4", bit: 29 } }
 
-  # PINMMR5 [7:0]
   - package_pin: 30
     name: "N2HET1[0]"
     board:
@@ -191,7 +176,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR5", bit: 3 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR5", bit: 4 } }
 
-  # PINMMR5 [15:8]
   - package_pin: 31
     name: "N2HET1[02]"
     board:
@@ -203,7 +187,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR5", bit: 11 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR5", bit: 12 } }
 
-  # PINMMR5 [23:16]
   - package_pin: 106
     name: "N2HET1[05]"
     board:
@@ -215,7 +198,6 @@ pins:
       - { af: "3", signal: "EPWM3B", mux: { register: "PINMMR5", bit: 19 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR5", bit: 20 } }
 
-  # PINMMR6 [7:0]
   - package_pin: 35
     name: "N2HET1[07]"
     board:
@@ -228,7 +210,6 @@ pins:
       - { af: "4", signal: "EPWM7B", mux: { register: "PINMMR6", bit: 4 } }
       - { af: "5", signal: "RESERVED", mux: { register: "PINMMR6", bit: 5 } }
 
-  # PINMMR6 [15:8]
   - package_pin: 99
     name: "EMIF_DATA[11]"
     board:
@@ -240,7 +221,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR6", bit: 11 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR6", bit: 12 } }
 
-  # PINMMR6 [23:16]
   - package_pin: 118
     name: "N2HET1[09]"
     board:
@@ -253,7 +233,6 @@ pins:
       - { af: "4", signal: "EPWM7A", mux: { register: "PINMMR6", bit: 20 } }
       - { af: "5", signal: "RESERVED", mux: { register: "PINMMR6", bit: 21 } }
 
-  # PINMMR7 [15:8]
   - package_pin: 37
     name: "MIBSPI3NCS[1]"
     board:
@@ -265,14 +244,10 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR7", bit: 11 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR7", bit: 12 } }
 
-  # PINMMR7 [23:16]
-  # CRITICAL: Connected to XDS110 Backchannel UART RX
   - package_pin: 39
     name: "N2HET1[06]"
     board:
       net: "N2HET1[6]/SCIRX"
-      connects_to: "J2.3 and XDS110 UART"
-      headers: ["J2.3"]
     functions:
       - { af: "0", signal: "N2HET1[06]", mux: { register: "PINMMR7", bit: 16 } }
       - { af: "1", signal: "SCIRX", mux: { register: "PINMMR7", bit: 17 } }
@@ -280,14 +255,10 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR7", bit: 19 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR7", bit: 20 } }
 
-  # PINMMR8 [7:0]
-  # CRITICAL: Connected to XDS110 Backchannel UART TX
   - package_pin: 4
     name: "N2HET1[13]"
     board:
       net: "N2HET1[13]/SCITX"
-      connects_to: "J2.4 and XDS110 UART"
-      headers: ["J2.4"]
     functions:
       - { af: "0", signal: "N2HET1[13]", mux: { register: "PINMMR8", bit: 0 } }
       - { af: "1", signal: "SCITX", mux: { register: "PINMMR8", bit: 1 } }
@@ -295,7 +266,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR8", bit: 3 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR8", bit: 4 } }
 
-  # PINMMR8 [15:8]
   - package_pin: 40
     name: "MIBSPI1NCS[2]"
     board:
@@ -307,7 +277,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR8", bit: 11 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR8", bit: 12 } }
 
-  # PINMMR8 [23:16]
   - package_pin: 139
     name: "N2HET1[15]"
     board:
@@ -319,7 +288,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR8", bit: 19 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR8", bit: 20 } }
 
-  # PINMMR9 [15:8]
   - package_pin: 54
     name: "MIBSPI3NENA"
     board:
@@ -331,14 +299,10 @@ pins:
       - { af: "3", signal: "EQEP1B", mux: { register: "PINMMR9", bit: 11 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR9", bit: 12 } }
 
-  # PINMMR9 [23:16]
-  # CRITICAL: Connected to User LED D12
   - package_pin: 55
     name: "MIBSPI3NCS[0]"
     board:
-      net: "GIOB[2]"
-      connects_to: "D12 (User LED3 - Green/White)"
-      electrical: "Active High"
+      net: "MIBSPI3NCS_0 / AD2EVT / GIOB_2 / EQEP1I"
     functions:
       - { af: "0", signal: "MIBSPI3NCS[0]", mux: { register: "PINMMR9", bit: 16 } }
       - { af: "1", signal: "AD2EVT", mux: { register: "PINMMR9", bit: 17 } }
@@ -346,7 +310,6 @@ pins:
       - { af: "3", signal: "EQEP1I", mux: { register: "PINMMR9", bit: 19 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR9", bit: 20 } }
 
-  # PINMMR9 [31:24]
   - package_pin: 32
     name: "MIBSPI1NCS[3]"
     board:
@@ -358,7 +321,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR9", bit: 27 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR9", bit: 28 } }
 
-  # PINMMR10 [7:0]
   - package_pin: 88
     name: "AD1EVT"
     board:
@@ -370,7 +332,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR10", bit: 3 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR10", bit: 4 } }
 
-  # PINMMR10 [23:16]
   - package_pin: 121
     name: "EMIF_nCS[0]"
     board:
@@ -382,7 +343,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR10", bit: 19 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR10", bit: 20 } }
 
-  # PINMMR11 [7:0]
   - package_pin: 120
     name: "EMIF_nCS[3]"
     board:
@@ -394,7 +354,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR11", bit: 3 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR11", bit: 4 } }
 
-  # PINMMR11 [31:24]
   - package_pin: 107
     name: "N2HET1[24]"
     board:
@@ -406,7 +365,6 @@ pins:
       - { af: "3", signal: "RMII_RXD[0]", mux: { register: "PINMMR11", bit: 27 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR11", bit: 28 } }
 
-  # PINMMR12 [7:0]
   - package_pin: 100
     name: "N2HET1[26]"
     board:
@@ -418,7 +376,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR12", bit: 3 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR12", bit: 4 } }
 
-  # PINMMR12 [23:16]
   - package_pin: 96
     name: "MIBSPI1NENA"
     board:
@@ -430,7 +387,6 @@ pins:
       - { af: "3", signal: "USB1.VP", mux: { register: "PINMMR12", bit: 19 } }
       - { af: "4", signal: "ECAP4", mux: { register: "PINMMR12", bit: 20 } }
 
-  # PINMMR12 [31:24]
   - package_pin: 32
     name: "MIBSPI5NENA"
     board:
@@ -443,7 +399,6 @@ pins:
       - { af: "4", signal: "MIBSPI5SOMI[1]", mux: { register: "PINMMR12", bit: 28 } }
       - { af: "5", signal: "ECAP5", mux: { register: "PINMMR12", bit: 29 } }
 
-  # PINMMR13 [31:24]
   - package_pin: 93
     name: "MIBSPI1NCS[0]"
     board:
@@ -455,7 +410,6 @@ pins:
       - { af: "3", signal: "USB1.RCV", mux: { register: "PINMMR13", bit: 27 } }
       - { af: "4", signal: "ECAP6", mux: { register: "PINMMR13", bit: 28 } }
 
-  # PINMMR14 [7:0]
   - package_pin: 38
     name: "N2HET1[08]"
     board:
@@ -467,7 +421,6 @@ pins:
       - { af: "3", signal: "USB1.OVERCURRENT", mux: { register: "PINMMR14", bit: 3 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR14", bit: 4 } }
 
-  # PINMMR14 [15:8]
   - package_pin: 127
     name: "N2HET1[28]"
     board:
@@ -479,11 +432,10 @@ pins:
       - { af: "3", signal: "MII_RX_AVCLK4", mux: { register: "PINMMR14", bit: 11 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR14", bit: 12 } }
 
-  # PINMMR14 [23:16]
   - package_pin: 116
     name: "EMIF_nWE"
     board:
-      net: "EMIF_nWE"
+      net: "NRST / HERCULES_NRST"
     functions:
       - { af: "0", signal: "EMIF_nWE", mux: { register: "PINMMR14", bit: 16 } }
       - { af: "1", signal: "EMIF_RNW", mux: { register: "PINMMR14", bit: 17 } }
@@ -491,7 +443,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR14", bit: 19 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR14", bit: 20 } }
 
-  # PINMMR14 [31:24]
   - package_pin: 126
     name: "EMIF_BA[1]"
     board:
@@ -503,7 +454,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR14", bit: 27 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR14", bit: 28 } }
 
-  # PINMMR17 [7:0]
   - package_pin: 124
     name: "N2HET1[10]"
     board:
@@ -515,7 +465,6 @@ pins:
       - { af: "3", signal: "MII_TX_AVCLK4", mux: { register: "PINMMR17", bit: 3 } }
       - { af: "4", signal: "nTZ3", mux: { register: "PINMMR17", bit: 4 } }
 
-  # PINMMR17 [23:16]
   - package_pin: 125
     name: "N2HET1[12]"
     board:
@@ -527,7 +476,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR17", bit: 19 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR17", bit: 20 } }
 
-  # PINMMR18 [15:8]
   - package_pin: 141
     name: "N2HET1[14]"
     board:
@@ -539,7 +487,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR18", bit: 11 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR18", bit: 12 } }
 
-  # PINMMR18 [31:24]
   - package_pin: 128
     name: "GIOB[0]"
     board:
@@ -551,7 +498,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR18", bit: 27 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR18", bit: 28 } }
 
-  # PINMMR19 [15:8]
   - package_pin: 128
     name: "N2HET1[30]"
     board:
@@ -563,7 +509,6 @@ pins:
       - { af: "3", signal: "EQEP2S", mux: { register: "PINMMR19", bit: 11 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR19", bit: 12 } }
 
-  # PINMMR20 [23:16]
   - package_pin: 130
     name: "MIBSPI1NCS[1]"
     board:
@@ -575,11 +520,10 @@ pins:
       - { af: "3", signal: "USB1.SUSPEND", mux: { register: "PINMMR20", bit: 19 } }
       - { af: "4", signal: "EQEP1S", mux: { register: "PINMMR20", bit: 20 } }
 
-  # PINMMR21 [15:8]
   - package_pin: 133
     name: "GIOB[1]"
     board:
-      net: "GIOB[1]"
+      net: "GIOB_1"
     functions:
       - { af: "0", signal: "GIOB[1]", mux: { register: "PINMMR21", bit: 8 } }
       - { af: "1", signal: "USB1.PORTPOWER", mux: { register: "PINMMR21", bit: 9 } }
@@ -587,7 +531,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR21", bit: 11 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR21", bit: 12 } }
 
-  # PINMMR33 [7:0]
   - package_pin: 28
     name: "N2HET1[04]"
     board:
@@ -599,7 +542,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR33", bit: 3 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR33", bit: 4 } }
 
-  # PINMMR33 [15:8]
   - package_pin: 51
     name: "MIBSPI3SOMI[0]"
     board:
@@ -611,7 +553,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR33", bit: 11 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR33", bit: 12 } }
 
-  # PINMMR33 [23:16]
   - package_pin: 52
     name: "MIBSPI3SIMO[0]"
     board:
@@ -623,7 +564,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR33", bit: 19 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR33", bit: 20 } }
 
-  # PINMMR33 [31:24]
   - package_pin: 53
     name: "MIBSPI3CLK"
     board:
@@ -635,7 +575,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR33", bit: 27 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR33", bit: 28 } }
 
-  # PINMMR34 [7:0]
   - package_pin: 140
     name: "N2HET1[16]"
     board:
@@ -647,7 +586,6 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR34", bit: 3 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR34", bit: 4 } }
 
-  # PINMMR34 [15:8]
   - package_pin: 141
     name: "N2HET1[18]"
     board:
@@ -659,11 +597,10 @@ pins:
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR34", bit: 11 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR34", bit: 12 } }
 
-  # PINMMR34 [23:16]
   - package_pin: 142
     name: "N2HET1[20]"
     board:
-      net: "N2HET1[20]"
+      net: "GIOB_2"
     functions:
       - { af: "0", signal: "N2HET1[20]", mux: { register: "PINMMR34", bit: 16 } }
       - { af: "1", signal: "EPWM6B", mux: { register: "PINMMR34", bit: 17 } }
