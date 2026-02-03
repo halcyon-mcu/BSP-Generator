@@ -102,7 +102,7 @@ async def extract_single_pdf(
             print("\n[3/4] Calling Claude API...")
             print("  (this may take 10-30 seconds)")
 
-        response = await invoke_model(
+        response, input_tokens, output_tokens = await invoke_model(
             model=model,
             max_tokens=16000,
             system_prompt=system_prompt,
@@ -111,6 +111,7 @@ async def extract_single_pdf(
 
         if verbose:
             print(f"  Received response: {len(response)} chars")
+            print(f"  Token usage: {input_tokens:,} in / {output_tokens:,} out")
 
         # Extract YAML
         yaml_content = extract_yaml_from_response(response)
@@ -136,9 +137,9 @@ async def extract_single_pdf(
 
         if is_valid:
             if verbose:
-                print("  ✓ YAML is valid!")
+                print("  [OK] YAML is valid!")
         else:
-            print(f"  ⚠ YAML has {len(validation_errors)} validation error(s):")
+            print(f"  [WARNING] YAML has {len(validation_errors)} validation error(s):")
             for i, error in enumerate(validation_errors[:10], 1):
                 print(f"    {i}. {error}")
             if len(validation_errors) > 10:
@@ -159,7 +160,7 @@ async def extract_single_pdf(
         output_path.write_text(yaml_content, encoding='utf-8')
 
         if verbose:
-            print(f"\n✓ Saved to: {output_path}")
+            print(f"\n[SUCCESS] Saved to: {output_path}")
 
         # Print summary
         if verbose:
