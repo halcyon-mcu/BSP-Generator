@@ -1,406 +1,726 @@
-ir_schema_version: "1.1.0"
-
+ir_schema_version: 1.1.0
 sources:
-  - name: OSCIN
-    type: external_xtal
-    freq_hz: 16000000
-    x-ext:
-      trm_clock_id: 0
-      default_enabled: true
-      # Datasheet timing requirement corresponds to 5–20 MHz OSCIN (square or sine).
-      freq_range_hz: [5000000, 20000000]
-      board_note: "LaunchPad XL2 schematic: Y1 = 16.00 MHz on OSCIN/OSCOUT network"
-
-  - name: PLL1
-    type: pll
-    freq_hz: 1
-    x-ext:
-      trm_clock_id: 1
-      default_enabled: false
-      notes: "PLL #1 (FMzPLL) output"
-      todo:
-        - Define PLL1 profile (NR/NF/OD/R) and replace freq_hz with computed output frequency
-
-  - name: RESERVED
-    type: other
-    freq_hz: 1
-    x-ext:
-      trm_clock_id: 2
-      must_not_enable: true
-
-  - name: EXTCLKIN1
-    type: other
-    freq_hz: 1
-    x-ext:
-      trm_clock_id: 3
-      default_enabled: false
-      freq_max_hz: 80000000
-      notes:
-        - "External clock input must be a square wave"
-        - "External clock input validity is not checked by hardware"
-      todo:
-        - Set freq_hz if EXTCLKIN1 is used on the board
-
-  - name: LF_LPO
-    type: internal_rc
-    freq_hz: 85000
-    x-ext:
-      trm_clock_id: 4
-      default_enabled: true
-      typical_hz: 85000
-      untrimmed_range_hz: [36000, 180000]
-      startup_time_cold_us: 2000
-
-  - name: HF_LPO
-    type: internal_rc
-    freq_hz: 9600000
-    x-ext:
-      trm_clock_id: 5
-      default_enabled: true
-      freq_hz_note: "Typical trimmed HF LPO frequency"
-      typical_untrimmed_hz: 9000000
-      untrimmed_range_hz: [5500000, 19500000]
-      trimmed_range_hz: [8000000, 11000000]
-      startup_time_cold_us: 900
-      notes:
-        - "Reference for oscillator monitor; limp-mode clock"
-        - "Oscillator monitor valid OSC range is based on HF_LPO (approximately f(HF_LPO)/4 .. f(HF_LPO)*4)"
-
-  - name: PLL2
-    type: pll
-    freq_hz: 1
-    x-ext:
-      trm_clock_id: 6
-      default_enabled: false
-      notes: "PLL #2 output; modulation disabled"
-      todo:
-        - Define PLL2 profile (NR2/NF2/OD2/R2) and replace freq_hz with computed output frequency
-
-  - name: EXTCLKIN2
-    type: other
-    freq_hz: 1
-    x-ext:
-      trm_clock_id: 7
-      default_enabled: false
-      freq_max_hz: 80000000
-      notes:
-        - "External clock input must be a square wave"
-        - "External clock input validity is not checked by hardware"
-      todo:
-        - Set freq_hz if EXTCLKIN2 is used on the board
-
-plls:
-  - name: PLL1
-    input: OSCIN
-    mult_range: [1, 256]
-    div_range: [1, 64]
-    vco_limits_hz: [150000000, 550000000]
-    x-ext:
-      formula: "fPLLCLK = (fOSCIN / NR) * NF / (OD * R)"
-      params:
-        NR: { range: [1, 64] }
-        NF: { range: [1, 256] }
-        OD: { range: [1, 8] }
-        R:  { range: [1, 32] }
-      post_odclk_max_hz: 400000000
-      refclk_min_hz: 1000000
-      refclk_max_is_fosc_sqr: true
-
-  - name: PLL2
-    input: OSCIN
-    mult_range: [1, 256]
-    div_range: [1, 64]
-    vco_limits_hz: [150000000, 550000000]
-    x-ext:
-      formula: "fPLL2CLK = (fOSCIN / NR2) * NF2 / (OD2 * R2)"
-      params:
-        NR2: { range: [1, 64] }
-        NF2: { range: [1, 256] }
-        OD2: { range: [1, 8] }
-        R2:  { range: [1, 32] }
-      post_odclk2_max_hz: 400000000
-      refclk2_min_hz: 1000000
-      refclk2_max_is_fosc_sqr: true
-
+- name: OSCIN
+  type: external_xtal
+  freq_hz: 16000000
 domains:
-  - name: GCLK
-    parent: OSCIN
-    divider: 1
+- name: GCLK
+  parent: PLL1
+- name: HCLK
+  parent: PLL1
+- name: VCLK
+  parent: HCLK
+  divider: 2
+- name: VCLK2
+  parent: HCLK
+  divider: 2
+- name: VCLK3
+  parent: HCLK
+  divider: 2
+- name: VCLK4
+  parent: HCLK
+  divider: 2
+- name: RTICLK
+  parent: VCLK
+x-ext:
+  clock_domain_details:
+    GCLK:
+      description: CPU clock
+      frequency_hz: 220000000
+      x-source:
+        pdf: RM46_datasheet.pdf
+        pages:
+        - 73
+        - 74
+        confidence: high
+    HCLK:
+      description: System clock
+      frequency_hz: 220000000
+      x-source:
+        pdf: RM46_datasheet.pdf
+        pages:
+        - 73
+        - 74
+        confidence: high
+    VCLK:
+      description: Primary peripheral clock
+      frequency_hz: 110000000
+      x-source:
+        pdf: RM46_datasheet.pdf
+        pages:
+        - 73
+        - 74
+        confidence: high
+    VCLK2:
+      description: Secondary peripheral clock for N2HET
+      frequency_hz: 110000000
+      x-source:
+        pdf: RM46_datasheet.pdf
+        pages:
+        - 73
+        - 74
+        confidence: high
+    VCLK3:
+      description: Secondary peripheral clock for Ethernet/USB
+      frequency_hz: 110000000
+      x-source:
+        pdf: RM46_datasheet.pdf
+        pages:
+        - 73
+        - 74
+        confidence: high
+    VCLK4:
+      description: Secondary peripheral clock for ePWM/eQEP/eCAP
+      frequency_hz: 110000000
+      x-source:
+        pdf: RM46_datasheet.pdf
+        pages:
+        - 73
+        - 74
+        confidence: high
+    RTICLK:
+      description: RTI timer clock
+      frequency_hz: 110000000
+      x-source:
+        pdf: RM46_datasheet.pdf
+        pages:
+        - 73
+        - 74
+        confidence: high
+  peripheral_clocks:
+    ADC:
+      clock_source: VCLK
+      clock_divider_register: ADCLOCKCR
+      clock_divider_field: PS
+      clock_divider_formula: ADCLK = VCLK / (PS + 1)
+      x-source:
+        pdf: 22_Analog_To_Digital_Converter_ADC_Module.pdf
+        pages:
+        - 6
+        - 40
+        confidence: high
+    CCM:
+      clock_source: GCLK
+      x-source:
+        pdf: 9_CPU_Compare_Module_for_Cortex-R4F_CCM-R4F.pdf
+        pages:
+        - 3
+        confidence: medium
+    CRC:
+      clock_source: HCLK divided by 64 for timeout counter, HCLK for main logic
+      x-source:
+        pdf: 14_Cyclic_Redundancy_Check_CRC_Controller_Module.pdf
+        pages:
+        - 10
+        confidence: medium
+    DCAN:
+      clock_source: VCLK / VCLKA
+      clock_source_description: VCLK for general module clock, VCLKA for CAN core bit timing (CAN_CLK)
+      clock_selection_register: Peripheral Asynchronous Clock Source Register
+      clock_selection_note: VCLKA should be derived from unmodulated clock source if FMPLL frequency modulation is enabled
+      x-source:
+        pdf: 26_Controller_Area_Network_DCAN_Module.pdf
+        pages:
+        - 4
+        confidence: high
+    DCC:
+      x-source:
+        pdf: 11_Dual-Clock_Comparator_DCC_Module.pdf
+        pages:
+        - 1
+        - 7
+        confidence: medium
+    DMA:
+      x-source:
+        pdf: 16_Direct_Memory_Access_Controller_DMA_Module.pdf
+        pages:
+        - 1
+        - 2
+        confidence: low
+    ECAP:
+      clock_source: SYSCLK
+      x-source:
+        pdf: 20_Enhanced_Capture_eCAP_Module.pdf
+        pages:
+        - 7
+        confidence: medium
+    EFUSE: {}
+    EMACMDIO:
+      clock_source: VCLKA4
+      module_description: EMAC internal logic clocked on VCLKA4 domain
+      mdio_clock_source: VCLK3
+      mdio_clock_config: Divide-down of VCLK3 peripheral bus clock
+      mii_tx_clock: 2.5 MHz at 10 Mbps, 25 MHz at 100 Mbps
+      mii_rx_clock: 2.5 MHz at 10 Mbps, 25 MHz at 100 Mbps
+      rmii_clock: 50 MHz for both 10 Mbps and 100 Mbps
+      x-source:
+        pdf: 31_EMACMDIO_Module.pdf
+        pages:
+        - 4
+        confidence: high
+    EMIF:
+      clock_source: VCLK3
+      clock_description: EMIF module receives VCLK3 clock domain, running at half frequency of main oscillator by default
+        (2.5MHz to 10MHz). VCLK3 frequency divided from HCLK by programmable divider (/1 to /16)
+      output_clock: EMIF_CLK
+      output_clock_description: EMIF_CLK pin used for interfacing to external SDRAM devices
+      x-source:
+        pdf: 17_External_Memory_Interface_EMIF.pdf
+        pages:
+        - 4
+        confidence: high
+    EPWM:
+      clock_source: VCLK4
+      clock_enable_register: IOMM control registers
+      clock_enable_bit: null
+      prescaler_registers:
+      - name: TBCTL[CLKDIV]
+        description: Time-base clock prescale
+      - name: TBCTL[HSPCLKDIV]
+        description: High speed time-base clock prescale
+      synchronization:
+        sync_register: PINMMR37
+        sync_bit: 1
+        sync_bit_name: TBCLKSYNC
+        description: Global synchronization of all enabled ePWM module clocks
+      x-source:
+        pdf: 19_Enhanced_Pulse_Width_Modulator_ePWM_Module.pdf
+        pages:
+        - 12
+        - 82
+        confidence: high
+    ESM:
+      clock_source: VCLK
+      peripheral_clock: VCLK
+      description: Low-Time Counter triggered by peripheral clock (VCLK)
+      x-source:
+        pdf: 12_Error_Signaling_Module_ESM.pdf
+        pages:
+        - 3
+        - 17
+        confidence: high
+    FMC:
+      x-source:
+        pdf: 5_F021_Flash_Module_Controller_FMC.pdf
+        pages:
+        - 1
+        - 2
+        - 3
+        confidence: low
+    GIO:
+      x-needs-verification: Clock source and PCR configuration not explicitly stated in this document
+      x-source:
+        pdf: 25_General-Purpose_InputOutput_GIO_Module.pdf
+        pages:
+        - 3
+        confidence: low
+    HTU:
+      clock_source: VCLK
+      clock_enable_register: null
+      clock_enable_bit: null
+      x-source:
+        pdf: 24_High-End_Timer_Transfer_Unit_HTU_Module.pdf
+        pages:
+        - 1
+        - 2
+        - 3
+        confidence: low
+      clock_enable_register_note: Not documented in peripheral TRM chapter - may be in System chapter
+      clock_enable_bit_note: Not documented in peripheral TRM chapter - may be in System chapter
+    INTER:
+      clock_source: VBUS_CLK
+      clock_enable_register: Unknown
+      clock_enable_bit: null
+      prescaler_register: I2CPSC
+      module_clock_range: 6.7MHz to 13.3MHz
+      x-source:
+        pdf: 30_Inter-Integrated_Circuit_I2C_Module.pdf
+        pages:
+        - 5
+        confidence: medium
+    IOMM:
+      peripherals:
+        EPWM1:
+          clock_source: VCLK4
+          clock_enable_register: PINMMR37
+          clock_enable_bit: 8
+          x-source:
+            pdf: 4_IO_Multiplexing_and_Control_Module_IOMM.pdf
+            pages:
+            - 8
+            confidence: high
+        EPWM2:
+          clock_source: VCLK4
+          clock_enable_register: PINMMR37
+          clock_enable_bit: 16
+          x-source:
+            pdf: 4_IO_Multiplexing_and_Control_Module_IOMM.pdf
+            pages:
+            - 8
+            confidence: high
+        EPWM3:
+          clock_source: VCLK4
+          clock_enable_register: PINMMR37
+          clock_enable_bit: 24
+          x-source:
+            pdf: 4_IO_Multiplexing_and_Control_Module_IOMM.pdf
+            pages:
+            - 8
+            confidence: high
+        EPWM4:
+          clock_source: VCLK4
+          clock_enable_register: PINMMR38
+          clock_enable_bit: 0
+          x-source:
+            pdf: 4_IO_Multiplexing_and_Control_Module_IOMM.pdf
+            pages:
+            - 8
+            confidence: high
+        EPWM5:
+          clock_source: VCLK4
+          clock_enable_register: PINMMR38
+          clock_enable_bit: 8
+          x-source:
+            pdf: 4_IO_Multiplexing_and_Control_Module_IOMM.pdf
+            pages:
+            - 8
+            confidence: high
+        EPWM6:
+          clock_source: VCLK4
+          clock_enable_register: PINMMR38
+          clock_enable_bit: 16
+          x-source:
+            pdf: 4_IO_Multiplexing_and_Control_Module_IOMM.pdf
+            pages:
+            - 8
+            confidence: high
+        EPWM7:
+          clock_source: VCLK4
+          clock_enable_register: PINMMR38
+          clock_enable_bit: 24
+          x-source:
+            pdf: 4_IO_Multiplexing_and_Control_Module_IOMM.pdf
+            pages:
+            - 8
+            confidence: high
+        ECAP1:
+          clock_source: VCLK4
+          clock_enable_register: PINMMR39
+          clock_enable_bit: 0
+          x-source:
+            pdf: 4_IO_Multiplexing_and_Control_Module_IOMM.pdf
+            pages:
+            - 9
+            confidence: high
+        ECAP2:
+          clock_source: VCLK4
+          clock_enable_register: PINMMR39
+          clock_enable_bit: 8
+          x-source:
+            pdf: 4_IO_Multiplexing_and_Control_Module_IOMM.pdf
+            pages:
+            - 9
+            confidence: high
+        ECAP3:
+          clock_source: VCLK4
+          clock_enable_register: PINMMR39
+          clock_enable_bit: 16
+          x-source:
+            pdf: 4_IO_Multiplexing_and_Control_Module_IOMM.pdf
+            pages:
+            - 9
+            confidence: high
+        ECAP4:
+          clock_source: VCLK4
+          clock_enable_register: PINMMR39
+          clock_enable_bit: 24
+          x-source:
+            pdf: 4_IO_Multiplexing_and_Control_Module_IOMM.pdf
+            pages:
+            - 9
+            confidence: high
+        ECAP5:
+          clock_source: VCLK4
+          clock_enable_register: PINMMR40
+          clock_enable_bit: 0
+          x-source:
+            pdf: 4_IO_Multiplexing_and_Control_Module_IOMM.pdf
+            pages:
+            - 9
+            confidence: high
+        ECAP6:
+          clock_source: VCLK4
+          clock_enable_register: PINMMR40
+          clock_enable_bit: 8
+          x-source:
+            pdf: 4_IO_Multiplexing_and_Control_Module_IOMM.pdf
+            pages:
+            - 9
+            confidence: high
+        EQEP1:
+          clock_source: VCLK4
+          clock_enable_register: PINMMR40
+          clock_enable_bit: 16
+          x-source:
+            pdf: 4_IO_Multiplexing_and_Control_Module_IOMM.pdf
+            pages:
+            - 9
+            confidence: high
+        EQEP2:
+          clock_source: VCLK4
+          clock_enable_register: PINMMR40
+          clock_enable_bit: 24
+          x-source:
+            pdf: 4_IO_Multiplexing_and_Control_Module_IOMM.pdf
+            pages:
+            - 9
+            confidence: high
+    LIN:
+      clock_source: VCLK
+      description: SCI/LIN uses VCLK (peripheral clock) as base clock source
+      baud_generation: Programmable via BRS register with 24-bit prescaler P, 4-bit fractional M, and 3-bit superfractional
+        U
+      max_baud_rate: 3.125 Mbps at 100 MHz VCLK (SCI mode)
+      lin_baud_range: 1 kHz to 20 kHz
+      x-source:
+        pdf: 28_Serial_Communication_Interface_SCI_Local_Interconnect_Network_LIN_Module.pdf
+        pages:
+        - 2
+        - 4
+        - 8
+        - 25
+        - 26
+        - 76
+        confidence: high
+    PBIST:
+      clock_source: HCLK/VCLK/ROMCLK
+      clock_enable_register: PACT
+      clock_enable_bit: 0
+      rom_clock_ratio_register: MSTGCR
+      rom_clock_ratio_bits: '9:8'
+      notes: PBIST requires HCLK, VCLK peripheral and ROMCLK as required for test. ROM_DIV field in MSTGCR configures HCLK
+        to PBIST ROM clock ratio
+      x-source:
+        pdf: 7_Programmable_Built-In_Self-Test_PBIST_Module.pdf
+        pages:
+        - 4
+        - 5
+        - 21
+        confidence: high
+    PIN:
+      clock_source: VCLK
+      frequency_calculation: SPICLK = VCLK / (PRESCALE + 1)
+      prescaler_register: SPIFMT
+      prescaler_field: PRESCALE
+      x-source:
+        pdf: 27_Multi-Buffered_Serial_Peripheral_Interface_Module_MibSPI_with_Parallel_Pin_Option_MibSPIP.pdf
+        pages:
+        - 65
+        confidence: high
+    PLL:
+      oscillator_frequency_range: tc(OSC)
+      oscillator_squared_frequency_range: tc(OSC_Sqr)
+      oscillator_valid_delay_cycles: 1024
+      oscillator_valid_signal: CLKSR0V
+      hf_lpo_nominal_frequency_mhz: 9.6
+      hf_lpo_frequency_range_mhz: 5.5 - 19.5
+      hf_lpo_clock_source: 5
+      lf_lpo_nominal_frequency_khz: 85
+      lf_lpo_clock_source: 4
+      pll1_clock_source: 1
+      pll2_clock_source: 6
+      pll_lock_time_formula: TLock = (512 Ã— TOSCIN) + (1024 Ã— NR Ã— TOSCIN)
+      pll_enable_delay_formula: TEnable = 6 Ã— TOSCIN
+      pll_disable_delay_formula: TEnable = 150 Ã— TOSCIN
+      pll_odpll_gate_time_formula: TODPLL = 3 Ã— TOSCIN
+      clock_detect_min_frequency_formula: OSCIN > HF_LPOmin / 4 = 5.5MHz / 4 = 1.375MHz
+      clock_detect_max_frequency_formula: OSCIN < 4 Ã— HF_LPOmax = 4 Ã— 19.5MHz = 78MHz
+      x-source:
+        pdf: 10_Oscillator_and_PLL.pdf
+        pages:
+        - 4
+        - 5
+        - 6
+        - 7
+        - 8
+        - 12
+        - 13
+        - 14
+        - 18
+        confidence: high
+    PMM:
+      x-source:
+        pdf: 3_Power_Management_Module_PMM.pdf
+        pages:
+        - 2
+        - 5
+        - 6
+        confidence: medium
+      notes: PMM manages clocks for each power domain via PDCLKDIS, PDCLKDISSET, PDCLKDISCLR registers. Clock sources not
+        explicitly specified in this chapter.
+    POM: {}
+    PULSE:
+      clock_source: VCLK4
+      x-source:
+        pdf: 21_Enhanced_Quadrature_Encoder_Pulse_eQEP_Module.pdf
+        pages:
+        - 5
+        - 18
+        confidence: high
+    RAM: {}
+    RTI:
+      clock_source: RTICLK
+      description: RTI module is clocked by RTICLK derived from VCLK
+      x-source:
+        pdf: 13_Real-Time_Interrupt_RTI_Module.pdf
+        pages:
+        - 3
+        - 6
+        confidence: high
+    SCI:
+      clock_source: VCLK
+      clock_enable_method: Internal or external clock selected via CLOCK bit in SCIGCR1
+      baud_rate_generation: 24-bit programmable prescaler in BRS register
+      formulas:
+        asynchronous: VCLK / (16 * (BAUD + 1))
+        isosynchronous: VCLK / (BAUD + 1)
+      x-source:
+        pdf: 29_Serial_Communication_Interface_SCI_Module.pdf
+        pages:
+        - 2
+        - 5
+        - 12
+        - 34
+        confidence: high
+    STC:
+      clock_source: HCLK
+      clock_divider_register: STCCLKDIV
+      clock_divider_location: '0xFFFFE108'
+      clock_divider_bits: '26:24'
+      generated_clock: STCCLK
+      x-source:
+        pdf: 8_CPU_Self-Test_Controller_STC_Module.pdf
+        pages:
+        - 2
+        - 16
+        confidence: high
+    SYSTEM:
+      vclk_source: OSCIN
+      vclk_divider: HCLK/2
+      vclk_enable_register: CLKCNTL
+      vclk_enable_bit: 8
+      vclk_ratio_field: VCLKR
+      hclk_source: OSCIN
+      gclk_source: OSCIN
+      clock_domains:
+      - name: GCLK
+        domain_number: 0
+        default_source: OSCIN
+        description: CPU clock domain used by Cortex-R4F in lockstep
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 121
+          confidence: high
+      - name: HCLK
+        domain_number: 1
+        default_source: OSCIN
+        description: 'System module clock for high-speed modules: Flash, TCRAM, ESM, DMA'
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 121
+          confidence: high
+      - name: VCLK
+        domain_number: 2
+        default_source: OSCIN
+        description: Peripheral bus clock, divided from HCLK, can be HCLK/1 to HCLK/16
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 121
+          confidence: high
+      - name: VCLK2
+        domain_number: 3
+        default_source: OSCIN
+        description: Clock for N2HET1, N2HET2, HTU1, HTU2, divided from HCLK
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 121
+          confidence: high
+      - name: VCLK3
+        domain_number: 8
+        default_source: OSCIN
+        description: Clock for EMAC, USB, EMIF slave interfaces
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 121
+          confidence: high
+      - name: VCLK4
+        domain_number: 9
+        default_source: OSCIN
+        description: Clock for ePWM, eCAP, eQEP modules
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 121
+          confidence: high
+      - name: VCLKA1
+        domain_number: 4
+        default_source: VCLK
+        description: Clock for CAN controllers DCAN1, DCAN2, DCAN3 for baud-rate generation
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 121
+          - 122
+          confidence: high
+      - name: VCLKA3
+        domain_number: 10
+        default_source: VCLK
+        description: 48MHz clock for USB host and device controller
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 122
+          confidence: high
+      - name: VCLKA4
+        domain_number: 11
+        default_source: VCLK
+        description: Clock for Ethernet controller EMAC when TX/RX clocks internally generated
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 122
+          confidence: high
+      - name: RTICLK
+        domain_number: 6
+        default_source: VCLK
+        description: Timebase generation clock for Real-Time Interrupt module
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 122
+          confidence: high
+      clock_sources:
+      - name: OSCIN
+        source_number: 0
+        description: Main oscillator, primary clock for microcontroller, 5-20 MHz
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 120
+          confidence: high
+      - name: PLL1
+        source_number: 1
+        description: Main PLL output, capable of frequency modulation for EMI reduction
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 120
+          confidence: high
+      - name: EXTCLKIN1
+        source_number: 3
+        description: External clock input 1
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 120
+          confidence: high
+      - name: LF_LPO
+        source_number: 4
+        description: Low-frequency LPO, typically 80 KHz, used by RTI for periodic interrupts
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 120
+          confidence: high
+      - name: HF_LPO
+        source_number: 5
+        description: High-frequency LPO, typically 10 MHz, used by clock monitor as reference
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 120
+          confidence: high
+      - name: PLL2
+        source_number: 6
+        description: Second PLL output, non-modulating, independent asynchronous clock source
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 120
+          confidence: high
+      - name: EXTCLKIN2
+        source_number: 7
+        description: External clock input 2
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 120
+          confidence: high
+      x-source:
+        pdf: 2_Architecture.pdf
+        pages:
+        - 120
+        - 121
+        - 122
+        - 146
+        - 176
+        confidence: high
+    TIMER:
+      clock_source: VCLK2
+      clock_enable_register: PCR1
+      clock_enable_bit: 2
+      prescaler_hr: HETPFR.HRPFC (divide 1-64)
+      prescaler_lr: HETPFR.LRPFC (divide 1,2,4,8,16,32,64,128)
+      x-source:
+        pdf: 23_High-End_Timer_N2HET_Module.pdf
+        pages:
+        - 3
+        - 14
+        - 15
+        - 68
+        confidence: high
+    USB:
+      usb_host_clock_source: 48MHz clock (VCLKA3) and 12MHz clock (VCLKA3_DIVR)
+      usb_host_bus_clock: VCLK3
+      usb_device_clock_source: 48MHz clock
+      clock_enable_notes: USB host controller must be clocked and out of reset for register access
+      x-source:
+        pdf: 32_Universal_Serial_Bus_USB.pdf
+        pages:
+        - 28
+        confidence: medium
+    VIM:
+      clock_source: VBUSP
+      x-source:
+        pdf: 15_Vectored_Interrupt_Manager_VIM_Module.pdf
+        pages:
+        - 2
+        confidence: medium
+      x-needs-verification: Clock configuration not explicitly detailed in VIM chapter
+clock_sources:
+  XTAL:
+    type: crystal
+    frequency_hz: 16000000
     x-ext:
-      clock_domain_id: 0
-      source_sel_reg: SYSTEM.GHVSRC
-      cddis_bit: 0
-      notes:
-        - "CPU clock; same freq and phase as HCLK"
-        - "During CPU self-test (LBIST), GCLK may be divided by 1..8 via STCCLKDIV.CLKDIV (reset use is application-controlled)"
-      lbist_divider_reg: SYSTEM2.STCCLKDIV
-      lbist_divider_field: CLKDIV
-      lbist_divider_range: [1, 8]
-
-  - name: GCLK2
-    parent: OSCIN
-    divider: 1
-    x-ext:
-      clock_domain_id: 0
-      source_sel_reg: SYSTEM.GHVSRC
-      cddis_bit: 0
-      notes:
-        - "Second CPU clock; 2 cycles delayed; disabled with GCLK"
-
-  - name: HCLK
-    parent: OSCIN
-    divider: 1
-    x-ext:
-      clock_domain_id: 1
-      source_sel_reg: SYSTEM.GHVSRC
-      cddis_bit: 1
-      notes: "System module clock"
-
-  - name: VCLK
-    parent: HCLK
-    divider: 2
-    x-ext:
-      clock_domain_id: 2
-      source_sel_reg: SYSTEM.GHVSRC
-      cddis_bit: 2
-      divider_reg: SYSTEM.CLKCNTL
-      divider_field: VCLKR
-      divider_range: [1, 16]
-      default_divider: 2
-      notes: "Peripheral bus clock (PCR-accessed peripherals incl. SCI)"
-
-  - name: VCLK2
-    parent: HCLK
-    divider: 2
-    x-ext:
-      clock_domain_id: 3
-      source_sel_reg: SYSTEM.GHVSRC
-      cddis_bit: 3
-      divider_reg: SYSTEM.CLKCNTL
-      divider_field: VCLK2R
-      divider_range: [1, 16]
-      default_divider: 2
-      notes:
-        - "N2HET/HTU clock"
-        - "Must be an integer multiple of VCLK"
-
-  - name: VCLK3
-    parent: HCLK
-    divider: 2
-    x-ext:
-      clock_domain_id: 8
-      source_sel_reg: SYSTEM.GHVSRC
-      cddis_bit: 8
-      divider_reg: SYSTEM.CLKCNTL
-      divider_field: VCLK3R
-      divider_range: [1, 16]
-      default_divider: 2
-
-  - name: VCLK4
-    parent: HCLK
-    divider: 2
-    x-ext:
-      clock_domain_id: 9
-      source_sel_reg: SYSTEM.GHVSRC
-      cddis_bit: 9
-      divider_reg: SYSTEM.CLKCNTL
-      divider_field: VCLK4R
-      divider_range: [1, 16]
-      default_divider: 2
-
-  - name: VCLKA1
-    parent: VCLK
-    divider: 1
-    x-ext:
-      clock_domain_id: 4
-      source_sel_reg: SYSTEM.VCLKASRC
-      cddis_bit: 4
-      notes: "Defaults to VCLK as the source (e.g., DCAN baud-rate clock)"
-
-  - name: VCLKA2
-    parent: VCLK
-    divider: 1
-    x-ext:
-      clock_domain_id: 5
-      source_sel_reg: SYSTEM.VCLKASRC
-      cddis_bit: 5
-      notes: "Defaults to VCLK as the source"
-
-  - name: VCLKA3_S
-    parent: VCLK
-    divider: 1
-    x-ext:
-      clock_domain_id: 10
-      source_sel_reg: SYSTEM2.VCLKACON1
-      cddis_bit: 10
-      notes:
-        - "Defaults to VCLK as the source"
-        - "Frequency can be as fast as HCLK frequency"
-
-  - name: VCLKA3_DIVR
-    parent: VCLKA3_S
-    divider: 2
-    x-ext:
-      divider_reg: SYSTEM2.VCLKACON1
-      divider_field: VCLKA3R
-      divider_range: [1, 8]
-      default_divider: 2
-      local_disable_field: VCLKA3_DIV_CDDIS
-      local_disable_note: "Disabled separately via VCLKACON1.VCLKA3_DIV_CDDIS only if VCLKA3_S is not already disabled"
-
-  - name: VCLKA4_S
-    parent: VCLK
-    divider: 1
-    x-ext:
-      clock_domain_id: 11
-      source_sel_reg: SYSTEM2.VCLKACON1
-      cddis_bit: 11
-      notes:
-        - "Defaults to VCLK as the source"
-        - "Frequency can be as fast as HCLK frequency"
-
-  - name: VCLKA4_DIVR
-    parent: VCLKA4_S
-    divider: 2
-    x-ext:
-      divider_reg: SYSTEM2.VCLKACON1
-      divider_field: VCLKA4R
-      divider_range: [1, 8]
-      default_divider: 2
-      local_disable_field: VCLKA4_DIV_CDDIS
-      local_disable_note: "Disabled separately via VCLKACON1.VCLKA4_DIV_CDDIS only if VCLKA4_S is not already disabled"
-
-  - name: VCLKA4_DIVR_EMAC
-    parent: VCLKA4_DIVR
-    divider: 1
-    x-ext:
-      notes:
-        - "EMAC clock domain derived from VCLKA4_DIVR with special dedicated source-selection options"
-        - "MII requires 25 MHz; RMII requires 50 MHz"
-        - "Additional dedicated options include PLL2 post_ODCLK/8 and PLL2 post_ODCLK/16"
-      todo:
-        - Extract VCLKA4_DIVR_EMAC source-select controls (datasheet section 6.6.2.3 / Table 6-14)
-
-  - name: RTICLK
-    parent: VCLK
-    divider: 1
-    x-ext:
-      clock_domain_id: 6
-      source_sel_reg: SYSTEM.RCLKSRC
-      cddis_bit: 6
-      async_div_field: RTI1DIV
-      async_div_options: [1, 2, 4, 8]
-      notes:
-        - "Defaults to VCLK as the source"
-        - "If RTICLK source != VCLK, RTICLK must be <= VCLK/3 (ensure via RCLKSRC.RTI1DIV)"
-
-gates:
-  # Clock source gating via SYSTEM.CSDIS{SET,CLR} (active-high disables)
-  - name: CLKSR0_OSCIN_EN
-    parent: OSCIN
-    x-ext: { reg: SYSTEM.CSDIS, bit: 0, active_high_disables: true }
-  - name: CLKSR1_PLL1_EN
-    parent: PLL1
-    x-ext: { reg: SYSTEM.CSDIS, bit: 1, active_high_disables: true }
-  - name: CLKSR3_EXTCLKIN1_EN
-    parent: EXTCLKIN1
-    x-ext: { reg: SYSTEM.CSDIS, bit: 3, active_high_disables: true }
-  - name: CLKSR4_LF_LPO_EN
-    parent: LF_LPO
-    x-ext: { reg: SYSTEM.CSDIS, bit: 4, active_high_disables: true }
-  - name: CLKSR5_HF_LPO_EN
-    parent: HF_LPO
-    x-ext: { reg: SYSTEM.CSDIS, bit: 5, active_high_disables: true }
-  - name: CLKSR6_PLL2_EN
-    parent: PLL2
-    x-ext: { reg: SYSTEM.CSDIS, bit: 6, active_high_disables: true }
-  - name: CLKSR7_EXTCLKIN2_EN
-    parent: EXTCLKIN2
-    x-ext: { reg: SYSTEM.CSDIS, bit: 7, active_high_disables: true }
-
-  # Clock domain gating via SYSTEM.CDDIS{SET,CLR} (active-high disables)
-  - name: GCLK_DOMAIN_EN
-    parent: GCLK
-    x-ext: { reg: SYSTEM.CDDIS, bit: 0, active_high_disables: true }
-  - name: HCLK_DOMAIN_EN
-    parent: HCLK
-    x-ext: { reg: SYSTEM.CDDIS, bit: 1, active_high_disables: true }
-  - name: VCLK_PERIPH_DOMAIN_EN
-    parent: VCLK
-    x-ext: { reg: SYSTEM.CDDIS, bit: 2, active_high_disables: true }
-  - name: VCLK2_DOMAIN_EN
-    parent: VCLK2
-    x-ext: { reg: SYSTEM.CDDIS, bit: 3, active_high_disables: true }
-  - name: VCLKA1_DOMAIN_EN
-    parent: VCLKA1
-    x-ext: { reg: SYSTEM.CDDIS, bit: 4, active_high_disables: true }
-  - name: VCLKA2_DOMAIN_EN
-    parent: VCLKA2
-    x-ext: { reg: SYSTEM.CDDIS, bit: 5, active_high_disables: true }
-  - name: RTICLK1_DOMAIN_EN
-    parent: RTICLK
-    x-ext: { reg: SYSTEM.CDDIS, bit: 6, active_high_disables: true }
-  - name: VCLK3_DOMAIN_EN
-    parent: VCLK3
-    x-ext: { reg: SYSTEM.CDDIS, bit: 8, active_high_disables: true }
-  - name: VCLK4_DOMAIN_EN
-    parent: VCLK4
-    x-ext: { reg: SYSTEM.CDDIS, bit: 9, active_high_disables: true }
-  - name: VCLKA3_DOMAIN_EN
-    parent: VCLKA3_S
-    x-ext: { reg: SYSTEM.CDDIS, bit: 10, active_high_disables: true }
-  - name: VCLKA4_DOMAIN_EN
-    parent: VCLKA4_S
-    x-ext: { reg: SYSTEM.CDDIS, bit: 11, active_high_disables: true }
-
-  # Local divider disables in VCLKACON1 (active-high disables)
-  - name: VCLKA3_DIVR_LOCAL_EN
-    parent: VCLKA3_DIVR
-    x-ext: { reg: SYSTEM2.VCLKACON1, field: VCLKA3_DIV_CDDIS, active_high_disables: true }
-  - name: VCLKA4_DIVR_LOCAL_EN
-    parent: VCLKA4_DIVR
-    x-ext: { reg: SYSTEM2.VCLKACON1, field: VCLKA4_DIV_CDDIS, active_high_disables: true }
-
-  # Peripheral Select power-down clears (project policy: enable all PS clocks at startup)
-  - name: PCR_PS_ALL_ENABLE
-    parent: VCLK
-    x-ext:
-      regs_clear_all: [PCR.PSPWRDWNCLR0, PCR.PSPWRDWNCLR1, PCR.PSPWRDWNCLR2, PCR.PSPWRDWNCLR3]
-      value: 0xFFFFFFFF
-      semantics: "Clear peripheral-select power-down for all quadrants (enables all PS clocks)"
-      note: "Per-peripheral PS mapping not included here; project enables all at startup"
-
-constraints:
-  - rule: "clock_source_id_2_reserved_must_not_enable"
-    x-ext: { source_id: 2 }
-
-  - rule: "vclk2_integer_multiple_of_vclk"
-
-  - rule: "rticlk_async_must_be_le_vclk_div_3"
-    x-ext: { when_rticlk_source_not_vclk: true }
-
-  - rule: "do_not_disable_OSCIN_or_HF_LPO_with_clock_monitor_enabled"
-
-  - rule: "external_clock_inputs_not_validated_by_hardware"
-    x-ext: { applies_to: [EXTCLKIN1, EXTCLKIN2] }
-
-  - rule: "vclka4_divr_emac_required_frequency"
-    x-ext:
-      mii_required_hz: 25000000
-      rmii_required_hz: 50000000
-
-provenance:
-  trm:
-    document: "RM46 TRM SPNU514C"
-    sections:
-      - "2.4.2.1 Enabling / Disabling Clock Domains"
-      - "2.4.2.2 Mapping Clock Sources to Clock Domains"
-      - "2.5.1 Primary System Control Registers (SYS) register list (CSDIS/CDDIS/GHVSRC/VCLKASRC/RCLKSRC)"
-  datasheet:
-    document: "RM46L852 datasheet SPNS185C"
-    sections:
-      - "6.6 Clocks"
-      - "Tables: 6-8, 6-9, 6-10, 6-11, 6-12, 6-13; 6.6.2.3 (VCLKA4_DIVR_EMAC)"
-  board:
-    document: "RM46 LaunchPad XL2 schematic"
-    note: "OSCIN crystal Y1 = 16.00 MHz"
+      schematic:
+        designator: Y1
+        frequency_mhz: 16.0
+        load_capacitors:
+        - designator: C1
+          value: 33pF
+          tolerance: ±5%
+          pin: 18
+        - designator: C2
+          value: 33pF
+          tolerance: ±5%
+          pin: 20
+        pins:
+          oscin: 18
+          oscout: 20
+          kelvin_gnd: 19
+        source: RM46_schematic.pdf
