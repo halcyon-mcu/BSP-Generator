@@ -23,3 +23,16 @@ app/yaml_out/
 
 # Claude Code artifacts
 .claude/
+
+# Documentation files (work in progress)
+app/CLAUDE_DISCOVERY.md
+app/EXTRACTION_COMPARISON.md
+app/EXTRACTION_METHOD.md
+app/EXTRACTION_RELIABILITY_IMPROVEMENTS.md
+app/IMPROVEMENTS.md
+app/IMPROVEMENTS_V2.md
+app/IMPROVEMENTS_V3.md
+app/PDF_EXTRACTION_README.md
+app/QUICKSTART.md
+app/REGISTER_SCANNER.md
+app/USAGE.md
