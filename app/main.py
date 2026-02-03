@@ -44,13 +44,16 @@ async def _invoke_and_write(
     max_tokens: int,
     artifacts_dir: Path,
     out_dir: Path,
+    soc_data: dict = None,
+    regs_data: dict = None,
 ):
     """
     Helper to:
       - save system/user prompts for this call,
       - invoke the model,
       - save raw text,
-      - split and write files immediately upon completion.
+      - split and write files immediately upon completion,
+      - validate FACTS MIRROR (if soc_data and regs_data provided).
     """
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -70,7 +73,7 @@ async def _invoke_and_write(
     ]
 
     print(f"[info] Invoking {model_enum.name} for {tag} …")
-    
+
     # invoke_model is now truly async
     resp = await invoke_model(model_enum, max_tokens, messages)
 
@@ -85,16 +88,38 @@ async def _invoke_and_write(
         return []
 
     (artifacts_dir / f"{tag}_llm_text_{ts}.txt").write_text(text, encoding="utf-8")
-    
-    # Write files immediately
-    written_files = split_and_write_files(text, out_dir)
+
+    # Write files immediately and extract preamble
+    written_files, preamble = split_and_write_files(text, out_dir)
     for file in written_files:
         try:
             relative_path = file.relative_to(out_dir)
         except ValueError:
             relative_path = file
         print(f"[ok] {tag}: {relative_path}")
-    
+
+    # Validate if YAML data provided
+    if soc_data is not None and regs_data is not None and written_files:
+        from modules.validation_engine import validate_generation_output
+        try:
+            validation_result = validate_generation_output(
+                tag=tag,
+                preamble=preamble,
+                written_files=written_files,
+                soc_data=soc_data,
+                regs_data=regs_data
+            )
+
+            if not validation_result.is_valid:
+                print(f"[warn] Validation warnings for {tag}:")
+                for error in validation_result.errors[:3]:  # Show first 3
+                    print(f"  - {error}")
+            elif validation_result.warnings:
+                print(f"[info] Validation passed with {len(validation_result.warnings)} warnings")
+
+        except Exception as e:
+            print(f"[warn] Validation error for {tag}: {e}")
+
     return written_files
 
 
@@ -360,6 +385,43 @@ async def main():
     else:
         print("\n[info] Skipping Pass 2 (No modules selected).")
 
+    # --- DEPENDENCY RESOLUTION & INIT ORDERING ---
+    print("\n[info] Building dependency graph and generating initialization sequence...")
+
+    try:
+        from modules.dependency_resolver import (
+            build_dependency_graph,
+            generate_init_order,
+            generate_main_c
+        )
+
+        # Build dependency graph
+        dep_graph = build_dependency_graph(
+            bsp_manifest,
+            soc_data,
+            selected_modules=pass2_allowed_modules
+        )
+
+        # Generate initialization order
+        init_order = generate_init_order(dep_graph)
+
+        if init_order.is_valid():
+            print(f"[ok] Dependency graph valid - {len(init_order.order)} modules")
+            print(f"[info] Init order: {' → '.join(init_order.order[:5])}{'...' if len(init_order.order) > 5 else ''}")
+
+            # Generate main.c with correct init sequence
+            main_c_path = generate_main_c(init_order, dep_graph, out_dir)
+            print(f"[ok] Generated {main_c_path.name} with dependency-ordered init sequence")
+        else:
+            print(f"[error] Circular dependency detected!")
+            print(f"[error] Cycle: {' → '.join(init_order.cycle_nodes)}")
+            print(f"[warn] Skipping main.c generation due to dependency cycle")
+
+    except Exception as e:
+        print(f"[warn] Dependency resolution error: {e}")
+        import traceback
+        traceback.print_exc()
+
     print("\n[info] Proceeding to Platform Generation...")
 
     # --- PASS 3: Platform & System Files ---
@@ -503,8 +565,56 @@ async def main():
         print("[info] No additional platform tasks to run.")
 
     # Generate documentation
-
     await _generate_documentation(out_dir)
+
+    # --- FINAL VALIDATION REPORT ---
+    print("\n[info] Generating final validation report...")
+
+    try:
+        from modules.validation_report import (
+            create_validation_report,
+            write_json_report,
+            write_markdown_report,
+            print_console_summary
+        )
+
+        # Create comprehensive report
+        # Note: validation_results would need to be collected throughout execution
+        # For now, we create a minimal report showing dependency graph status
+        from modules.validation_report import ValidationReport, ValidationSummary
+
+        final_report = ValidationReport(
+            timestamp=_now_tag(),
+            bsp_output_dir=str(out_dir)
+        )
+
+        # Add dependency graph info if available
+        if 'dep_graph' in locals() and 'init_order' in locals():
+            final_report.dependency_graph_info = {
+                "total_nodes": len(dep_graph.nodes),
+                "has_cycles": init_order.has_cycles,
+                "init_order": init_order.order if init_order.is_valid() else [],
+                "cycle_nodes": init_order.cycle_nodes if init_order.has_cycles else []
+            }
+
+        # Write reports
+        json_path = out_dir / "validation_report.json"
+        md_path = out_dir / "validation_report.md"
+
+        write_json_report(final_report, json_path)
+        write_markdown_report(final_report, md_path)
+
+        print(f"[ok] Validation report: {json_path.name}")
+        print(f"[ok] Validation report: {md_path.name}")
+
+        # Print console summary
+        print_console_summary(final_report)
+
+    except Exception as e:
+        print(f"[warn] Could not generate final validation report: {e}")
+
+    print(f"\n[info] ✓ BSP generation complete!")
+    print(f"[info] Output directory: {out_dir}")
 
 
 async def _generate_documentation(out_dir: Path):
