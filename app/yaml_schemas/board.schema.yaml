@@ -1,0 +1,191 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: board.schema.yaml
+title: Board Configuration Schema
+description: Comprehensive board-level hardware configuration (from schematic)
+
+type: object
+required:
+  - ir_schema_version
+  - board
+  - mcu
+
+properties:
+  ir_schema_version:
+    type: string
+    description: Schema version
+
+  board:
+    type: object
+    required:
+      - name
+      - revision
+    properties:
+      name:
+        type: string
+        description: Board name (e.g., "LAUNCHXL2-TMS57012-RM46")
+      revision:
+        type: string
+        description: Board hardware revision
+      manufacturer:
+        type: string
+        description: Board manufacturer
+      schematic:
+        type: object
+        properties:
+          source:
+            type: string
+            description: Schematic PDF filename
+          revision_date:
+            type: string
+            description: Schematic revision date
+
+  mcu:
+    type: object
+    required:
+      - part_number
+      - package
+    properties:
+      part_number:
+        type: string
+        description: MCU part number (e.g., "RM46L850")
+      package:
+        type: string
+        description: Package type (e.g., "PGE_144")
+      pin_count:
+        type: integer
+
+  power:
+    type: object
+    description: Power supply configuration
+    properties:
+      regulators:
+        type: array
+        items:
+          type: object
+      voltage_rails:
+        type: object
+      current_monitor:
+        type: object
+        description: Current sensing/monitoring circuit
+
+  clock:
+    type: object
+    description: Board clock configuration
+    properties:
+      crystal:
+        type: object
+      rtc:
+        type: object
+
+  leds:
+    type: array
+    description: LED connections
+    items:
+      type: object
+
+  buttons:
+    type: array
+    description: Button/switch connections
+    items:
+      type: object
+
+  sensors:
+    type: array
+    description: Onboard sensors
+    items:
+      type: object
+
+  debug:
+    type: object
+    description: Debug interface configuration
+    properties:
+      debugger:
+        type: object
+        description: Onboard debugger details
+      jtag:
+        type: object
+      usb:
+        type: object
+
+  communication:
+    type: object
+    description: Communication interface routing
+    properties:
+      can:
+        type: object
+        description: CAN bus interfaces
+      lin:
+        type: object
+        description: LIN bus interfaces
+      uart:
+        type: object
+        description: UART/SCI interfaces
+      spi:
+        type: object
+        description: SPI interfaces
+      i2c:
+        type: object
+        description: I2C interfaces
+      ethernet:
+        type: object
+        description: Ethernet interfaces
+
+  pwm_timers:
+    type: object
+    description: PWM and timer channel assignments
+    properties:
+      epwm:
+        type: object
+        description: Enhanced PWM channels
+      ecap:
+        type: object
+        description: Enhanced capture channels
+      eqep:
+        type: object
+        description: Enhanced quadrature encoder channels
+      n2het:
+        type: object
+        description: N2HET timer channels
+
+  adc:
+    type: object
+    description: ADC channel mappings
+    properties:
+      channels:
+        type: object
+
+  connectors:
+    type: array
+    description: Expansion connectors with pin mappings
+    items:
+      type: object
+      properties:
+        designator:
+          type: string
+        type:
+          type: string
+        pins:
+          type: integer
+        pinout:
+          type: array
+
+  gpio_mapping:
+    type: object
+    description: GPIO pin to board function mapping
+
+  hardware_limitations:
+    type: object
+    description: Known hardware limitations or missing components
+    properties:
+      missing_components:
+        type: array
+        items:
+          type: string
+      notes:
+        type: array
+        items:
+          type: string
+
+  x-ext:
+    type: object
+    description: Extended board information
