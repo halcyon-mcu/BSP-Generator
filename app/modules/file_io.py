@@ -58,7 +58,7 @@ def _safe_relpath(s: str) -> str:
     return p
 
 
-def split_and_write_files(raw_text: str, out_dir: Path) -> List[Path]:
+def split_and_write_files(raw_text: str, out_dir: Path) -> tuple[List[Path], str]:
     """
     Split a single LLM response into files and write them under out_dir.
 
@@ -75,8 +75,9 @@ def split_and_write_files(raw_text: str, out_dir: Path) -> List[Path]:
         - write all declared files under out_dir (respecting _safe_relpath)
 
     Returns:
-      A list of Path objects for all files written in this call.
-      You can accumulate these across multiple LLM calls to build manifests, etc.
+      A tuple of (written_files, preamble_text) where:
+        - written_files: List of Path objects for all files written
+        - preamble_text: Text before first FILE separator (may contain FACTS MIRROR)
     """
     out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -91,11 +92,12 @@ def split_and_write_files(raw_text: str, out_dir: Path) -> List[Path]:
     matches = list(FILE_SPLIT_RE.finditer(raw_text))
     if not matches:
         print("[warn] No file separators found. Check _artifacts/ for raw output.")
-        return []
+        return ([], "")
 
     written: List[Path] = []
 
     # Save any preamble before the first separator
+    preamble = ""
     first = matches[0]
     if first.start() > 0:
         preamble = raw_text[: first.start()].strip()
@@ -131,7 +133,7 @@ def split_and_write_files(raw_text: str, out_dir: Path) -> List[Path]:
         except ValueError:
             print("[ok] Wrote", os.path.relpath(str(target), str(out_dir)))
 
-    return written
+    return (written, preamble)
 
 from pathlib import Path
 
