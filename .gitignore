@@ -63,3 +63,8 @@ app/VALIDATION_REPORT.md
 # Backup directories (keep only essential)
 app/yaml_in/backup_*/
 app/yaml_in_transformed_backup/
+
+# Windows artifacts and intermediate directories
+nul
+app/md_files/
+yaml_out/
