@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 
-from .facts_parser import (
+from ..utils.facts_parser import (
     FactsMirror,
     ExtractedConstants,
     parse_facts_mirror,
@@ -25,7 +25,7 @@ from .facts_parser import (
     compare_values,
     extract_preamble_from_response
 )
-from .yaml_utils import get_regs_block, find_soc_peripheral, get_soc_peripherals
+from ..yaml.yaml_utils import get_regs_block, find_soc_peripheral, get_soc_peripherals
 
 logger = logging.getLogger(__name__)
 

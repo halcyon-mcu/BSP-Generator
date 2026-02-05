@@ -4,8 +4,8 @@ Test the register scanner on Architecture PDF to find SYS2 and other registers.
 """
 
 from pathlib import Path
-from modules.pdf_text_extractor import extract_text_from_pdf
-from modules.register_scanner import scan_for_registers, format_scan_summary
+from ..extraction.pdf_text_extractor import extract_text_from_pdf
+from ..registers.register_scanner import scan_for_registers, format_scan_summary
 
 # Path to Architecture PDF
 pdf_path = Path("modules/pdfs/TRM_split/2_Architecture.pdf")

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from modules.yaml_formatter import format_regs_yaml_manual
+from .yaml_formatter import format_regs_yaml_manual
 
 
 def convert_file(input_path: Path, output_path: Path = None, verbose: bool = True):

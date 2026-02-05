@@ -20,13 +20,13 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import yaml
 
-from modules.pdf_text_extractor import (
+from .pdf_text_extractor import (
     extract_text_from_pdf,
     extract_peripheral_name_from_filename,
     should_skip_pdf
 )
-from modules.prompt import Model
-from pdf_to_yaml_extractor import invoke_model
+from ..generation.prompt import Model
+from .pdf_to_yaml_extractor import invoke_model
 
 
 # ============================================================================

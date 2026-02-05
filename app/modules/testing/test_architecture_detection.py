@@ -4,7 +4,7 @@ Quick test to check Architecture PDF system register detection.
 """
 
 from pathlib import Path
-from modules.pdf_text_extractor import extract_text_from_pdf, should_skip_pdf
+from ..extraction.pdf_text_extractor import extract_text_from_pdf, should_skip_pdf
 
 # Path to Architecture PDF
 pdf_path = Path("modules/pdfs/TRM_split/2_Architecture.pdf")

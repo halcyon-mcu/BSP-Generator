@@ -22,17 +22,15 @@ import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 import yaml
-from modules.pdf_text_extractor import (
+from .pdf_text_extractor import (
     extract_text_from_pdf,
     extract_peripheral_name_from_filename,
     should_skip_pdf
 )
-from modules.prompt import Model
+from ..generation.prompt import Model
 
 # Will need to import invoke_model
-import sys
-sys.path.append(str(Path(__file__).parent))
-from pdf_to_yaml_extractor import invoke_model
+from .pdf_to_yaml_extractor import invoke_model
 
 
 # ============================================================================

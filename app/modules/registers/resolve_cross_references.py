@@ -18,10 +18,10 @@ from typing import Dict, List, Optional, Tuple
 import yaml as pyyaml
 import re
 
-from modules.pdf_text_extractor import extract_text_from_pdf
-from modules.prompt import Model
-from pdf_to_yaml_extractor import invoke_model
-from extract_to_yaml import CostTracker, BudgetExceededError
+from ..extraction.pdf_text_extractor import extract_text_from_pdf
+from ..generation.prompt import Model
+from ..extraction.pdf_to_yaml_extractor import invoke_model
+from ..extraction.extract_to_yaml import CostTracker, BudgetExceededError
 
 
 # ============================================================================

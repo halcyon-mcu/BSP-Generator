@@ -12,19 +12,19 @@ from pathlib import Path
 
 import yaml
 
-from modules.register_extraction_prompt import (
+from ..registers.register_extraction_prompt import (
     build_register_extraction_system_prompt,
     build_register_extraction_user_prompt,
 )
-from modules.pdf_text_extractor import (
+from .pdf_text_extractor import (
     extract_text_from_pdf,
     extract_peripheral_name_from_filename,
 )
-from modules.yaml_validator import (
+from ..yaml.yaml_validator import (
     validate_yaml_against_schema,
 )
-from modules.yaml_formatter import format_regs_yaml_manual
-from pdf_to_yaml_extractor import invoke_model, extract_yaml_from_response, Model
+from ..yaml.yaml_formatter import format_regs_yaml_manual
+from .pdf_to_yaml_extractor import invoke_model, extract_yaml_from_response, Model
 
 
 async def extract_single_pdf(

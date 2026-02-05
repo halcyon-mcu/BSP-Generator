@@ -20,8 +20,8 @@ from pathlib import Path
 from typing import Dict, List
 import yaml as pyyaml
 
-from extract_to_yaml import extract_all_peripherals
-from modules.prompt import Model
+from ..extraction.extract_to_yaml import extract_all_peripherals
+from ..generation.prompt import Model
 
 
 class TestResult:

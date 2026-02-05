@@ -10,8 +10,8 @@ import asyncio
 from pathlib import Path
 import yaml
 
-from modules.pdf_text_extractor import extract_text_from_pdf
-from pdf_to_yaml_extractor import invoke_model, extract_yaml_from_response, Model
+from ..extraction.pdf_text_extractor import extract_text_from_pdf
+from ..extraction.pdf_to_yaml_extractor import invoke_model, extract_yaml_from_response, Model
 
 
 async def extract_vim_wake_registers():

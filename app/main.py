@@ -6,9 +6,9 @@ from pathlib import Path
 
 from config import YAMLS_DIR, TARGET_FILES, FACTS_CANON, PATTERN_SNIPS
 
-from modules.file_io import split_and_write_files, write_makefile, write_manifest, write_doxyfile, run_doxygen
-from modules.utils import _read, extract_text_from_bedrock_response, _now_tag
-from modules.prompt import (
+from modules.utils.file_io import split_and_write_files, write_makefile, write_manifest, write_doxyfile, run_doxygen
+from modules.utils.utils import _read, extract_text_from_bedrock_response, _now_tag
+from modules.generation.prompt import (
     build_clock_prompt,
     invoke_model,
     Model,
@@ -21,9 +21,9 @@ from modules.prompt import (
     build_vim_prompt,             # VIM driver
     _progress,                    # global progress tracker
 )
-from modules.user import prompt_user_for_peripherals
+from modules.utils.user import prompt_user_for_peripherals
 
-from modules.yaml_utils import (
+from modules.yaml.yaml_utils import (
     dump_yaml_str,
     load_bus_yaml,
     load_soc_yaml,
@@ -100,7 +100,7 @@ async def _invoke_and_write(
 
     # Validate if YAML data provided
     if soc_data is not None and regs_data is not None and written_files:
-        from modules.validation_engine import validate_generation_output
+        from modules.validation.validation_engine import validate_generation_output
         try:
             validation_result = validate_generation_output(
                 tag=tag,
@@ -342,8 +342,8 @@ async def main():
     }[args.model]
 
     # --- PASS 1: Architecture Discovery ---
-    from modules.discovery import run_discovery_pass
-    from modules.implementation import run_implementation_pass
+    from modules.generation.discovery import run_discovery_pass
+    from modules.generation.implementation import run_implementation_pass
     import sys
 
     print("\n[info] Starting Pass 1: Architecture Discovery...")
@@ -389,7 +389,7 @@ async def main():
     print("\n[info] Building dependency graph and generating initialization sequence...")
 
     try:
-        from modules.dependency_resolver import (
+        from modules.utils.dependency_resolver import (
             build_dependency_graph,
             generate_init_order,
             generate_main_c
@@ -571,7 +571,7 @@ async def main():
     print("\n[info] Generating final validation report...")
 
     try:
-        from modules.validation_report import (
+        from modules.validation.validation_report import (
             create_validation_report,
             write_json_report,
             write_markdown_report,
@@ -581,7 +581,7 @@ async def main():
         # Create comprehensive report
         # Note: validation_results would need to be collected throughout execution
         # For now, we create a minimal report showing dependency graph status
-        from modules.validation_report import ValidationReport, ValidationSummary
+        from modules.validation.validation_report import ValidationReport, ValidationSummary
 
         final_report = ValidationReport(
             timestamp=_now_tag(),

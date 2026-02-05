@@ -16,10 +16,10 @@ import datetime
 from pathlib import Path
 import argparse
 
-from extract_to_yaml import extract_all_peripherals
-from resolve_cross_references import resolve_all_cross_references
-from consolidate_yamls import YAMLConsolidator
-from modules.prompt import Model
+from .extract_to_yaml import extract_all_peripherals
+from ..registers.resolve_cross_references import resolve_all_cross_references
+from ..yaml.consolidate import YAMLConsolidator
+from ..generation.prompt import Model
 
 
 async def run_complete_extraction(

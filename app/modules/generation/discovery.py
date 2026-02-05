@@ -5,15 +5,15 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 from datetime import datetime
 
-from modules.prompt import (
-    build_manifest_prompt, 
-    build_reg_header_prompt, 
-    invoke_model, 
-    Model, 
+from .prompt import (
+    build_manifest_prompt,
+    build_reg_header_prompt,
+    invoke_model,
+    Model,
     Message
 )
-from modules.utils import extract_text_from_bedrock_response
-from modules.yaml_utils import dump_yaml_str, get_soc_peripherals
+from ..utils.utils import extract_text_from_bedrock_response
+from ..yaml.yaml_utils import dump_yaml_str, get_soc_peripherals
 
 logger = logging.getLogger(__name__)
 

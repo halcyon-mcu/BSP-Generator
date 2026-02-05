@@ -8,8 +8,8 @@ import asyncio
 from pathlib import Path
 import yaml as pyyaml
 
-from extract_to_yaml import extract_all_peripherals
-from modules.prompt import Model
+from ..extraction.extract_to_yaml import extract_all_peripherals
+from ..generation.prompt import Model
 
 
 async def quick_test():

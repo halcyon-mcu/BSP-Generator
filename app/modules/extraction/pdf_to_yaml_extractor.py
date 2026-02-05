@@ -24,31 +24,31 @@ import yaml
 from botocore.config import Config
 
 # Import our custom modules
-from modules.register_extraction_prompt import (
+from ..registers.register_extraction_prompt import (
     build_register_extraction_system_prompt,
     build_register_extraction_user_prompt,
 )
-from modules.pdf_text_extractor import (
+from .pdf_text_extractor import (
     extract_text_from_pdf,
     extract_peripheral_name_from_filename,
     should_skip_pdf,
     validate_pdf_for_register_extraction,
 )
-from modules.yaml_validator import (
+from ..yaml.yaml_validator import (
     load_schema,
     validate_yaml_against_schema,
 )
-from modules.yaml_formatter import format_regs_yaml_manual
-from modules.register_scanner import (
+from ..yaml.yaml_formatter import format_regs_yaml_manual
+from ..registers.register_scanner import (
     scan_for_registers,
     format_scan_summary,
     validate_extraction,
 )
-from modules.register_discovery import (
+from ..registers.register_discovery import (
     discover_registers,
     format_discovery_summary,
 )
-from modules.prompt import Model  # Reuse existing Model enum
+from ..generation.prompt import Model  # Reuse existing Model enum
 
 
 # Configure boto3 client

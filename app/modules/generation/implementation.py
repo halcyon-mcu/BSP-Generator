@@ -4,10 +4,10 @@ import json
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
-from modules.prompt import build_pass2_driver_h_prompt, build_pass2_driver_c_prompt, invoke_model, Model
+from .prompt import build_pass2_driver_h_prompt, build_pass2_driver_c_prompt, invoke_model, Model
 
-from modules.utils import extract_text_from_bedrock_response
-from modules.yaml_utils import dump_yaml_str, find_soc_peripheral
+from ..utils.utils import extract_text_from_bedrock_response
+from ..yaml.yaml_utils import dump_yaml_str, find_soc_peripheral
 
 logger = logging.getLogger(__name__)
 
