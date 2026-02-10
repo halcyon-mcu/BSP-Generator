@@ -123,6 +123,141 @@ async def _invoke_and_write(
     return written_files
 
 
+async def _invoke_and_write_with_retry(
+    tag: str,
+    system_prompt: str,
+    user_prompt: str,
+    model_enum: Model,
+    initial_max_tokens: int,
+    artifacts_dir: Path,
+    out_dir: Path,
+    soc_data: dict = None,
+    regs_data: dict = None,
+    retry_policy=None
+) -> tuple[list[Path], bool]:
+    """
+    Invoke model with automatic retry on failure.
+
+    Returns:
+        Tuple of (written_files: List[Path], success: bool)
+    """
+    from modules.regeneration.retry_policy import RetryPolicy, FailureReason
+    from modules.regeneration.truncation_detector import detect_truncation
+
+    if retry_policy is None:
+        retry_policy = RetryPolicy()
+
+    max_tokens = initial_max_tokens
+
+    for attempt in range(retry_policy.max_retries + 1):
+        if attempt > 0:
+            print(f"[retry] Attempt {attempt + 1}/{retry_policy.max_retries + 1} for {tag} (tokens: {max_tokens})")
+
+        # Invoke model
+        messages = [{
+            "role": "user",
+            "content": f"[SYSTEM]\n{system_prompt}\n\n[USER]\n{user_prompt}"
+        }]
+
+        resp = await invoke_model(model_enum, max_tokens, messages)
+        text = extract_text_from_bedrock_response(resp)
+
+        if not text.strip():
+            # Transient error - retry immediately
+            should_retry, max_tokens = retry_policy.should_retry(
+                attempt + 1, FailureReason.TRANSIENT_ERROR, max_tokens
+            )
+            if should_retry:
+                continue
+            else:
+                return ([], False)
+
+        # Save output
+        ts = _now_tag()
+        attempt_tag = f"{tag}_attempt{attempt}" if attempt > 0 else tag
+        (artifacts_dir / f"{attempt_tag}_llm_text_{ts}.txt").write_text(text, encoding="utf-8")
+
+        # Write files
+        written_files, preamble = split_and_write_files(text, out_dir)
+
+        # Check for truncation
+        truncation_reason = detect_truncation(text, written_files)
+        if truncation_reason:
+            print(f"[warn] Truncation detected: {truncation_reason}")
+            should_retry, max_tokens = retry_policy.should_retry(
+                attempt + 1, FailureReason.TOKEN_TRUNCATION, max_tokens
+            )
+            if should_retry:
+                # Delete truncated files before retry
+                for f in written_files:
+                    f.unlink(missing_ok=True)
+                continue
+            else:
+                return (written_files, False)
+
+        # Validate if YAML data provided
+        if soc_data is not None and regs_data is not None and written_files:
+            from modules.validation.validation_engine import validate_generation_output
+
+            try:
+                validation_result = validate_generation_output(
+                    tag=tag,
+                    preamble=preamble,
+                    written_files=written_files,
+                    soc_data=soc_data,
+                    regs_data=regs_data
+                )
+
+                # Check for FACTS MIRROR TODOs
+                if hasattr(validation_result, 'has_todos') and validation_result.has_todos:
+                    print(f"[warn] FACTS MIRROR contains TODOs")
+                    should_retry, max_tokens = retry_policy.should_retry(
+                        attempt + 1, FailureReason.FACTS_MIRROR_TODO, max_tokens
+                    )
+                    if should_retry:
+                        user_prompt += "\n\nIMPORTANT: Previous attempt had TODOs in FACTS MIRROR. Ensure all constants are extracted from YAML."
+                        for f in written_files:
+                            f.unlink(missing_ok=True)
+                        continue
+                    else:
+                        return (written_files, False)
+
+                # Check for validation errors
+                if not validation_result.is_valid:
+                    print(f"[warn] Validation failed: {len(validation_result.errors)} errors")
+                    should_retry, max_tokens = retry_policy.should_retry(
+                        attempt + 1, FailureReason.VALIDATION_ERROR, max_tokens
+                    )
+                    if should_retry:
+                        error_summary = "\n".join(validation_result.errors[:5])
+                        user_prompt += f"\n\nIMPORTANT: Previous attempt had validation errors:\n{error_summary}\nPlease fix these issues."
+                        for f in written_files:
+                            f.unlink(missing_ok=True)
+                        continue
+                    else:
+                        return (written_files, False)
+
+                # Validation passed - show summary
+                if validation_result.warnings:
+                    print(f"[info] Validation passed with {len(validation_result.warnings)} warnings")
+
+            except Exception as e:
+                print(f"[warn] Validation error for {tag}: {e}")
+
+        # SUCCESS
+        for file in written_files:
+            try:
+                relative_path = file.relative_to(out_dir)
+            except ValueError:
+                relative_path = file
+            print(f"[ok] {tag}: {relative_path}")
+
+        return (written_files, True)
+
+    # Max retries exceeded
+    return ([], False)
+
+
 async def _generate_startup(
     system_prompt: str,
     model_enum: Model,
@@ -341,49 +476,65 @@ async def main():
         "sonnet4.5": Model.SONNET_4_5,
     }[args.model]
 
-    # --- PASS 1: Architecture Discovery ---
+    # Load adaptive token allocator
+    from modules.regeneration.token_strategy import AdaptiveTokenAllocator
+    token_allocator = AdaptiveTokenAllocator()
+    token_history_path = out_dir.parent / ".token_history.json"
+    token_allocator.load_history(token_history_path)
+    print(f"[info] Loaded token history from {token_history_path.name}")
+
+    # --- SELECT PERIPHERALS FIRST ---
     from modules.generation.discovery import run_discovery_pass
     from modules.generation.implementation import run_implementation_pass
     import sys
 
-    print("\n[info] Starting Pass 1: Architecture Discovery...")
-    bsp_manifest = await run_discovery_pass(
-        soc_data,
-        regs_data,
-        model_enum,
-        out_dir,
-        max_tokens=args.max_tokens
-    )
-    print("\n[info] Pass 1 Complete.")
-
-    # --- PASS 2: Implementation ---
-    
-    # Select peripherals for implementation
-    pass2_allowed_modules = []
+    selected_modules = []
     if generate_peripherals:
-        print("\n[user] Select Peripherals for Driver Implementation:")
+        print("\n[user] Select Peripherals for BSP Generation:")
         chosen_peripherals = prompt_user_for_peripherals(soc_data)
         if chosen_peripherals:
-            pass2_allowed_modules = [p.get("name") for p in chosen_peripherals]
+            selected_modules = [p.get("name") for p in chosen_peripherals]
+            print(f"[info] Selected {len(selected_modules)} peripherals")
         else:
-            print("[info] No peripherals selected.")
+            print("[info] No peripherals selected. Skipping peripheral generation.")
     else:
         print("[info] Skipping peripheral driver selection due to --targets flag.")
 
-    if pass2_allowed_modules:
-        print(f"\n[info] Starting Pass 2: Implementation for {len(pass2_allowed_modules)} modules...")
-        await run_implementation_pass(
-            bsp_manifest,
+    # --- PASS 1: Architecture Discovery ---
+    bsp_manifest = None
+    if selected_modules or not generate_peripherals:
+        print("\n[info] Starting Pass 1: Architecture Discovery...")
+        bsp_manifest = await run_discovery_pass(
             soc_data,
-            bus_data,
+            regs_data,
             model_enum,
             out_dir,
             max_tokens=args.max_tokens,
-            allowed_modules=pass2_allowed_modules
+            token_allocator=token_allocator,
+            enable_validation=True,
+            allowed_modules=selected_modules if selected_modules else None
         )
-        print("\n[info] Pass 2 Complete.")
+        print("\n[info] Pass 1 Complete.")
+
+        # --- PASS 2: Implementation ---
+        if selected_modules:
+            print(f"\n[info] Starting Pass 2: Implementation for {len(selected_modules)} modules...")
+            await run_implementation_pass(
+                bsp_manifest,
+                soc_data,
+                bus_data,
+                model_enum,
+                out_dir,
+                max_tokens=args.max_tokens,
+                allowed_modules=selected_modules,
+                regs_data=regs_data,
+                enable_validation=True
+            )
+            print("\n[info] Pass 2 Complete.")
+        else:
+            print("\n[info] Skipping Pass 2 (No modules selected).")
     else:
-        print("\n[info] Skipping Pass 2 (No modules selected).")
+        print("\n[info] Skipping Pass 1 and Pass 2 (No modules selected).")
 
     # --- DEPENDENCY RESOLUTION & INIT ORDERING ---
     print("\n[info] Building dependency graph and generating initialization sequence...")
@@ -399,7 +550,7 @@ async def main():
         dep_graph = build_dependency_graph(
             bsp_manifest,
             soc_data,
-            selected_modules=pass2_allowed_modules
+            selected_modules=selected_modules
         )
 
         # Generate initialization order
@@ -612,6 +763,10 @@ async def main():
 
     except Exception as e:
         print(f"[warn] Could not generate final validation report: {e}")
+
+    # Save token history for future runs
+    token_allocator.save_history(token_history_path)
+    print(f"[info] Saved token history to {token_history_path.name}")
 
     print(f"\n[info] ✓ BSP generation complete!")
     print(f"[info] Output directory: {out_dir}")

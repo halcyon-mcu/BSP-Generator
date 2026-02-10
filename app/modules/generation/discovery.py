@@ -22,13 +22,21 @@ async def run_discovery_pass(
     regs_data: Dict[str, Any],
     model: Model,
     output_dir: Path,
-    max_tokens: int = 20000
+    max_tokens: int = 20000,
+    token_allocator=None,
+    enable_validation: bool = True,
+    allowed_modules: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """
     Pass 1: Architecture Discovery & Registry Build.
     Splits the work into two parallel calls per module:
       1A. Manifest Generation (JSON)
       1B. Header Generation (C Code)
+
+    Args:
+        token_allocator: Optional AdaptiveTokenAllocator for learning optimal token counts
+        enable_validation: Whether to run validation on generated files
+        allowed_modules: If provided, only process modules with names in this list
     """
     
     # 1. Setup Output
@@ -43,61 +51,170 @@ async def run_discovery_pass(
     # 2. Prepare Async Tasks
     tasks = []
     peripherals = get_soc_peripherals(soc_data)
-    
+
+    # Filter peripherals if allowed_modules specified
+    if allowed_modules is not None:
+        # Normalize to upper case for comparison
+        allowed_set = set(m.upper() for m in allowed_modules)
+        peripherals = [p for p in peripherals if p.get("name", "").upper() in allowed_set]
+        logger.info(f"Filtered to {len(peripherals)} modules based on user selection.")
+
     logger.info(f"Starting Pass 1 (Discovery) for {len(peripherals)} modules...")
 
     async def _process_module_manifest(name: str, soc_slice: str) -> Optional[Dict[str, Any]]:
-        """Fetch JSON Manifest"""
-        try:
-            prompt = build_manifest_prompt(name, soc_slice)
-            resp = await invoke_model(model, 4096, [{"role": "user", "content": prompt}])
-            text = extract_text_from_bedrock_response(resp)
-            # Remove MD blocks logic
-            clean_text = text.replace("```json", "").replace("```", "").strip()
-            # Parse JSON
-            start = clean_text.find("{")
-            end = clean_text.rfind("}")
-            if start != -1 and end != -1:
-                return json.loads(clean_text[start:end+1])
-            return None
-        except Exception as e:
-            logger.error(f"Manifest Error {name}: {e}")
-            return None
+        """Fetch JSON Manifest with retry logic"""
+        from ..regeneration.retry_policy import RetryPolicy, FailureReason
+        from ..regeneration.truncation_detector import detect_simple_truncation
 
-    async def _process_module_header(name: str, soc_slice: str, regs_slice: str) -> Optional[str]:
-        """Fetch C Header Content"""
-        try:
-            prompt = build_reg_header_prompt(name, soc_slice, regs_slice)
-            # Use passed max_tokens for headers as they can be large
-            resp = await invoke_model(model, max_tokens, [{"role": "user", "content": prompt}])
-            text = extract_text_from_bedrock_response(resp)
-            
-            # Robust logic for C extraction
-            # 1. Try finding markdown block
-            start_block = text.find("```c")
-            if start_block != -1:
-                code_text = text[start_block+4:]
-                end_block = code_text.find("```")
-                if end_block != -1:
-                    return code_text[:end_block].strip()
-            
-            # 2. Try generic markdown
-            start_block = text.find("```")
-            if start_block != -1:
-                code_text = text[start_block+3:]
-                end_block = code_text.find("```")
-                if end_block != -1:
-                     return code_text[:end_block].strip()
-            
-            # 3. Fallback: If it looks like a header, return full text
-            if "#ifndef" in text or "typedef" in text:
-                return text.replace("```c", "").replace("```", "").strip()
-                
-            return "// [WARN] Could not parse C code from AI response.\n/*\n" + text + "\n*/"
-            
-        except Exception as e:
-            logger.error(f"Header Error {name}: {e}")
-            return f"// Error generating header for {name}: {e}"
+        retry_policy = RetryPolicy(max_retries=2)  # Manifests are small, fewer retries
+        current_tokens = 4096
+
+        for attempt in range(retry_policy.max_retries + 1):
+            if attempt > 0:
+                print(f"  [retry] Pass1 manifest {name} - Attempt {attempt + 1}")
+
+            try:
+                prompt = build_manifest_prompt(name, soc_slice)
+                resp = await invoke_model(model, current_tokens, [{"role": "user", "content": prompt}])
+                text = extract_text_from_bedrock_response(resp)
+
+                # Check for truncation
+                truncation_reason = detect_simple_truncation(text)
+                if truncation_reason:
+                    should_retry, current_tokens = retry_policy.should_retry(
+                        attempt + 1,
+                        FailureReason.TOKEN_TRUNCATION,
+                        current_tokens
+                    )
+                    if should_retry:
+                        continue
+
+                # Parse JSON
+                clean_text = text.replace("```json", "").replace("```", "").strip()
+                start = clean_text.find("{")
+                end = clean_text.rfind("}")
+                if start != -1 and end != -1:
+                    return json.loads(clean_text[start:end+1])
+
+                # JSON not found - might be truncation
+                logger.warning(f"Could not find JSON in manifest response for {name}")
+                return None
+
+            except json.JSONDecodeError as e:
+                logger.error(f"Manifest JSON Error {name}: {e}")
+                # Retry on JSON parse errors
+                should_retry, current_tokens = retry_policy.should_retry(
+                    attempt + 1,
+                    FailureReason.VALIDATION_ERROR,
+                    current_tokens
+                )
+                if should_retry:
+                    continue
+                return None
+
+            except Exception as e:
+                logger.error(f"Manifest Error {name}: {e}")
+                should_retry, current_tokens = retry_policy.should_retry(
+                    attempt + 1,
+                    FailureReason.TRANSIENT_ERROR,
+                    current_tokens
+                )
+                if should_retry:
+                    continue
+                return None
+
+        return None  # Max retries exceeded
+
+    async def _process_module_header(name: str, soc_slice: str, regs_slice: str) -> Optional[tuple]:
+        """Fetch C Header Content with retry logic. Returns (extracted_code, raw_response)"""
+        from ..regeneration.retry_policy import RetryPolicy, FailureReason
+        from ..regeneration.truncation_detector import detect_simple_truncation
+
+        # Get adaptive token allocation
+        initial_tokens = max_tokens
+        if token_allocator:
+            initial_tokens = token_allocator.get_initial_tokens(f"pass1_{name}_header", default=max_tokens)
+
+        retry_policy = RetryPolicy()
+        current_tokens = initial_tokens
+
+        for attempt in range(retry_policy.max_retries + 1):
+            if attempt > 0:
+                print(f"  [retry] Pass1 header {name} - Attempt {attempt + 1} (tokens: {current_tokens})")
+
+            try:
+                prompt = build_reg_header_prompt(name, soc_slice, regs_slice)
+                resp = await invoke_model(model, current_tokens, [{"role": "user", "content": prompt}])
+                text = extract_text_from_bedrock_response(resp)
+
+                # Check for truncation before parsing
+                truncation_reason = detect_simple_truncation(text)
+                if truncation_reason:
+                    print(f"  [warn] Truncation in {name} header: {truncation_reason}")
+                    should_retry, current_tokens = retry_policy.should_retry(
+                        attempt + 1,
+                        FailureReason.TOKEN_TRUNCATION,
+                        current_tokens
+                    )
+                    if should_retry:
+                        continue
+                    else:
+                        # Return what we have even if truncated
+                        logger.warning(f"Max retries exceeded for {name} header")
+
+                # Extract C code
+                # 1. Try finding markdown block
+                start_block = text.find("```c")
+                if start_block != -1:
+                    code_text = text[start_block+4:]
+                    end_block = code_text.find("```")
+                    if end_block != -1:
+                        extracted = code_text[:end_block].strip()
+                        # Record success
+                        if token_allocator:
+                            token_allocator.record_success(f"pass1_{name}_header", current_tokens)
+                        return (extracted, text)
+
+                # 2. Try generic markdown
+                start_block = text.find("```")
+                if start_block != -1:
+                    code_text = text[start_block+3:]
+                    end_block = code_text.find("```")
+                    if end_block != -1:
+                        extracted = code_text[:end_block].strip()
+                        if token_allocator:
+                            token_allocator.record_success(f"pass1_{name}_header", current_tokens)
+                        return (extracted, text)
+
+                # 3. Fallback: If it looks like a header, return full text
+                if "#ifndef" in text or "typedef" in text:
+                    extracted = text.replace("```c", "").replace("```", "").strip()
+                    if token_allocator:
+                        token_allocator.record_success(f"pass1_{name}_header", current_tokens)
+                    return (extracted, text)
+
+                # Could not parse
+                logger.warning(f"Could not parse C code from response for {name}")
+                error_code = "// [WARN] Could not parse C code from AI response.\n/*\n" + text + "\n*/"
+                return (error_code, text)
+
+            except Exception as e:
+                logger.error(f"Header Error {name}: {e}")
+                # Check if we should retry on error
+                should_retry, current_tokens = retry_policy.should_retry(
+                    attempt + 1,
+                    FailureReason.TRANSIENT_ERROR,
+                    current_tokens
+                )
+                if should_retry:
+                    continue
+                else:
+                    error_msg = f"// Error generating header for {name}: {e}"
+                    return (error_msg, error_msg)
+
+        # Max retries exceeded
+        error_msg = f"// Max retries exceeded for {name}"
+        return (error_msg, error_msg)
 
     async def _process_module_full(periph: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         name = periph.get("name", "UNKNOWN")
@@ -108,31 +225,69 @@ async def run_discovery_pass(
         
         # --- FIX: More Robust Lookup Logic ---
         regs_slice = ""
-        
+
         # Access the 'peripherals' dictionary (ignoring top-level wrappers if any)
         # Note: load_regs_yaml() returns the whole file content.
         # Based on user context, regs.yaml structure is likely:
         # peripherals:
         #   sci: ...
         #   gio: ...
-        
+
         all_peripherals = regs_data.get("peripherals", {})
-        
+
+        # Helper: strip trailing numbers (e.g., "MIBSPI1" -> "MIBSPI", "N2HET1" -> "N2HET")
+        import re
+        def strip_trailing_number(s):
+            return re.sub(r'\d+$', '', s) if s else s
+
+        # Name mapping for peripherals with different names in soc.yaml vs regs.yaml
+        name_mapping = {
+            'MIBSPI': 'SPI',
+            'N2HET': 'TIMER',
+            'MIBADC': 'ADC',
+            'FLASH_MODULE': 'FMC',
+            'USB_DEVICE': 'USB',
+            'USB_OHCI': 'USB',
+            'MDIO': 'EMACMDIO',
+            'EMAC': 'EMACMDIO',
+        }
+
         # 1. Try exact match on 'type' (e.g. type='sci' -> regs['sci'])
         # Handle case-sensitivity by trying both raw and lower
         if p_type and p_type in all_peripherals:
             regs_slice = dump_yaml_str({p_type: all_peripherals[p_type]})
         elif p_type and p_type.lower() in all_peripherals:
             regs_slice = dump_yaml_str({p_type.lower(): all_peripherals[p_type.lower()]})
-            
+
         # 2. If 'type' lookup failed, try looking up by 'name' (e.g. name='SYSTEM' -> regs['system'])
         elif name in all_peripherals:
              regs_slice = dump_yaml_str({name: all_peripherals[name]})
         elif name.lower() in all_peripherals:
              regs_slice = dump_yaml_str({name.lower(): all_peripherals[name.lower()]})
-             
-        # --- SPECIAL CASE: SYSTEM Aggregation ---
-        # If this is the "SYSTEM" module, we want to include "system2" definitions as well 
+
+        # 3. Try stripped versions (remove trailing numbers)
+        # e.g., "MIBSPI1" -> try "MIBSPI", "mibspi"
+        if not regs_slice and name:
+            name_stripped = strip_trailing_number(name)
+            if name_stripped != name:  # Only if we actually stripped something
+                if name_stripped in all_peripherals:
+                    regs_slice = dump_yaml_str({name_stripped: all_peripherals[name_stripped]})
+                elif name_stripped.lower() in all_peripherals:
+                    regs_slice = dump_yaml_str({name_stripped.lower(): all_peripherals[name_stripped.lower()]})
+
+        # 4. Try name mapping (e.g., "MIBSPI" -> "SPI", "N2HET" -> "TIMER")
+        if not regs_slice and name:
+            name_stripped = strip_trailing_number(name)
+            mapped_name = name_mapping.get(name_stripped.upper())
+            if mapped_name:
+                if mapped_name in all_peripherals:
+                    regs_slice = dump_yaml_str({mapped_name: all_peripherals[mapped_name]})
+                elif mapped_name.lower() in all_peripherals:
+                    regs_slice = dump_yaml_str({mapped_name.lower(): all_peripherals[mapped_name.lower()]})
+
+
+        # 5. SPECIAL CASE: SYSTEM Aggregation
+        # If this is the "SYSTEM" module, we want to include "system2" definitions as well
         # so they appear in the same reg_system.h file.
         if name.upper() == "SYSTEM":
             extra_slice = ""
@@ -142,21 +297,29 @@ async def run_discovery_pass(
                 regs_slice = regs_slice + "\n" + extra_slice
                 logger.info("Merged 'system2' registers into SYSTEM discovery context.")
 
-        # 3. Last Resort: Try 'generic_type' if user used a different schema
-        # (This block strictly logs a warning if we still have no registers)
+        # 6. Warn if no registers found
+        # (This is expected for some peripherals that may not have register definitions yet)
         if not regs_slice:
             logger.warning(f"Discovery: No register definition found for module '{name}' (type='{p_type}'). Header will likely be empty.")
 
         # Run both tasks in parallel
         man_task = asyncio.create_task(_process_module_manifest(name, soc_slice))
         head_task = asyncio.create_task(_process_module_header(name, soc_slice, regs_slice))
-        
-        man_res, head_res = await asyncio.gather(man_task, head_task)
-        
+
+        man_res, head_res_tuple = await asyncio.gather(man_task, head_task)
+
+        # Unpack header result (extracted_code, raw_response)
+        if head_res_tuple:
+            head_content, head_raw = head_res_tuple
+        else:
+            head_content, head_raw = None, None
+
         if man_res:
             return {
                 "manifest": man_res,
-                "reg_header_content": head_res
+                "reg_header_content": head_content,
+                "reg_header_raw": head_raw,  # Store raw response for validation
+                "module_name": name
             }
         return None
 
@@ -176,32 +339,62 @@ async def run_discovery_pass(
     
     # 5. Process Results
     success_count = 0
+    validation_results = []
+
     for res in results:
         if not res:
             continue
-            
+
         # Extract Manifest
         mod_manifest = res.get("manifest", {})
-        mod_name = mod_manifest.get("module_name")
-        
+        mod_name = mod_manifest.get("module_name") or res.get("module_name")
+
         if mod_name:
-            manifest["api_catalog"][mod_name] = mod_manifest
+            if mod_manifest:
+                manifest["api_catalog"][mod_name] = mod_manifest
             success_count += 1
-            
+
             # Write Register Header
             header_content = res.get("reg_header_content")
-            header_name = mod_manifest.get("reg_header_file", f"reg_{mod_name.lower()}.h")
-            
+            header_name = mod_manifest.get("reg_header_file", f"reg_{mod_name.lower()}.h") if mod_manifest else f"reg_{mod_name.lower()}.h"
+
             if header_content:
                 header_path = include_dir / header_name
                 header_path.write_text(header_content, encoding="utf-8")
                 # logger.info(f"Generated {header_name}")
 
+                # Run validation if enabled
+                if enable_validation and soc_data and regs_data:
+                    from ..validation.validation_engine import validate_generation_output
+
+                    try:
+                        header_raw = res.get("reg_header_raw", "")
+                        validation_result = validate_generation_output(
+                            tag=f"pass1_{mod_name.lower()}",
+                            preamble=header_raw,
+                            written_files=[header_path],
+                            soc_data=soc_data,
+                            regs_data=regs_data
+                        )
+                        validation_results.append((mod_name, validation_result))
+
+                        # Log validation summary
+                        if not validation_result.is_valid:
+                            logger.warning(f"Pass 1 validation failed for {mod_name}")
+                            for error in validation_result.errors[:3]:  # Show first 3 errors
+                                logger.warning(f"  - {error}")
+                    except Exception as e:
+                        logger.error(f"Validation error for {mod_name}: {e}")
+
     # 6. Write Source of Truth
     manifest_path = output_dir / "bsp_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    
+
     logger.info(f"Pass 1 Complete. Registry built with {success_count} modules.")
     logger.info(f"Manifest: {manifest_path}")
-    
+
+    if enable_validation and validation_results:
+        failed_count = sum(1 for _, vr in validation_results if not vr.is_valid)
+        logger.info(f"Pass 1 Validation: {len(validation_results)} modules checked, {failed_count} failed")
+
     return manifest

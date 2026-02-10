@@ -18,15 +18,19 @@ async def run_implementation_pass(
     model: Model,
     output_dir: Path,
     max_tokens: int = 20000,
-    allowed_modules: Optional[List[str]] = None
+    allowed_modules: Optional[List[str]] = None,
+    regs_data: Optional[Dict[str, Any]] = None,
+    enable_validation: bool = True
 ):
     """
     Pass 2: Driver Implementation.
-    
+
     Iterates through the Manifest created in Pass 1.
     Generates .h and .c files for each module.
-    
+
     :param allowed_modules: If provided, only implement modules with names in this list.
+    :param regs_data: Register definitions for validation
+    :param enable_validation: Whether to run validation on generated files
     """
     
     api_catalog = manifest.get("api_catalog", {})
@@ -50,22 +54,96 @@ async def run_implementation_pass(
     tasks = []
 
     async def _generate_header(mod_name: str, mod_data: Dict, reg_content: str):
-        prompt = build_pass2_driver_h_prompt(mod_name, json.dumps(mod_data, indent=2), reg_content)
-        try:
-            resp = await invoke_model(model, max_tokens, [{"role": "user", "content": prompt}])
-            text = extract_text_from_bedrock_response(resp)
-            return ("h", text)
-        except Exception as e:
-            return ("error", f"Header Gen Failed: {e}")
+        """Generate driver header with retry logic"""
+        from ..regeneration.retry_policy import RetryPolicy, FailureReason
+        from ..regeneration.truncation_detector import detect_simple_truncation
+
+        retry_policy = RetryPolicy()
+        current_tokens = max_tokens
+
+        for attempt in range(retry_policy.max_retries + 1):
+            if attempt > 0:
+                print(f"  [retry] Pass2 header {mod_name} - Attempt {attempt + 1} (tokens: {current_tokens})")
+
+            try:
+                prompt = build_pass2_driver_h_prompt(mod_name, json.dumps(mod_data, indent=2), reg_content)
+                resp = await invoke_model(model, current_tokens, [{"role": "user", "content": prompt}])
+                text = extract_text_from_bedrock_response(resp)
+
+                # Check for truncation
+                truncation_reason = detect_simple_truncation(text)
+                if truncation_reason:
+                    print(f"  [warn] Truncation in {mod_name} header: {truncation_reason}")
+                    should_retry, current_tokens = retry_policy.should_retry(
+                        attempt + 1,
+                        FailureReason.TOKEN_TRUNCATION,
+                        current_tokens
+                    )
+                    if should_retry:
+                        continue
+                    else:
+                        logger.warning(f"Max retries exceeded for {mod_name} header")
+
+                return ("h", text, text)  # (type, content, raw_response)
+
+            except Exception as e:
+                logger.error(f"Header Error {mod_name}: {e}")
+                should_retry, current_tokens = retry_policy.should_retry(
+                    attempt + 1,
+                    FailureReason.TRANSIENT_ERROR,
+                    current_tokens
+                )
+                if should_retry:
+                    continue
+                return ("error", f"Header Gen Failed: {e}", "")
+
+        return ("error", f"Max retries exceeded for {mod_name} header", "")
 
     async def _generate_source(mod_name: str, mod_data: Dict, reg_content: str, soc_slice: str, bus_slice: str):
-        prompt = build_pass2_driver_c_prompt(mod_name, json.dumps(mod_data, indent=2), reg_content, soc_slice, bus_slice)
-        try:
-            resp = await invoke_model(model, max_tokens, [{"role": "user", "content": prompt}])
-            text = extract_text_from_bedrock_response(resp)
-            return ("c", text)
-        except Exception as e:
-            return ("error", f"Source Gen Failed: {e}")
+        """Generate driver source with retry logic"""
+        from ..regeneration.retry_policy import RetryPolicy, FailureReason
+        from ..regeneration.truncation_detector import detect_simple_truncation
+
+        retry_policy = RetryPolicy()
+        current_tokens = max_tokens
+
+        for attempt in range(retry_policy.max_retries + 1):
+            if attempt > 0:
+                print(f"  [retry] Pass2 source {mod_name} - Attempt {attempt + 1} (tokens: {current_tokens})")
+
+            try:
+                prompt = build_pass2_driver_c_prompt(mod_name, json.dumps(mod_data, indent=2), reg_content, soc_slice, bus_slice)
+                resp = await invoke_model(model, current_tokens, [{"role": "user", "content": prompt}])
+                text = extract_text_from_bedrock_response(resp)
+
+                # Check for truncation
+                truncation_reason = detect_simple_truncation(text)
+                if truncation_reason:
+                    print(f"  [warn] Truncation in {mod_name} source: {truncation_reason}")
+                    should_retry, current_tokens = retry_policy.should_retry(
+                        attempt + 1,
+                        FailureReason.TOKEN_TRUNCATION,
+                        current_tokens
+                    )
+                    if should_retry:
+                        continue
+                    else:
+                        logger.warning(f"Max retries exceeded for {mod_name} source")
+
+                return ("c", text, text)  # (type, content, raw_response)
+
+            except Exception as e:
+                logger.error(f"Source Error {mod_name}: {e}")
+                should_retry, current_tokens = retry_policy.should_retry(
+                    attempt + 1,
+                    FailureReason.TRANSIENT_ERROR,
+                    current_tokens
+                )
+                if should_retry:
+                    continue
+                return ("error", f"Source Gen Failed: {e}", "")
+
+        return ("error", f"Max retries exceeded for {mod_name} source", "")
 
     async def _implement_module(mod_name: str, mod_data: Dict):
         # 1. Load Register Header Context
@@ -104,15 +182,21 @@ async def run_implementation_pass(
     print(f"[pass2] Implementing {len(tasks)} modules...")
     
     # Process results as they come in
+    validation_results = []
+
     for f in asyncio.as_completed(tasks):
         mod_name, results = await f
         print(f".", end="", flush=True)
-        
-        for type_tag, content in results:
+
+        # Collect written files and raw responses for validation
+        written_files = []
+        raw_responses = []
+
+        for type_tag, content, raw_response in results:
             if type_tag == "error":
                 logger.error(f"[{mod_name}] {content}")
                 continue
-                
+
             # Clean Code Block
             clean_code = content
             if "```" in content:
@@ -120,13 +204,48 @@ async def run_implementation_pass(
                 match = re.search(r"```c?(.*?)```", content, re.DOTALL)
                 if match:
                     clean_code = match.group(1).strip()
-            
+
             # Write File
             if type_tag == "h":
                 fname = f"{mod_name.lower()}_driver.h"
-                (inc_dir / fname).write_text(clean_code, encoding="utf-8")
+                fpath = inc_dir / fname
+                fpath.write_text(clean_code, encoding="utf-8")
+                written_files.append(fpath)
+                raw_responses.append(raw_response)
             elif type_tag == "c":
                 fname = f"{mod_name.lower()}_driver.c"
-                (src_dir / fname).write_text(clean_code, encoding="utf-8")
+                fpath = src_dir / fname
+                fpath.write_text(clean_code, encoding="utf-8")
+                written_files.append(fpath)
+                raw_responses.append(raw_response)
+
+        # Run validation if enabled
+        if enable_validation and written_files and soc_data and regs_data:
+            from ..validation.validation_engine import validate_generation_output
+
+            try:
+                # Combine raw responses for validation preamble
+                combined_raw = "\n\n".join(raw_responses)
+
+                validation_result = validate_generation_output(
+                    tag=f"pass2_{mod_name.lower()}",
+                    preamble=combined_raw,
+                    written_files=written_files,
+                    soc_data=soc_data,
+                    regs_data=regs_data
+                )
+                validation_results.append((mod_name, validation_result))
+
+                # Log validation summary
+                if not validation_result.is_valid:
+                    logger.warning(f"Pass 2 validation failed for {mod_name}")
+                    for error in validation_result.errors[:3]:  # Show first 3 errors
+                        logger.warning(f"  - {error}")
+            except Exception as e:
+                logger.error(f"Validation error for {mod_name}: {e}")
 
     print("\n[pass2] Implementation Complete.")
+
+    if enable_validation and validation_results:
+        failed_count = sum(1 for _, vr in validation_results if not vr.is_valid)
+        logger.info(f"Pass 2 Validation: {len(validation_results)} modules checked, {failed_count} failed")

@@ -176,8 +176,7 @@ peripherals:
 
   SYSTEM:
     base_address: '0xFFFFFF00'
-    desc: "Primary System Control Registers (SYS). Controls clocks, resets, and global system\
-  \ configurations."
+    desc: "Primary System Control Registers (SYS). Controls clocks, resets, and global system configurations."
     registers:
       SYSPC1:
         offset: '0x00'
@@ -4816,7 +4815,7 @@ peripherals:
         fields:
           - { name: "RINFOU", msb: 31, lsb: 0, access: RW, desc: "RAM Group selection bits 33-64. Each bit selects corresponding RAM group" }
 
-  PIN:
+  SPI:
     base_address: '0x00000000'
     desc: ''
     registers:
