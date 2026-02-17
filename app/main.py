@@ -56,6 +56,25 @@ CORE_MANIFEST_ALIASES = {
 }
 
 
+def gather_all_clock_domains(soc_data: dict) -> list:
+    """
+    Scan all peripherals in soc_data and collect every unique clock_ref value.
+    Returns a sorted list of unique clock domain strings.
+    """
+    domains = set()
+    for periph in soc_data.get("peripherals", []):
+        ref = periph.get("clock_ref")
+        if ref and isinstance(ref, str):
+            domains.add(ref)
+        # Also check x-ext.clock_refs for multi-clock peripherals
+        x_ext = periph.get("x-ext") or {}
+        extra_refs = x_ext.get("clock_refs") or []
+        for r in extra_refs:
+            if r and isinstance(r, str):
+                domains.add(r)
+    return sorted(domains)
+
+
 async def _invoke_and_write(
     tag: str,
     system_prompt: str,
@@ -592,6 +611,21 @@ async def main():
         else:
             print("  [auto] Proceeding automatically (--yes flag set)")
 
+    # --- PRE-INJECT CLOCK DOMAINS INTO PLL ---
+    # Collect all clock_ref values from all peripherals so the PLL manifest
+    # can generate a complete clock_domain_t enum without needing to see all
+    # peripherals during its isolated manifest generation step.
+    all_clock_domains = gather_all_clock_domains(soc_data)
+    if all_clock_domains:
+        print(f"[info] Discovered {len(all_clock_domains)} clock domains: {', '.join(all_clock_domains)}")
+        # Inject into PLL peripheral's x-ext so the manifest prompt can find it
+        for periph in soc_data.get("peripherals", []):
+            if periph.get("name", "").upper() == "PLL":
+                if "x-ext" not in periph or periph["x-ext"] is None:
+                    periph["x-ext"] = {}
+                periph["x-ext"]["all_clock_domains"] = all_clock_domains
+                break
+
     # --- PASS 1: Architecture Discovery ---
     bsp_manifest = None
     if pass1_modules or not generate_peripherals:
@@ -734,7 +768,7 @@ async def main():
         clock_user_prompt = build_clock_prompt(
             soc_yaml=system_soc_slice,
             regs_yaml=system_regs_slice,
-            bus_yaml=bus_data,
+            bus_yaml=dump_yaml_str(bus_data),
             manifest=bsp_manifest
         )
 
