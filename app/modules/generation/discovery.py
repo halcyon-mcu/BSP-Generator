@@ -17,6 +17,62 @@ from ..yaml.yaml_utils import dump_yaml_str, get_soc_peripherals
 
 logger = logging.getLogger(__name__)
 
+
+def clean_json_string(json_str: str) -> str:
+    """
+    Clean common JSON formatting issues that LLMs sometimes produce.
+
+    Args:
+        json_str: Potentially malformed JSON string
+
+    Returns:
+        Cleaned JSON string
+    """
+    import re
+
+    # Remove trailing commas before closing braces/brackets
+    json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+
+    # Remove single-line comments (// ...)
+    json_str = re.sub(r'//[^\n]*\n', '\n', json_str)
+
+    # Remove multi-line comments (/* ... */)
+    json_str = re.sub(r'/\*.*?\*/', '', json_str, flags=re.DOTALL)
+
+    return json_str
+
+
+def extract_typedef_from_header(header_content: str) -> Optional[str]:
+    """
+    Extract the register typedef name from a generated register header.
+    Looks for patterns like:
+      typedef volatile struct { ... } typename_t;
+    or
+      } typename_t;
+
+    Returns the typedef name (e.g., "pll_reg_map_t", "SYSTEM_REGS_t") or None if not found.
+    """
+    if not header_content:
+        return None
+
+    import re
+
+    # Pattern 1: typedef volatile struct { ... } name_t;
+    # Match the closing brace and typedef name
+    pattern1 = r'}\s*(\w+_t)\s*;'
+    matches = re.findall(pattern1, header_content)
+
+    # Return the last match (usually the main struct typedef)
+    if matches:
+        # Filter out common non-register typedefs
+        register_typedefs = [m for m in matches if not m.endswith('_type_t') and not m.startswith('vim_')]
+        if register_typedefs:
+            return register_typedefs[-1]  # Return last match (main typedef)
+        elif matches:
+            return matches[-1]  # Fallback to any typedef
+
+    return None
+
 async def run_discovery_pass(
     soc_data: Dict[str, Any],
     regs_data: Dict[str, Any],
@@ -40,7 +96,7 @@ async def run_discovery_pass(
     """
     
     # 1. Setup Output
-    include_dir = output_dir / "include" / "regs"
+    include_dir = output_dir / "include"
     include_dir.mkdir(parents=True, exist_ok=True)
     
     manifest = {
@@ -57,7 +113,13 @@ async def run_discovery_pass(
         # Normalize to upper case for comparison
         allowed_set = set(m.upper() for m in allowed_modules)
         peripherals = [p for p in peripherals if p.get("name", "").upper() in allowed_set]
-        logger.info(f"Filtered to {len(peripherals)} modules based on user selection.")
+
+        # Improved logging to show core vs peripheral breakdown
+        core_count = len([m for m in allowed_modules if m.upper() in ['SYSTEM', 'PLL', 'VIM']])
+        periph_count = len(peripherals) - core_count
+        logger.info(f"Generating manifests for {len(peripherals)} modules ({core_count} core + {periph_count} peripheral)")
+    else:
+        logger.info(f"Generating manifests for all {len(peripherals)} modules")
 
     logger.info(f"Starting Pass 1 (Discovery) for {len(peripherals)} modules...")
 
@@ -93,16 +155,53 @@ async def run_discovery_pass(
                 clean_text = text.replace("```json", "").replace("```", "").strip()
                 start = clean_text.find("{")
                 end = clean_text.rfind("}")
-                if start != -1 and end != -1:
-                    return json.loads(clean_text[start:end+1])
 
-                # JSON not found - might be truncation
-                logger.warning(f"Could not find JSON in manifest response for {name}")
-                return None
+                if start == -1 or end == -1:
+                    # JSON not found - might be truncation
+                    logger.warning(f"Could not find JSON braces in manifest response for {name}")
+                    logger.debug(f"Response preview: {text[:200]}")
+                    return None
+
+                json_text = clean_text[start:end+1]
+
+                # Try parsing as-is first
+                try:
+                    return json.loads(json_text)
+                except json.JSONDecodeError:
+                    # Try with cleaning
+                    try:
+                        cleaned_json = clean_json_string(json_text)
+                        return json.loads(cleaned_json)
+                    except json.JSONDecodeError as json_err:
+                        # Log the actual JSON that failed to parse
+                        logger.error(f"Manifest JSON Error {name}: {json_err}")
+                        logger.debug(f"Failed JSON (first 500 chars): {json_text[:500]}")
+
+                        # Save problematic response to debug file
+                        try:
+                            debug_dir = output_dir / "_debug"
+                            debug_dir.mkdir(parents=True, exist_ok=True)
+                            debug_file = debug_dir / f"manifest_{name}_failed.txt"
+                            debug_file.write_text(f"Original response:\n{text}\n\n"
+                                                f"Extracted JSON:\n{json_text}\n\n"
+                                                f"Error: {json_err}", encoding='utf-8')
+                            logger.info(f"Saved problematic response to {debug_file}")
+                        except Exception:
+                            pass  # Don't fail on debug file write
+
+                        # Retry on JSON parse errors
+                        should_retry, current_tokens = retry_policy.should_retry(
+                            attempt + 1,
+                            FailureReason.VALIDATION_ERROR,
+                            current_tokens
+                        )
+                        if should_retry:
+                            continue
+                        return None
 
             except json.JSONDecodeError as e:
+                # This shouldn't be reached now, but keep it as fallback
                 logger.error(f"Manifest JSON Error {name}: {e}")
-                # Retry on JSON parse errors
                 should_retry, current_tokens = retry_policy.should_retry(
                     attempt + 1,
                     FailureReason.VALIDATION_ERROR,
@@ -351,6 +450,16 @@ async def run_discovery_pass(
 
         if mod_name:
             if mod_manifest:
+                # Extract typedef name from register header and add to manifest
+                header_content = res.get("reg_header_content")
+                if header_content:
+                    typedef_name = extract_typedef_from_header(header_content)
+                    if typedef_name:
+                        mod_manifest["register_typedef"] = typedef_name
+                        logger.info(f"Extracted typedef '{typedef_name}' for {mod_name}")
+                    else:
+                        logger.warning(f"Could not extract typedef from register header for {mod_name}")
+
                 manifest["api_catalog"][mod_name] = mod_manifest
             success_count += 1
 

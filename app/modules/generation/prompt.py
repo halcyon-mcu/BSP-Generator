@@ -62,6 +62,13 @@ FACTS POLICY (strict):
 - Do NOT invent, transform, or reformat addresses/offsets/bits.
 - If any required value is missing, emit a TODO in the FACTS MIRROR and STOP (do not emit files).
 
+TYPE SAFETY POLICY (strict):
+- For Pass 1 (Manifest): Declare ALL custom types (enums, structs, typedefs) in the "types" array
+- For Pass 2 (Driver Code): ONLY use types that are declared in the manifest or standard C types
+- Do NOT invent new types, enum values, or struct members
+- If a type is needed but not in the manifest, use a standard C type (uint32_t, int, etc.) or add a TODO comment
+- Violating this policy will cause compilation errors
+
 VERIFICATION STEP (required):
 - Emit EXACTLY this header block BEFORE any files:
 ===== FACTS MIRROR =====
@@ -78,7 +85,7 @@ HARD OUTPUT CONTRACT:
 ===== FILE: <path> =====
   (This is enforced by our post-processor. If you need to include the mirror first, then output the mirror and immediately re-emit the first separator as the next line.)
 - No prose, explanations, or extra text outside the FACTS MIRROR block and the file blocks.
-- <path> must consist only of the file name, no folder directories or special characters. File organization is handled by our post-processor.
+- <path> may include directory prefixes (e.g., "source/foo.c" or "include/foo.h"). Use forward slashes for directory separators.
 - EVERY generated file MUST end with a single trailing newline character to avoid compiler warnings.
 
 CODING RULES:
@@ -198,31 +205,33 @@ SYSTEM / CLOCK / INTERRUPT ASSUMPTIONS
 
 CLOCK SERVICE ASSUMPTIONS (MANDATORY)
 ------------------------------------
-- A shared clock service module (clock.c / clock.h) is generated separately and provides:
+- The PLL module (pll_driver.c / pll_driver.h) provides clock services:
 
-    typedef enum clock_ref_t clock_ref_t;
+    typedef enum clock_domain_t clock_domain_t;
 
-    int clock_enable(clock_ref_t ref);
-    uint32_t clock_get_hz(clock_ref_t ref);
+    int PLL_EnableClock(clock_domain_t domain);
+    uint32_t PLL_GetFrequency(clock_domain_t domain);
 
-- clock_ref_t follow the following naming convention.
+- clock_domain_t follow the following naming convention:
   - Normalize enum names deterministically:
-  CLOCKREF_<UPPERCASE_REF>
+  CLOCKDOMAIN_<UPPERCASE_REF>
   - Replace non-alphanumeric with underscore
 
-- Peripheral drivers MUST call clock_enable() for their required clock reference(s)
+- Peripheral drivers MUST call PLL_EnableClock() for their required clock domain(s)
   before accessing any peripheral registers.
 
-- Peripheral drivers MUST use clock_get_hz() when computing baud rates, prescalers,
+- Peripheral drivers MUST use PLL_GetFrequency() when computing baud rates, prescalers,
   timeouts, or other clock-derived values.
 
 - Peripheral drivers MUST NOT:
     - Touch SYSTEM clock registers directly
       (CSDIS/CDDIS/GHVSRC/CLKCNTL/VCLKASRC/RCLKSRC/VCLKACON1 or related SET/CLR registers)
+    - Touch PLL configuration registers directly
+      (PLLCTL1/PLLCTL2/PLLCTL3 or related registers)
     - Call any clock configuration/modification APIs
-      (clock_configure*, clock_set_*, clock_configure_profile, etc.)
+      (PLL_Configure*, PLL_Set*, etc.)
 
-- If clocks are used in the peripheral, "clock.h" MUST be included in the generated <periph>.c file.
+- If clocks are used in the peripheral, "pll_driver.h" MUST be included in the generated <periph>.c file.
 
 INPUT SHAPES
 ------------
@@ -286,8 +295,8 @@ PERIPHERAL INIT REQUIREMENTS (UPDATED)
 In <periph>_init():
 
 1) FIRST, enable required clocks:
-   - Call clock_enable() using the peripheral’s clock_ref.
-   - If x-ext.clock_refs exists, call clock_enable() for each entry in order.
+   - Call PLL_EnableClock() using the peripheral's clock_ref.
+   - If x-ext.clock_refs exists, call PLL_EnableClock() for each entry in order.
 
 2) THEN, perform peripheral-local register initialization:
    - Apply x-ext.init register operations in order.
@@ -428,8 +437,52 @@ regs.yaml fragment:
 
  """ % (soc_yaml, regs_yaml, "" if irq_yaml is None else irq_yaml)
 
-def build_clock_prompt(soc_yaml: str, regs_yaml: str, bus_yaml: str):
-    return """
+def build_clock_prompt(soc_yaml: str, regs_yaml: str, bus_yaml: str, manifest: dict = None):
+    # Extract typedef names from manifest (Pass 1 generated headers)
+    pll_typedef = "pll_reg_map_t"  # Default fallback
+    system_typedef = "SYSTEM_REGS_t"  # Default fallback
+
+    if manifest:
+        api_catalog = manifest.get("api_catalog", {})
+        pll_entry = api_catalog.get("PLL", {})
+        system_entry = api_catalog.get("SYSTEM", {})
+
+        if "register_typedef" in pll_entry:
+            pll_typedef = pll_entry["register_typedef"]
+        if "register_typedef" in system_entry:
+            system_typedef = system_entry["register_typedef"]
+
+    typedef_section = f"""
+    REGISTER ACCESS (MANDATORY - CRITICAL FOR COMPILATION):
+    -------------------------------------------------------
+    You MUST use register headers generated in Pass 1 (Discovery) for all register access.
+
+    REQUIRED INCLUDES in clock.c:
+    - #include "reg_pll.h"      (for PLL registers)
+    - #include "reg_system.h"   (for SYSTEM registers)
+
+    REGISTER TYPEDEF NAMES (FROM PASS 1 - USE EXACTLY AS SHOWN):
+    - PLL register struct typedef: {pll_typedef}
+    - SYSTEM register struct typedef: {system_typedef}
+
+    REQUIRED PATTERN for declaring register pointers:
+    ```c
+    static {pll_typedef} * const PLL = ({pll_typedef} *)0xFFFFE100u;
+    static {system_typedef} * const SYS = ({system_typedef} *)0xFFFFFF00u;
+    ```
+
+    CRITICAL: You MUST use these EXACT typedef names. They come from Pass 1 generated headers.
+    DO NOT guess, modify, or assume different typedef names - use these names EXACTLY.
+
+    DO NOT use inline #define macros for register access:
+    ```c
+    // WRONG - Do not do this:
+    #define SYSTEM_BASE 0xFFFFFF00u
+    #define REG32(addr) (*(volatile uint32_t *)(addr))
+    ```
+    """
+
+    return typedef_section + """
     You are generating portable C11 BSP CLOCK SERVICE files for TI Hercules RM46 (Cortex-R4).
 
     You MUST obey the global FACTS POLICY, HARD OUTPUT CONTRACT, and CODING RULES from the system prompt.
@@ -616,8 +669,8 @@ def build_clock_prompt(soc_yaml: str, regs_yaml: str, bus_yaml: str):
     ---------------
     After the FACTS MIRROR, emit exactly TWO files:
 
-      ===== FILE: clock.h =====
-      ===== FILE: clock.c =====
+      ===== FILE: include/clock.h =====
+      ===== FILE: source/clock.c =====
 
     No other files may be emitted.
 
@@ -803,10 +856,10 @@ OUTPUT CONTRACT
 ---------------
 After the FACTS MIRROR, emit exactly TWO files:
 
-  ===== FILE: vim.h =====
+  ===== FILE: include/vim.h =====
   ...
 
-  ===== FILE: vim.c =====
+  ===== FILE: source/vim.c =====
   ...
 
 Do NOT emit any other files.
@@ -825,8 +878,45 @@ irq.yaml fragment (full list):
     """ % (soc_yaml, regs_yaml, irq_yaml)
 
 
-def build_system_init_prompt(soc_yaml: str, regs_yaml: str):
-    return """
+def build_system_init_prompt(soc_yaml: str, regs_yaml: str, manifest: dict = None):
+    # Extract typedef name from manifest (Pass 1 generated header)
+    system_typedef = "SYSTEM_REGS_t"  # Default fallback
+
+    if manifest:
+        api_catalog = manifest.get("api_catalog", {})
+        system_entry = api_catalog.get("SYSTEM", {})
+
+        if "register_typedef" in system_entry:
+            system_typedef = system_entry["register_typedef"]
+
+    typedef_section = f"""
+    REGISTER ACCESS (MANDATORY - CRITICAL FOR COMPILATION):
+    -------------------------------------------------------
+    You MUST use register headers generated in Pass 1 (Discovery) for all register access.
+
+    REQUIRED INCLUDES in system.c:
+    - #include "reg_system.h"   (for SYSTEM registers)
+
+    REGISTER TYPEDEF NAME (FROM PASS 1 - USE EXACTLY AS SHOWN):
+    - SYSTEM register struct typedef: {system_typedef}
+
+    REQUIRED PATTERN for declaring register pointers:
+    ```c
+    static {system_typedef} * const SYS = ({system_typedef} *)0xFFFFFF00u;
+    ```
+
+    CRITICAL: You MUST use this EXACT typedef name. It comes from Pass 1 generated header.
+    DO NOT guess, modify, or assume a different typedef name - use this name EXACTLY.
+
+    DO NOT use inline #define macros for register access:
+    ```c
+    // WRONG - Do not do this:
+    #define SYSTEM_BASE 0xFFFFFF00u
+    #define REG32(addr) (*(volatile uint32_t *)(addr))
+    ```
+    """
+
+    return typedef_section + """
     You are generating low-level embedded C startup code for a TI Hercules RM46-like MCU.
 
 You MUST obey the global FACTS POLICY, HARD OUTPUT CONTRACT, and CODING RULES from the system prompt.
@@ -853,13 +943,13 @@ The YAML follows this schema:
 
   - For SYSTEM, OPTIONAL x-ext.base_clock_refs is a list of clock references to enable
     at boot as "base clocks" (minimal safe bring-up). Each entry is a string matching
-    the clock_ref naming used by the clock module (clock_ref_t values), e.g.:
+    the clock domain naming used by the PLL module (clock_domain_t values), e.g.:
       x-ext.base_clock_refs: ["HCLK", "VCLK", "HF_LPO", "LF_LPO"]
     If x-ext.base_clock_refs is absent, do not enable any clocks implicitly in system_init.
 
-  - clock_ref_t follow the following naming convention.
+  - clock_domain_t follow the following naming convention:
       - Normalize enum names deterministically:
-      CLOCKREF_<UPPERCASE_REF>
+      CLOCKDOMAIN_<UPPERCASE_REF>
       - Replace non-alphanumeric with underscore
 
 - regs.yaml:
@@ -868,21 +958,21 @@ The YAML follows this schema:
 
 CLOCK MODULE INTEGRATION (MANDATORY)
 ------------------------------------
-- A shared clock service module (clock.c / clock.h) is generated separately and provides:
+- The PLL module (pll_driver.c / pll_driver.h) provides clock services:
 
-    typedef enum clock_ref_t clock_ref_t;
-    int clock_enable(clock_ref_t ref);
+    typedef enum clock_domain_t clock_domain_t;
+    int PLL_EnableClock(clock_domain_t domain);
 
-- system.c MUST include "clock.h" to call clock_enable().
+- system.c MUST include "pll_driver.h" to call PLL_EnableClock().
 
 - system_init() MUST perform ONLY the following clock-related work:
-  1) Enable base clocks listed in SYSTEM.x-ext.base_clock_refs by calling clock_enable(ref).
+  1) Enable base clocks listed in SYSTEM.x-ext.base_clock_refs by calling PLL_EnableClock(domain).
   2) MUST NOT configure/modify clock dividers, PLLs, or muxes here.
   3) MUST NOT call any clock configuration/modification APIs
-     (clock_configure*, clock_set_*, clock_configure_profile, etc.).
+     (PLL_Configure*, PLL_Set*, etc.).
      Those are APPLICATION-ONLY and must be called by developer code in main.c if desired.
 
-- Peripheral drivers will call clock_enable() for their own clock_ref(s). system_init
+- Peripheral drivers will call PLL_EnableClock() for their own clock_ref(s). system_init
   should only ensure minimal base clocks are enabled.
 
 Your task:
@@ -906,8 +996,8 @@ If required numeric data is missing for any register access:
 - Add TODO entries to the FACTS MIRROR
 - STOP after the FACTS MIRROR (do NOT emit files)
 
-NOTE: clock_enable() calls do not require mirroring numeric constants here, since those are handled
-inside the clock module.
+NOTE: PLL_EnableClock() calls do not require mirroring numeric constants here, since those are handled
+inside the PLL module.
 
 Requirements:
 
@@ -920,7 +1010,7 @@ Requirements:
 
 2) system.c
 -----------
-- Include <stdint.h>, "system.h", and "clock.h".
+- Include <stdint.h>, "system.h", and "pll_driver.h".
 - Define macros for SYSTEM and PCR base addresses and register offsets using the YAML data, for example:
     #define SYSTEM_BASE 0xFFFFFF00u
     #define SYSTEM_CLKCNTL_OFFSET 0x00D0u
@@ -953,7 +1043,7 @@ Requirements:
 - Implement void system_init(void) that performs, in this exact order:
   1) Apply SYSTEM.x-ext.init register operations in order via reg_write_op(...).
   2) Enable base clocks:
-     - If SYSTEM.x-ext.base_clock_refs exists, call clock_enable() for each listed ref, in order.
+     - If SYSTEM.x-ext.base_clock_refs exists, call PLL_EnableClock() for each listed ref, in order.
      - If absent, do nothing (do NOT enable clocks implicitly).
 
 - The effective behavior MUST match exactly:
@@ -961,7 +1051,7 @@ Requirements:
   - The provided SYSTEM.x-ext.base_clock_refs list (if present)
 
 - You MAY add a comment such as:
-    /* Clock configuration (PLL/dividers/mux) is application-owned; see clock_configure* APIs in clock.h (do not call here). */
+    /* Clock configuration (PLL/dividers/mux) is application-owned; see PLL_Configure* APIs in pll_driver.h (do not call here). */
 
 3) Assumptions:
 ---------------
@@ -971,8 +1061,8 @@ Requirements:
 OUTPUT CONTRACT
 ---------------
 After the FACTS MIRROR, output exactly:
-  ===== FILE: system.h =====
-  ===== FILE: system.c =====
+  ===== FILE: include/system.h =====
+  ===== FILE: source/system.c =====
 
 No other files may be emitted.
 
@@ -1200,6 +1290,7 @@ TI LINKER SYNTAX REQUIREMENTS
      followed by the complete TI linker command file contents.
    - The command file MUST end with a trailing newline.
    - No additional files or prose are allowed outside the FACTS MIRROR and this FILE block.
+   - Note: linker.cmd goes to the root directory, not source/ or include/.
 
 INPUT
 -----
@@ -1305,7 +1396,7 @@ Requirements for your generated entry.c:
 - All local variables must be declared at the top of Reset_Handler_C before any statements.
 
 Output:
-- A single FILE block for entry.c, nothing else (besides the FACTS MIRROR required by the system prompt).
+- A single FILE block for source/entry.c, nothing else (besides the FACTS MIRROR required by the system prompt).
 
 
     """
@@ -1416,7 +1507,7 @@ OUTPUT CONTRACT
 ---------------
 - You MUST produce exactly one FILE block:
 
-    ===== FILE: start.s =====
+    ===== FILE: source/start.s =====
     <assembly here>
 
 - Use only TI assembler directives (.sect, .align, .long, .global, .ref) and ARM instructions (LDR, BL, B).
@@ -1432,6 +1523,36 @@ def build_manifest_prompt(module_name: str, soc_slice: str) -> str:
     Constructs the prompt for "Pass 1A" - API Manifest Discovery.
     Focuses solely on architectural metadata (JSON).
     """
+    # Special instructions for PLL module (provides clock services)
+    pll_extra = ""
+    if module_name.upper() == "PLL":
+        pll_extra = """
+
+SPECIAL REQUIREMENTS FOR PLL MODULE:
+------------------------------------
+The PLL module provides BOTH PLL configuration AND clock services for the system.
+You MUST include these clock-related functions in addition to PLL functions:
+
+Required Clock API Functions:
+1. PLL_GetFrequency(clock_domain_t domain) - Returns frequency in Hz for a clock domain
+2. PLL_EnableClock(clock_domain_t domain) - Enables a clock domain
+3. PLL_ConfigureClock(...) - Optional: Configure PLL/dividers (for application use only)
+
+CRITICAL - Clock Domain Enum:
+You MUST define a "clock_domain_t" enum in the "types" section with ALL clock domains found in soc.yaml.
+Look for clock_ref values across all peripherals and include them all.
+Common domains include: GCLK, HCLK, VCLK, VCLK2, VCLK3, VCLK4, RTICLK, etc.
+Example enum format:
+{{
+  "name": "clock_domain_t",
+  "type": "enum",
+  "values": ["CLOCK_DOMAIN_GCLK", "CLOCK_DOMAIN_HCLK", "CLOCK_DOMAIN_VCLK", ...]
+}}
+
+The PLL module is THE clock service provider for the entire system.
+All peripherals will call PLL_GetFrequency() and PLL_EnableClock() for clock management.
+"""
+
     return f"""
 You are a Senior Embedded Systems Architect.
 Analyze the hardware description for the "{module_name}" module and define its software interface.
@@ -1440,29 +1561,78 @@ INPUT CONTEXT:
 1. Module Name: "{module_name}"
 2. SOC Description (YAML):
 {soc_slice}
-
+{pll_extra}
 TASK:
-Define the public interface (functions and structs) this module will expose.
-- Naming Convention: {module_name.upper()}_FunctionName.
-- Init Function: {module_name.upper()}_Init.
-- Dependencies: Identify other modules this module needs (e.g., PCR for clocks, VIM for interrupts).
+Define the public interface (functions, types, and structs) this module will expose.
 
-OUTPUT FORMAT:
-Return a single valid JSON object.
+CRITICAL TYPE REQUIREMENTS:
+- You MUST declare ALL custom types that will be used in the "types" array
+- This includes: enums, structs, typedefs, function pointer types
+- Every type used in function prototypes MUST be defined in the "types" section
+- Standard C types (uint8_t, uint32_t, bool, etc.) do NOT need to be declared
+- Register types from reg_{module_name.lower()}.h do NOT need to be declared
+- Example: If a function takes "my_config_t*", you MUST define "my_config_t" in types
+- Example: If a function returns "status_code_t", you MUST define "status_code_t" in types
+
+INTERFACE DESIGN:
+- Naming Convention: {module_name.upper()}_FunctionName
+- Init Function: {module_name.upper()}_Init (required)
+- Dependencies: Identify other modules this module needs (e.g., SYSTEM for register access, VIM for interrupts)
+
+OUTPUT FORMAT (CRITICAL - READ CAREFULLY):
+Your response MUST be ONLY a valid JSON object. Follow these rules strictly:
+1. NO explanatory text before or after the JSON
+2. NO markdown code blocks (no ```json```)
+3. Use DOUBLE QUOTES for all strings (NOT single quotes)
+4. NO trailing commas after the last item in arrays or objects
+5. NO comments in the JSON (// or /* */)
+6. Start your response with {{ and end with }}
+
+Return exactly this structure:
 {{
     "module_name": "{module_name}",
     "driver_header_file": "{module_name.lower()}_driver.h",
     "reg_header_file": "reg_{module_name.lower()}.h",
     "init_function": "{module_name.upper()}_Init",
+    "types": [
+        {{
+            "name": "status_t",
+            "type": "enum",
+            "values": ["STATUS_OK", "STATUS_ERROR", "STATUS_BUSY"],
+            "description": "Return status codes"
+        }},
+        {{
+            "name": "config_t",
+            "type": "struct",
+            "members": [
+                {{"name": "mode", "type": "uint32_t"}},
+                {{"name": "flags", "type": "uint16_t"}}
+            ],
+            "description": "Configuration structure"
+        }},
+        {{
+            "name": "callback_t",
+            "type": "typedef",
+            "definition": "void (*callback_t)(void)",
+            "description": "Callback function pointer type"
+        }}
+    ],
     "functions": [
         {{
-            "name": "Function Name",
-            "prototype": "void {module_name.upper()}_Func(void);",
-            "description": "..."
+            "name": "Init",
+            "prototype": "void {module_name.upper()}_Init(void);",
+            "description": "Initialize the module"
+        }},
+        {{
+            "name": "Configure",
+            "prototype": "status_t {module_name.upper()}_Configure(const config_t* cfg);",
+            "description": "Configure the module"
         }}
     ],
     "dependencies": ["PCR", "SYSTEM"]
 }}
+
+IMPORTANT: The "types" array is MANDATORY. Every custom type used in function prototypes must be listed here.
 """
 
 def build_reg_header_prompt(module_name: str, soc_slice: str, regs_slice: str) -> str:
@@ -1511,14 +1681,31 @@ INPUT CONTEXT:
 
 TASK:
 Generate the C header file (`{module_name.lower()}_driver.h`) that exposes the public interface.
+
+INCLUDE REQUIREMENTS:
 - Include the register header: `#include "reg_{module_name.lower()}.h"`
 - **CRITICAL:** Do NOT redefine the register struct. It is already in the included register header.
-- Define all Structs and Enums listed in the Manifest "types"/"structs" section.
-- Define function prototypes EXACTLY as listed in the Manifest "functions" section.
-- Ensure strict dependency order: Structs/Enums MUST be defined BEFORE the functions that use them.
-- Use include guards (e.g., `{module_name.upper()}_DRIVER_H`).
-- Do NOT implement functions here.
-- Wrap output in a C code block.
+
+TYPE DEFINITION REQUIREMENTS (CRITICAL):
+- Define ALL types listed in the Manifest "types" section IN THE EXACT ORDER they appear
+- For each type in the manifest:
+  * If type="enum": Define a C enum with the exact name and values from manifest
+  * If type="struct": Define a C struct with the exact name and members from manifest
+  * If type="typedef": Define a C typedef with the exact definition from manifest
+- **ABSOLUTE RULE:** Do NOT define any types that are NOT in the Manifest "types" section
+- **ABSOLUTE RULE:** Do NOT add extra enum values, struct members, or types beyond what the manifest specifies
+- Standard C types (uint8_t, uint32_t, bool, etc.) and register types do NOT need definition
+
+FUNCTION PROTOTYPE REQUIREMENTS:
+- Define function prototypes EXACTLY as listed in the Manifest "functions" section
+- Do NOT add, remove, or modify function signatures
+- Do NOT add extra functions not in the manifest
+
+ORDERING:
+- Ensure strict dependency order: Types MUST be defined BEFORE functions that use them
+- Use include guards (e.g., `{module_name.upper()}_DRIVER_H`)
+- Do NOT implement functions here
+- Wrap output in a C code block
 
 OUTPUT:
 Return ONLY the C code content.
@@ -1546,20 +1733,50 @@ INPUT CONTEXT:
 
 TASK:
 Generate the C source file (`{module_name.lower()}_driver.c`) implementing the driver.
+
+INCLUDE REQUIREMENTS:
 - Include the driver header: `#include "{module_name.lower()}_driver.h"`
+- **CRITICAL:** Do NOT redefine any types. All types are defined in the driver header.
 - **CRITICAL:** Do NOT redefine the register struct. It is already defined in `reg_{module_name.lower()}.h`.
-- **CRITICAL:** Look at INPUT CONTEXT 3 to find the exact typedef name (e.g., `sciBASE_t` or `SYSTEM_RegMap_t`) and the exact member names (e.g., `GCR0`, `FLR`).
-- Base Address: Use the specific memory address from the YAML (e.g. `sciREG1`).
+
+REGISTER ACCESS REQUIREMENTS:
+- **CRITICAL:** Look at INPUT CONTEXT 3 to find the exact typedef name (e.g., `sciBASE_t` or `SYSTEM_RegMap_t`)
+- **CRITICAL:** Use the EXACT member names from Context 3 (e.g., `GCR0`, `FLR`)
+- Base Address: Use the specific memory address from the YAML (e.g. `sciREG1`)
 - Instance Definition:
-  - Create the base pointer definition casting the address to the Struct Type found in Context 3.
+  - Create the base pointer definition casting the address to the Struct Type found in Context 3
   - Example: `#define {module_name.lower()}REG ((volatile <STRUCT_TYPE_FROM_CTX3> *)0xFFF7E500U)`
-- Implement EVERY function listed in the Manifest.
-- Logic:
-  - Init Function: Must perform the initialization steps described in the Manifest/YAML.
-  - Dependencies: If Manifest lists "PCR" dependency for clocks, assume `PCR_EnablePeripheral(id)` is available and call it.
-  - Registers: Access registers using the pointer and the EXACT member names from Context 3 (e.g. `ptr->GCR0`).
-  - Clocks/Baud Rates: Use the info from Bus/Clock Details if calculation of dividers/baud rates is required (e.g. VCLK frequencies).
-- Wrap output in a C code block.
+
+FUNCTION IMPLEMENTATION REQUIREMENTS:
+- Implement EVERY function listed in the Manifest "functions" section
+- Do NOT add extra functions not in the manifest
+- Init Function: Must perform initialization steps described in the Manifest/YAML
+- Dependencies: If Manifest lists "PCR" dependency, assume `PCR_EnablePeripheral(id)` is available
+- Clocks/Baud Rates: Use info from Bus/Clock Details for divider/baud rate calculations
+
+**ABSOLUTE TYPE SAFETY RULES (CRITICAL - VIOLATIONS WILL CAUSE COMPILATION ERRORS):**
+1. **Enum Usage:**
+   - ONLY use enum values that are explicitly listed in INPUT CONTEXT 2 (Manifest "types" section)
+   - Check the manifest types array for the COMPLETE list of valid enum values
+   - Do NOT invent, add, or guess enum values
+   - Example: If manifest defines enum clock_domain_t with values [CLOCK_DOMAIN_VCLK, CLOCK_DOMAIN_VCLK2],
+     you can ONLY use those two values. Do NOT use CLOCK_DOMAIN_VCLK3, VCLK4, etc.
+
+2. **Struct Usage:**
+   - ONLY use structs that are defined in the manifest "types" section
+   - Do NOT create anonymous structs or new struct types
+   - ONLY access struct members that are listed in the manifest type definition
+
+3. **Type References:**
+   - Before using ANY custom type (enum, struct, typedef), verify it exists in INPUT CONTEXT 2
+   - If you need a type that's not in the manifest, use a built-in C type (uint32_t, int, etc.)
+   - If functionality is impossible without a missing type, add a TODO comment and use a workaround
+
+4. **Constants:**
+   - If you need a constant value that's not an enum, use `#define` or literal values
+   - Do NOT create enum values to represent constants
+
+Wrap output in a C code block.
 
 OUTPUT:
 Return ONLY the C code content.
@@ -1572,6 +1789,8 @@ class Model(Enum):
     HAIKU_4_5 = "haiku4.5"
     SONNET_3_5 = "sonnet3.5"
     SONNET_4_5 = "sonnet4.5"
+    OPUS_4_5 = "opus4.5"
+    OPUS_4_6 = "opus4.6"
 
     def get_model_id(self):
         model_ids = {
@@ -1579,9 +1798,48 @@ class Model(Enum):
             "sonnet3.5": "us.anthropic.claude-3-5-sonnet-20240620-v1:0",
             "haiku4.5": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
             "sonnet4.5": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "opus4.5": "us.anthropic.claude-opus-4-5-20250201-v1:0",
+            "opus4.6": "us.anthropic.claude-opus-4-6-20250514-v1:0",
         }
 
         return model_ids[self.value]
+
+    def get_pricing(self):
+        """
+        Returns (input_cost_per_million, output_cost_per_million) in USD.
+        AWS Bedrock pricing as of February 2025.
+        Source: https://aws.amazon.com/bedrock/pricing/
+        """
+        pricing = {
+            # Claude 3 models (older generation)
+            "haiku3.0": (0.25, 1.25),      # Claude 3 Haiku
+
+            # Claude 3.5 models
+            "sonnet3.5": (3.0, 15.0),      # Claude 3.5 Sonnet
+
+            # Claude 4.5 models
+            "haiku4.5": (1.0, 5.0),        # Claude 4.5 Haiku
+            "sonnet4.5": (3.0, 15.0),      # Claude 4.5 Sonnet
+            "opus4.5": (5.0, 25.0),        # Claude 4.5 Opus
+
+            # Claude 4.6 models
+            "opus4.6": (5.0, 25.0),        # Claude 4.6 Opus
+        }
+
+        return pricing[self.value]
+
+    def get_display_name(self):
+        """Returns a human-readable model name."""
+        names = {
+            "haiku3.0": "Claude 3 Haiku",
+            "sonnet3.5": "Claude 3.5 Sonnet",
+            "haiku4.5": "Claude 4.5 Haiku",
+            "sonnet4.5": "Claude 4.5 Sonnet",
+            "opus4.5": "Claude 4.5 Opus",
+            "opus4.6": "Claude 4.6 Opus",
+        }
+
+        return names[self.value]
 
 
 from typing import TypedDict, Literal
@@ -1592,6 +1850,74 @@ class Message(TypedDict):
     content: str
 
 
+class _CostTracker:
+    """Thread-safe cost tracker for API usage with model-specific pricing."""
+    def __init__(self):
+        self.lock = threading.Lock()
+        # Track usage per model: {model_value: {"input": X, "output": Y}}
+        self.usage_by_model = {}
+
+    def add_usage(self, model: Model, input_tokens: int, output_tokens: int):
+        """Add token usage for a specific model."""
+        with self.lock:
+            model_key = model.value
+            if model_key not in self.usage_by_model:
+                self.usage_by_model[model_key] = {"input": 0, "output": 0}
+
+            self.usage_by_model[model_key]["input"] += input_tokens
+            self.usage_by_model[model_key]["output"] += output_tokens
+
+    def get_cost(self) -> float:
+        """Calculate total cost in USD across all models."""
+        with self.lock:
+            total_cost = 0.0
+            for model_key, usage in self.usage_by_model.items():
+                model = Model(model_key)
+                input_price, output_price = model.get_pricing()
+                input_cost = (usage["input"] / 1_000_000) * input_price
+                output_cost = (usage["output"] / 1_000_000) * output_price
+                total_cost += input_cost + output_cost
+            return total_cost
+
+    def get_stats(self) -> dict:
+        """Get usage statistics with per-model breakdown."""
+        with self.lock:
+            total_input = sum(u["input"] for u in self.usage_by_model.values())
+            total_output = sum(u["output"] for u in self.usage_by_model.values())
+
+            # Calculate per-model breakdown
+            models_breakdown = []
+            total_cost = 0.0
+            for model_key, usage in self.usage_by_model.items():
+                model = Model(model_key)
+                input_price, output_price = model.get_pricing()
+                input_cost = (usage["input"] / 1_000_000) * input_price
+                output_cost = (usage["output"] / 1_000_000) * output_price
+                model_cost = input_cost + output_cost
+                total_cost += model_cost
+
+                models_breakdown.append({
+                    "model_name": model.get_display_name(),
+                    "input_tokens": usage["input"],
+                    "output_tokens": usage["output"],
+                    "total_tokens": usage["input"] + usage["output"],
+                    "cost_usd": model_cost
+                })
+
+            return {
+                "input_tokens": total_input,
+                "output_tokens": total_output,
+                "total_tokens": total_input + total_output,
+                "cost_usd": total_cost,  # Calculate inline instead of calling get_cost() to avoid deadlock
+                "models": models_breakdown
+            }
+
+    def reset(self):
+        """Reset all counters."""
+        with self.lock:
+            self.usage_by_model = {}
+
+
 class _ProgressTracker:
     """Thread-safe progress tracker for concurrent generation tasks."""
     def __init__(self):
@@ -1599,10 +1925,11 @@ class _ProgressTracker:
         self.completed_tasks = 0
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
-    
+
     def set_total(self, total: int):
         with self.lock:
             self.total_tasks = total
+            self.completed_tasks = 0  # Reset counter for new batch
     
     def increment(self):
         with self.lock:
@@ -1644,8 +1971,9 @@ class _ProgressTracker:
         sys.stdout.flush()
 
 
-# Global progress tracker for concurrent generation
+# Global trackers
 _progress = _ProgressTracker()
+_cost_tracker = _CostTracker()
 
 # Semaphore to limit concurrent API calls (Bedrock has rate limits)
 # Will be created in invoke_model on first call
@@ -1655,12 +1983,15 @@ _model_semaphore = None
 async def invoke_model(model: Model, max_tokens: int, messages: list[Message]) -> str:
     """
     Invoke the Bedrock model with concurrency limiting.
-    Only allows up to 2 concurrent model invocations to avoid rate limiting.
+    Allows up to N concurrent model invocations to avoid rate limiting.
     """
     global _model_semaphore
     if _model_semaphore is None:
-        _model_semaphore = asyncio.Semaphore(2)
-    
+        # Start with 15 concurrent requests - good balance for most accounts
+        # If you see ThrottlingException, reduce this number
+        # If you have increased quotas, you can raise it to 30-50
+        _model_semaphore = asyncio.Semaphore(15)
+
     async with _model_semaphore:
         body = {
             "max_tokens": max_tokens,
@@ -1678,6 +2009,20 @@ async def invoke_model(model: Model, max_tokens: int, messages: list[Message]) -
                     body=json.dumps(body)
                 )
             )
+
+            # Read the body once to avoid stream exhaustion
+            # The body is a StreamingBody that can only be read once
+            body_bytes = response['body'].read()
+            response['body'] = body_bytes  # Replace StreamingBody with bytes
+
+            # Extract and track usage for cost estimation
+            try:
+                from modules.utils.utils import extract_usage_from_bedrock_response
+                usage = extract_usage_from_bedrock_response(response)
+                _cost_tracker.add_usage(model, usage["input_tokens"], usage["output_tokens"])
+            except Exception:
+                pass  # Don't fail if usage tracking fails
+
             return response
         finally:
             # Mark this task as completed for progress tracking

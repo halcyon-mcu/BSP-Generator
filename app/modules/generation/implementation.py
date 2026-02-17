@@ -148,8 +148,8 @@ async def run_implementation_pass(
     async def _implement_module(mod_name: str, mod_data: Dict):
         # 1. Load Register Header Context
         reg_filename = mod_data.get("reg_header_file", f"reg_{mod_name.lower()}.h")
-        reg_path = output_dir / "include" / "regs" / reg_filename
-        
+        reg_path = output_dir / "include" / reg_filename
+
         reg_content = "// Register header not found"
         if reg_path.exists():
             reg_content = reg_path.read_text(encoding="utf-8")
@@ -222,11 +222,13 @@ async def run_implementation_pass(
         # Run validation if enabled
         if enable_validation and written_files and soc_data and regs_data:
             from ..validation.validation_engine import validate_generation_output
+            from ..validation.pass2_validator import validate_driver_implementation
 
             try:
                 # Combine raw responses for validation preamble
                 combined_raw = "\n\n".join(raw_responses)
 
+                # Run FACTS MIRROR validation
                 validation_result = validate_generation_output(
                     tag=f"pass2_{mod_name.lower()}",
                     preamble=combined_raw,
@@ -234,6 +236,24 @@ async def run_implementation_pass(
                     soc_data=soc_data,
                     regs_data=regs_data
                 )
+
+                # Run Pass 2 driver-specific validation (clock usage, API compliance)
+                manifest_entry = api_catalog.get(mod_name, {})
+                pass2_result = validate_driver_implementation(
+                    module_name=mod_name,
+                    manifest_entry=manifest_entry,
+                    preamble=combined_raw,
+                    written_files=written_files,
+                    soc_data=soc_data,
+                    regs_data=regs_data
+                )
+
+                # Merge validation results
+                if not pass2_result.is_valid:
+                    validation_result.is_valid = False
+                    validation_result.errors.extend(pass2_result.critical_errors)
+                    validation_result.warnings.extend(pass2_result.warnings)
+
                 validation_results.append((mod_name, validation_result))
 
                 # Log validation summary
@@ -241,6 +261,9 @@ async def run_implementation_pass(
                     logger.warning(f"Pass 2 validation failed for {mod_name}")
                     for error in validation_result.errors[:3]:  # Show first 3 errors
                         logger.warning(f"  - {error}")
+                if pass2_result.warnings:
+                    for warning in pass2_result.warnings[:3]:  # Show first 3 warnings
+                        logger.info(f"  - {warning}")
             except Exception as e:
                 logger.error(f"Validation error for {mod_name}: {e}")
 
@@ -249,3 +272,6 @@ async def run_implementation_pass(
     if enable_validation and validation_results:
         failed_count = sum(1 for _, vr in validation_results if not vr.is_valid)
         logger.info(f"Pass 2 Validation: {len(validation_results)} modules checked, {failed_count} failed")
+
+    # Return validation results for final report
+    return validation_results if enable_validation else []

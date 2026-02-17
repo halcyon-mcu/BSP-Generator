@@ -26,10 +26,16 @@ def extract_text_from_bedrock_response(resp) -> str:
     try:
         if hasattr(resp, "get"):
             body = resp.get("body")
-            payload = json.loads(body.read()) if hasattr(body, "read") else json.loads(body)
+            # Handle both StreamingBody (old) and bytes (new cached format)
+            if hasattr(body, "read"):
+                payload = json.loads(body.read())
+            elif isinstance(body, bytes):
+                payload = json.loads(body.decode('utf-8'))
+            else:
+                payload = json.loads(body)
         else:
             payload = resp
-    except Exception:
+    except Exception as e:
         # last resort
         return str(resp)
 
@@ -43,3 +49,30 @@ def extract_text_from_bedrock_response(resp) -> str:
         text = str(payload["output_text"]).strip()
 
     return text
+
+
+def extract_usage_from_bedrock_response(resp) -> dict:
+    """
+    Extract usage statistics (input_tokens, output_tokens) from Bedrock response.
+    Returns dict with 'input_tokens' and 'output_tokens', or zeros if not available.
+    """
+    try:
+        if hasattr(resp, "get"):
+            body = resp.get("body")
+            # Handle both StreamingBody (old) and bytes (new cached format)
+            if hasattr(body, "read"):
+                payload = json.loads(body.read())
+            elif isinstance(body, bytes):
+                payload = json.loads(body.decode('utf-8'))
+            else:
+                payload = json.loads(body)
+        else:
+            payload = resp if isinstance(resp, dict) else {}
+
+        usage = payload.get("usage", {})
+        return {
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0)
+        }
+    except Exception:
+        return {"input_tokens": 0, "output_tokens": 0}

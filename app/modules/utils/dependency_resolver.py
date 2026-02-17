@@ -33,7 +33,7 @@ class DependencyNode:
     name: str
     dependencies: List[str] = field(default_factory=list)
     init_function: str = ""
-    module_type: str = ""  # "peripheral", "system", "clock", "vim"
+    module_type: str = ""  # "peripheral", "system", "pll", "vim"
 
     def __str__(self) -> str:
         deps_str = ", ".join(self.dependencies) if self.dependencies else "none"
@@ -115,7 +115,7 @@ def build_dependency_graph(
     api_catalog = manifest.get("api_catalog", {})
 
     # Always include system-level modules
-    system_modules = {"SYSTEM", "clock", "VIM"}
+    system_modules = {"SYSTEM", "PLL", "VIM"}
 
     # Build set of modules to include
     if selected_modules:
@@ -182,14 +182,14 @@ def _add_system_nodes(graph: DependencyGraph) -> None:
     )
     graph.add_node(system_node)
 
-    # clock depends on SYSTEM
-    clock_node = DependencyNode(
-        name="clock",
+    # PLL depends on SYSTEM (PLL provides clock services)
+    pll_node = DependencyNode(
+        name="PLL",
         dependencies=["SYSTEM"],
-        init_function="clock_init",
-        module_type="clock"
+        init_function="PLL_Init",
+        module_type="pll"
     )
-    graph.add_node(clock_node)
+    graph.add_node(pll_node)
 
     # VIM depends on SYSTEM
     vim_node = DependencyNode(
@@ -207,7 +207,7 @@ def _normalize_dependency(dep: str) -> str:
 
     Handles various formats:
     - "PCR" -> "SYSTEM" (PCR is part of SYSTEM)
-    - "clock.CLOCKREF_VCLK" -> "clock"
+    - "PLL.CLOCKDOMAIN_VCLK" -> "PLL"
     - "VIM" -> "VIM"
     """
     dep = dep.strip().upper()
@@ -216,9 +216,9 @@ def _normalize_dependency(dep: str) -> str:
     if dep == "PCR":
         return "SYSTEM"
 
-    # Clock references resolve to clock module
+    # Clock references resolve to PLL module (PLL provides clock APIs)
     if "CLOCK" in dep and "." in dep:
-        return "clock"
+        return "PLL"
 
     return dep
 
@@ -227,7 +227,8 @@ def _extract_clock_dependencies(soc_data: Dict[str, Any], module_name: str) -> L
     """
     Extract clock dependencies for a module from soc.yaml.
 
-    Returns list of dependencies (e.g., ["clock"]).
+    Returns list of dependencies (e.g., ["PLL"]).
+    PLL module provides clock services (PLL_EnableClock, PLL_GetFrequency).
     """
     peripherals = soc_data.get("soc", {}).get("peripherals", [])
 
@@ -235,12 +236,12 @@ def _extract_clock_dependencies(soc_data: Dict[str, Any], module_name: str) -> L
         if periph.get("name", "").upper() == module_name.upper():
             # Check for clock_ref
             if periph.get("clock_ref"):
-                return ["clock"]
+                return ["PLL"]
 
             # Check for multiple clock_refs in x-ext
             x_ext = periph.get("x-ext", {})
             if x_ext.get("clock_refs"):
-                return ["clock"]
+                return ["PLL"]
 
     return []
 
@@ -421,8 +422,8 @@ def generate_main_c(
 
         if node.module_type == "system":
             lines.append("#include \"system.h\"")
-        elif node.module_type == "clock":
-            lines.append("#include \"clock.h\"")
+        elif node.module_type == "pll":
+            lines.append("#include \"pll_driver.h\"")
         elif node.module_type == "vim":
             lines.append("#include \"vim.h\"")
         else:

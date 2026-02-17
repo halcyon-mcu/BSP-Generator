@@ -110,3 +110,43 @@ class AdaptiveTokenAllocator:
                 }
 
         return stats
+
+    def estimate_cost(self, num_modules: int, model_pricing: tuple, default_tokens: int = 20000) -> dict:
+        """
+        Estimate the cost of generating modules based on historical data.
+
+        Args:
+            num_modules: Number of modules to generate
+            model_pricing: Tuple of (input_price_per_million, output_price_per_million)
+            default_tokens: Default tokens per module if no history
+
+        Returns:
+            Dictionary with estimated input/output tokens and cost
+        """
+        input_price, output_price = model_pricing
+
+        # Calculate average tokens from history
+        if self.module_history:
+            all_tokens = [token for history in self.module_history.values() for token in history]
+            avg_tokens_per_module = int(sum(all_tokens) / len(all_tokens)) if all_tokens else default_tokens
+        else:
+            avg_tokens_per_module = default_tokens
+
+        # Estimate token usage (rough approximation: 60% input, 40% output ratio)
+        estimated_input_tokens = int(num_modules * avg_tokens_per_module * 0.6)
+        estimated_output_tokens = int(num_modules * avg_tokens_per_module * 0.4)
+
+        # Calculate costs
+        input_cost = (estimated_input_tokens / 1_000_000) * input_price
+        output_cost = (estimated_output_tokens / 1_000_000) * output_price
+        total_cost = input_cost + output_cost
+
+        return {
+            "input_tokens": estimated_input_tokens,
+            "output_tokens": estimated_output_tokens,
+            "total_tokens": estimated_input_tokens + estimated_output_tokens,
+            "cost_usd": total_cost,
+            "avg_tokens_per_module": avg_tokens_per_module,
+            "num_modules": num_modules,
+            "has_history": bool(self.module_history)
+        }

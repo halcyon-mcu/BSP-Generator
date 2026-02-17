@@ -88,7 +88,8 @@ def validate_driver_implementation(
             warnings.append(f"{module_name}: Function '{func}' from manifest not found in implementation")
 
     # Check 3: Init function exists
-    init_func_name = f"{module_name.lower()}_init"
+    # Get expected init function name from manifest (don't construct it)
+    init_func_name = manifest_entry.get('init_function', f"{module_name.upper()}_Init")
     init_found = False
 
     for file_path in written_files:
@@ -176,6 +177,72 @@ def validate_driver_implementation(
 
         except Exception:
             pass
+
+    # Check 7: No hardcoded frequency constants (if module has clock dependency)
+    manifest_deps = manifest_entry.get('dependencies', [])
+    has_clock_dep = 'clock' in [d.lower() if isinstance(d, str) else d for d in manifest_deps]
+
+    if has_clock_dep:
+        for file_path in driver_c_files:
+            try:
+                content = file_path.read_text(encoding='utf-8', errors='ignore')
+
+                # Check for hardcoded frequency #defines
+                freq_patterns = [
+                    r'#define\s+\w*(?:VCLK|CLK|FREQUENCY|FREQ)\w*\s+\d+',
+                    r'#define\s+\w+\s+\d{8,}U?L?L?\s*(?://.*frequency|/\*.*frequency)',
+                ]
+
+                for pattern in freq_patterns:
+                    matches = re.findall(pattern, content, re.IGNORECASE)
+                    if matches:
+                        errors.append(
+                            f"{file_path.name}: Hardcoded frequency constant found: {matches[0]}. "
+                            "Use clock_get_hz() instead."
+                        )
+                        break
+
+            except Exception:
+                pass
+
+    # Check 8: clock_get_hz() usage for baud rate functions (if module has clock dependency)
+    if has_clock_dep:
+        for file_path in driver_c_files:
+            try:
+                content = file_path.read_text(encoding='utf-8', errors='ignore')
+
+                # Check if file has baud rate or prescaler functions
+                has_baud_func = re.search(
+                    r'\b(?:set_?baud|baud_?rate|set_?prescaler|configure_?timing)\b',
+                    content,
+                    re.IGNORECASE
+                )
+
+                if has_baud_func:
+                    # Check if clock_get_hz() is called
+                    if 'clock_get_hz' not in content:
+                        errors.append(
+                            f"{file_path.name}: Has baud rate/timing function but doesn't call clock_get_hz(). "
+                            "Frequency must be queried dynamically, not hardcoded."
+                        )
+
+            except Exception:
+                pass
+
+    # Check 9: clock.h include if module has clock dependency
+    if has_clock_dep:
+        for file_path in driver_c_files:
+            try:
+                content = file_path.read_text(encoding='utf-8', errors='ignore')
+
+                # Check for clock.h include
+                if '#include "clock.h"' not in content and '#include <clock.h>' not in content:
+                    errors.append(
+                        f"{file_path.name}: Module has 'clock' dependency but doesn't include clock.h"
+                    )
+
+            except Exception:
+                pass
 
     is_valid = len(errors) == 0 and not has_todos
 

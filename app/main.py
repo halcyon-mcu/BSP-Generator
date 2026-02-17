@@ -1,7 +1,10 @@
 import argparse
 import asyncio
 import inspect
+import json
 import os
+import signal
+import sys
 from pathlib import Path
 
 from config import YAMLS_DIR, TARGET_FILES, FACTS_CANON, PATTERN_SNIPS
@@ -20,6 +23,7 @@ from modules.generation.prompt import (
     build_start_asm_prompt,       # start.s
     build_vim_prompt,             # VIM driver
     _progress,                    # global progress tracker
+    _cost_tracker,                # global cost tracker
 )
 from modules.utils.user import prompt_user_for_peripherals
 
@@ -34,6 +38,22 @@ from modules.yaml.yaml_utils import (
     build_peripheral_slices_for_prompt,
     build_memmap_slice_for_prompt,
 )
+
+# Core infrastructure modules that must always be generated
+# These provide foundational APIs that peripherals depend on
+CORE_MODULES = [
+    "SYSTEM",    # Base system initialization
+    "PLL",       # Clock/PLL hardware (generates manifest entry)
+    "VIM",       # Vectored interrupt manager
+]
+
+# Manifest API name aliases: Some hardware modules need API aliases in manifest
+# Format: {hardware_name: api_name}
+# DISABLED: Using PLL directly as the clock module for consistency
+# Peripherals should reference "PLL" for clock dependencies
+CORE_MANIFEST_ALIASES = {
+    # Removed PLL→clock alias. PLL module provides clock APIs directly.
+}
 
 
 async def _invoke_and_write(
@@ -402,8 +422,25 @@ async def _generate_peripheral(
     )
 
 
+# ---------------- Signal Handling ----------------
+_shutdown_requested = False
+
+def signal_handler(_signum, _frame):
+    """Handle Ctrl+C gracefully."""
+    global _shutdown_requested
+    if _shutdown_requested:
+        print("\n[warn] Force exit requested. Terminating immediately.")
+        sys.exit(1)
+
+    _shutdown_requested = True
+    print("\n[info] Shutdown requested. Finishing current operations... (Press Ctrl+C again to force quit)")
+    print("[info] Current tasks will complete, then generation will stop.")
+
 # ---------------- Main ----------------
 async def main():
+    # Setup signal handler for graceful shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+
     parser = argparse.ArgumentParser(
         description="YAML-in → Claude → BSP-out (multi-peripheral BSP)"
     )
@@ -415,7 +452,8 @@ async def main():
     parser.add_argument(
         "--model",
         default="sonnet4.5",
-        choices=["haiku3.0", "haiku4.5", "sonnet3.5", "sonnet4.5"],
+        choices=["haiku3.0", "haiku4.5", "sonnet3.5", "sonnet4.5", "opus4.5", "opus4.6"],
+        help="Which Claude model to use for generation. Default: sonnet4.5",
     )
     parser.add_argument(
         "--yamlpath",
@@ -439,6 +477,11 @@ async def main():
             "Default: all."
         ),
     )
+    parser.add_argument(
+        "-y", "--yes",
+        action="store_true",
+        help="Skip cost confirmation prompt and proceed automatically",
+    )
     args = parser.parse_args()
 
     # Parse target flags
@@ -448,7 +491,8 @@ async def main():
     generate_system = "all" in targets or "system" in targets
     generate_linker = "all" in targets or "linker" in targets
     generate_vim = "all" in targets or "vim" in targets
-    generate_clock = "all" in targets or "clock" in targets
+    # Clock generation disabled - PLL module provides clock APIs directly
+    generate_clock = False  # "all" in targets or "clock" in targets
     generate_peripherals = "all" in targets or "peripherals" in targets
 
     # Setup output directories
@@ -474,6 +518,8 @@ async def main():
         "haiku4.5": Model.HAIKU_4_5,
         "sonnet3.5": Model.SONNET_3_5,
         "sonnet4.5": Model.SONNET_4_5,
+        "opus4.5": Model.OPUS_4_5,
+        "opus4.6": Model.OPUS_4_6,
     }[args.model]
 
     # Load adaptive token allocator
@@ -483,26 +529,72 @@ async def main():
     token_allocator.load_history(token_history_path)
     print(f"[info] Loaded token history from {token_history_path.name}")
 
+    # Reset cost tracker for this generation run
+    _cost_tracker.reset()
+
     # --- SELECT PERIPHERALS FIRST ---
     from modules.generation.discovery import run_discovery_pass
     from modules.generation.implementation import run_implementation_pass
     import sys
 
-    selected_modules = []
+    # Peripheral selection strategy:
+    # - Pass 1 (Manifest): Generate API catalog for CORE + user selections
+    # - Pass 2 (Drivers): Generate drivers for PLL + user selections
+    #   - PLL driver provides clock APIs (PLL_EnableClock, PLL_GetFrequency)
+    #   - SYSTEM and VIM are platform files (Pass 3)
+    # - Pass 3 (Platform): Always generate system.c, vim.c, entry.c, start.s, linker.cmd
+
+    user_selected_peripherals = []  # User-chosen peripherals only
+    pass1_modules = list(CORE_MODULES)  # Pass 1: Always include core for manifest
+    pass2_modules = ["PLL"]  # Pass 2: Always include PLL driver + user peripherals
+
     if generate_peripherals:
         print("\n[user] Select Peripherals for BSP Generation:")
+        print("[info] Core infrastructure (SYSTEM, VIM) are platform files; PLL driver provides clock APIs")
         chosen_peripherals = prompt_user_for_peripherals(soc_data)
         if chosen_peripherals:
-            selected_modules = [p.get("name") for p in chosen_peripherals]
-            print(f"[info] Selected {len(selected_modules)} peripherals")
+            user_selected_peripherals = [p.get("name") for p in chosen_peripherals]
+            # Add user selections to pass1 for manifest, avoiding duplicates
+            pass1_modules.extend([m for m in user_selected_peripherals if m not in pass1_modules])
+            # Pass 2 implements PLL + user peripherals (exclude SYSTEM and VIM which are Pass 3 platform files)
+            pass2_modules.extend([m for m in user_selected_peripherals if m not in ["SYSTEM", "VIM"]])
+            print(f"[info] Manifest will include {len(pass1_modules)} modules ({len(CORE_MODULES)} core + {len(user_selected_peripherals)} peripheral)")
+            print(f"[info] Will implement {len(pass2_modules)} drivers (PLL + {len(user_selected_peripherals)} peripherals)")
         else:
-            print("[info] No peripherals selected. Skipping peripheral generation.")
+            print(f"[info] No peripherals selected. Will generate PLL driver only (SYSTEM and VIM are platform files)")
     else:
         print("[info] Skipping peripheral driver selection due to --targets flag.")
 
+    # --- COST ESTIMATION ---
+    if pass1_modules:
+        print("\n[info] Cost Estimation:")
+        pricing = model_enum.get_pricing()
+        estimate = token_allocator.estimate_cost(len(pass1_modules), pricing)
+
+        print(f"  Model: {model_enum.get_display_name()}")
+        print(f"  Modules to generate: {estimate['num_modules']}")
+        print(f"  Estimated tokens: {estimate['total_tokens']:,} (~{estimate['avg_tokens_per_module']:,} per module)")
+        print(f"  Estimated cost: ${estimate['cost_usd']:.2f} USD")
+
+        if not estimate['has_history']:
+            print(f"  [note] No historical data available - estimate based on default values")
+
+        # Ask for confirmation (unless --yes flag is set)
+        if not args.yes:
+            try:
+                response = input("\n[user] Proceed with generation? [Y/n]: ").strip().lower()
+                if response in ['n', 'no', 'exit', 'quit']:
+                    print("[info] Generation cancelled by user.")
+                    return
+            except (KeyboardInterrupt, EOFError):
+                print("\n[info] Generation cancelled by user.")
+                return
+        else:
+            print("  [auto] Proceeding automatically (--yes flag set)")
+
     # --- PASS 1: Architecture Discovery ---
     bsp_manifest = None
-    if selected_modules or not generate_peripherals:
+    if pass1_modules or not generate_peripherals:
         print("\n[info] Starting Pass 1: Architecture Discovery...")
         bsp_manifest = await run_discovery_pass(
             soc_data,
@@ -512,29 +604,71 @@ async def main():
             max_tokens=args.max_tokens,
             token_allocator=token_allocator,
             enable_validation=True,
-            allowed_modules=selected_modules if selected_modules else None
+            allowed_modules=pass1_modules if pass1_modules else None
         )
         print("\n[info] Pass 1 Complete.")
 
+        # Check for shutdown request
+        if _shutdown_requested:
+            print("[info] Shutdown requested. Stopping after Pass 1.")
+            return
+
+        # --- CREATE MANIFEST ALIASES ---
+        # Some hardware modules need API aliases so peripherals can reference them
+        # Example: PLL hardware → clock API (peripherals call clock_enable, not PLL_Enable)
+        if bsp_manifest and CORE_MANIFEST_ALIASES:
+            api_catalog = bsp_manifest.get("api_catalog", {})
+            for hw_name, api_name in CORE_MANIFEST_ALIASES.items():
+                if hw_name in api_catalog and api_name not in api_catalog:
+                    # Create alias entry (copy of hardware entry with different name)
+                    alias_entry = api_catalog[hw_name].copy()
+                    alias_entry["module_name"] = api_name
+                    # Update function names to use alias (PLL_Init → clock_init)
+                    if "init_function" in alias_entry:
+                        alias_entry["init_function"] = alias_entry["init_function"].replace(hw_name, api_name)
+                    # Update header file names
+                    if "driver_header_file" in alias_entry:
+                        alias_entry["driver_header_file"] = alias_entry["driver_header_file"].replace(hw_name.lower(), api_name.lower())
+                    if "reg_header_file" in alias_entry:
+                        alias_entry["reg_header_file"] = alias_entry["reg_header_file"].replace(hw_name.lower(), api_name.lower())
+
+                    api_catalog[api_name] = alias_entry
+                    print(f"[info] Created manifest alias: {hw_name} → {api_name}")
+
+            # Save updated manifest with aliases
+            manifest_path = out_dir / "bsp_manifest.json"
+            manifest_path.write_text(json.dumps(bsp_manifest, indent=2), encoding="utf-8")
+
         # --- PASS 2: Implementation ---
-        if selected_modules:
-            print(f"\n[info] Starting Pass 2: Implementation for {len(selected_modules)} modules...")
-            await run_implementation_pass(
+        pass2_validation_results = []
+        if pass2_modules:
+            print(f"\n[info] Starting Pass 2: Implementation for {len(pass2_modules)} peripheral drivers...")
+            pass2_validation_results = await run_implementation_pass(
                 bsp_manifest,
                 soc_data,
                 bus_data,
                 model_enum,
                 out_dir,
                 max_tokens=args.max_tokens,
-                allowed_modules=selected_modules,
+                allowed_modules=pass2_modules,
                 regs_data=regs_data,
                 enable_validation=True
             )
             print("\n[info] Pass 2 Complete.")
+
+            # Check for shutdown request
+            if _shutdown_requested:
+                print("[info] Shutdown requested. Stopping after Pass 2.")
+                return
         else:
             print("\n[info] Skipping Pass 2 (No modules selected).")
     else:
         print("\n[info] Skipping Pass 1 and Pass 2 (No modules selected).")
+
+    # Check for shutdown request before continuing
+    if _shutdown_requested:
+        print("[info] Shutdown requested. Stopping before platform generation.")
+        return
 
     # --- DEPENDENCY RESOLUTION & INIT ORDERING ---
     print("\n[info] Building dependency graph and generating initialization sequence...")
@@ -546,11 +680,12 @@ async def main():
             generate_main_c
         )
 
-        # Build dependency graph
+        # Build dependency graph for ALL modules (core + peripherals)
+        # main.c needs to initialize both platform files (core) and drivers (peripherals)
         dep_graph = build_dependency_graph(
             bsp_manifest,
             soc_data,
-            selected_modules=selected_modules
+            selected_modules=pass1_modules
         )
 
         # Generate initialization order
@@ -599,7 +734,8 @@ async def main():
         clock_user_prompt = build_clock_prompt(
             soc_yaml=system_soc_slice,
             regs_yaml=system_regs_slice,
-            bus_yaml=bus_data
+            bus_yaml=bus_data,
+            manifest=bsp_manifest
         )
 
     system_init_user_prompt = None
@@ -608,7 +744,8 @@ async def main():
             soc_data, regs_data
         )
         system_init_user_prompt = build_system_init_prompt(
-            system_soc_slice, system_regs_slice
+            system_soc_slice, system_regs_slice,
+            manifest=bsp_manifest
         )
 
     linker_user_prompt = None
@@ -700,6 +837,11 @@ async def main():
         )
         print("[debug] Added task: vim_driver")
 
+    # Check for shutdown request before platform generation
+    if _shutdown_requested:
+        print("[info] Shutdown requested. Skipping platform generation.")
+        return
+
     # Run platform tasks
     if generation_tasks:
         print(f"[info] Starting Platform Generation ({len(generation_tasks)} tasks)...")
@@ -707,13 +849,23 @@ async def main():
         _progress.stop_event.clear()
         spinner_thread = _progress.start_spinner()
         try:
-            await asyncio.gather(*generation_tasks)
+            await asyncio.gather(*generation_tasks, return_exceptions=True)
+        except KeyboardInterrupt:
+            print("\n[info] Platform generation interrupted by user.")
+            _progress.stop_spinner()
+            spinner_thread.join(timeout=1)
+            return
         finally:
             _progress.stop_spinner()
             spinner_thread.join(timeout=1)
             print()
     else:
         print("[info] No additional platform tasks to run.")
+
+    # Check for shutdown request before documentation
+    if _shutdown_requested:
+        print("[info] Shutdown requested. Skipping documentation generation.")
+        return
 
     # Generate documentation
     await _generate_documentation(out_dir)
@@ -730,14 +882,53 @@ async def main():
         )
 
         # Create comprehensive report
-        # Note: validation_results would need to be collected throughout execution
-        # For now, we create a minimal report showing dependency graph status
-        from modules.validation.validation_report import ValidationReport, ValidationSummary
+        from modules.validation.validation_report import ValidationReport, ValidationSummary, ModuleValidation
 
         final_report = ValidationReport(
             timestamp=_now_tag(),
             bsp_output_dir=str(out_dir)
         )
+
+        # Add Pass 2 validation results
+        if 'pass2_validation_results' in locals() and pass2_validation_results:
+            for module_name, validation_result in pass2_validation_results:
+                # Extract facts validation details if available
+                constants_validated = 0
+                mismatches = 0
+                if validation_result.facts_validation:
+                    constants_validated = len(validation_result.facts_validation.matches) + len(validation_result.facts_validation.mismatches)
+                    mismatches = len(validation_result.facts_validation.mismatches)
+
+                module_validation = ModuleValidation(
+                    module_name=module_name,
+                    facts_mirror_valid=validation_result.is_valid,
+                    constants_validated=constants_validated,
+                    mismatches=mismatches,
+                    tests_generated=False,  # Not tracking test generation currently
+                    critical_errors=validation_result.errors[:10],  # Limit to 10
+                    warnings=validation_result.warnings[:10]  # Limit to 10
+                )
+                final_report.peripheral_validations[module_name] = module_validation
+
+            # Update summary
+            final_report.validation_summary.total_modules = len(pass2_validation_results)
+            final_report.validation_summary.modules_valid = sum(
+                1 for _, vr in pass2_validation_results if vr.is_valid
+            )
+            final_report.validation_summary.modules_invalid = sum(
+                1 for _, vr in pass2_validation_results if not vr.is_valid
+            )
+            final_report.validation_summary.critical_errors = sum(
+                len(vr.errors) for _, vr in pass2_validation_results
+            )
+            final_report.validation_summary.warnings = sum(
+                len(vr.warnings) for _, vr in pass2_validation_results
+            )
+            if final_report.validation_summary.total_modules > 0:
+                final_report.validation_summary.success_rate = (
+                    final_report.validation_summary.modules_valid /
+                    final_report.validation_summary.total_modules
+                ) * 100.0
 
         # Add dependency graph info if available
         if 'dep_graph' in locals() and 'init_order' in locals():
@@ -768,8 +959,38 @@ async def main():
     token_allocator.save_history(token_history_path)
     print(f"[info] Saved token history to {token_history_path.name}")
 
+    # Display cost summary
+    print("[debug] Retrieving cost statistics...")
+    try:
+        stats = _cost_tracker.get_stats()
+        print("[debug] Got cost statistics successfully")
+        print(f"\n[info] API Usage Summary:")
+
+        # Show per-model breakdown if multiple models were used
+        if stats.get('models'):
+            for model_info in stats['models']:
+                print(f"\n  {model_info['model_name']}:")
+                print(f"    Input tokens:  {model_info['input_tokens']:,}")
+                print(f"    Output tokens: {model_info['output_tokens']:,}")
+                print(f"    Total tokens:  {model_info['total_tokens']:,}")
+                print(f"    Cost: ${model_info['cost_usd']:.2f} USD")
+
+        # Show totals
+        print(f"\n  Total Usage:")
+        print(f"    Input tokens:  {stats['input_tokens']:,}")
+        print(f"    Output tokens: {stats['output_tokens']:,}")
+        print(f"    Total tokens:  {stats['total_tokens']:,}")
+        print(f"    Estimated cost: ${stats['cost_usd']:.2f} USD")
+    except Exception as e:
+        print(f"[warn] Could not display cost summary: {e}")
+
+    # Ensure any remaining spinner threads are stopped
+    _progress.stop_spinner()
+
     print(f"\n[info] ✓ BSP generation complete!")
     print(f"[info] Output directory: {out_dir}")
+
+    print("[debug] main() function returning...")
 
 
 async def _generate_documentation(out_dir: Path):
@@ -795,4 +1016,17 @@ async def _generate_documentation(out_dir: Path):
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        # Use asyncio.run which handles event loop creation and cleanup
+        asyncio.run(main())
+        print("[debug] asyncio.run() completed, exiting normally.")
+    except KeyboardInterrupt:
+        print("\n[info] Generation interrupted by user. Exiting.")
+        _progress.stop_spinner()
+        sys.exit(0)
+    except Exception as e:
+        print(f"\n[error] Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        _progress.stop_spinner()
+        sys.exit(1)

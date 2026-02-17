@@ -24,7 +24,7 @@ from .validation_engine import (
     CrossFileValidation,
     ValidationResult
 )
-from .dependency_resolver import InitOrder, DependencyGraph
+from ..utils.dependency_resolver import InitOrder, DependencyGraph
 
 
 # ==============================================================================
