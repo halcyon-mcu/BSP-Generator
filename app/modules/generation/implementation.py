@@ -119,6 +119,48 @@ def extract_register_essentials(reg_header_path: Path, size_threshold: int = 150
 
     return optimized
 
+def build_pll_bus_slice(bus_data: Dict[str, Any]) -> str:
+    """
+    Extract a focused bus.yaml slice for PLL context.
+
+    Includes only what PLL Pass1 manifest and Pass2 code-gen need:
+    - Top-level sources with freq_hz and PLL sub-keys
+    - Top-level domains with divider_register/field/bits
+    - x-ext.peripheral_clocks.SYSTEM (source_number + domain_number mappings)
+    - x-ext.peripheral_clocks.PLL (LPO frequencies)
+
+    Omits per-peripheral clock entries (~750 lines of noise).
+    Typical reduction: 826 lines → ~60 focused lines.
+    """
+    if not bus_data:
+        return ""
+
+    from ..yaml.yaml_utils import dump_yaml_str
+
+    slice_data: Dict[str, Any] = {}
+
+    # Sources: OSCIN freq, PLL1/PLL2 config
+    if "sources" in bus_data:
+        slice_data["sources"] = bus_data["sources"]
+
+    # Domains: GCLK, HCLK, VCLK, VCLK2, VCLK3, VCLK4, RTICLK with dividers
+    if "domains" in bus_data:
+        slice_data["domains"] = bus_data["domains"]
+
+    # SYSTEM + PLL sections from x-ext.peripheral_clocks
+    x_ext = bus_data.get("x-ext") or {}
+    periph_clocks = x_ext.get("peripheral_clocks") or {}
+    focused: Dict[str, Any] = {}
+    if "SYSTEM" in periph_clocks:
+        focused["SYSTEM"] = periph_clocks["SYSTEM"]
+    if "PLL" in periph_clocks:
+        focused["PLL"] = periph_clocks["PLL"]
+    if focused:
+        slice_data["x-ext"] = {"peripheral_clocks": focused}
+
+    return dump_yaml_str(slice_data) if slice_data else ""
+
+
 async def run_implementation_pass(
     manifest: Dict[str, Any],
     soc_data: Dict[str, Any],
@@ -220,7 +262,7 @@ async def run_implementation_pass(
                 print(f"  [retry] Pass2 source {mod_name} - Attempt {attempt + 1} (tokens: {current_tokens})")
 
             try:
-                prompt = build_pass2_driver_c_prompt(mod_name, json.dumps(mod_data, indent=2), reg_content, soc_slice, bus_slice)
+                prompt = build_pass2_driver_c_prompt(mod_name, json.dumps(mod_data, indent=2), reg_content, soc_slice, bus_slice, manifest=manifest)
                 resp = await invoke_model(model, current_tokens, [{"role": "user", "content": prompt}])
                 text = extract_text_from_bedrock_response(resp)
 
@@ -267,14 +309,25 @@ async def run_implementation_pass(
             logger.warning(f"Pass 2: Could not find {reg_path} for {mod_name}")
             # print(f"[warn] {mod_name}: REG HEADER MISSING. Driver may hallucinate struct members.")
 
+        # PLL uses SYSTEM registers (PLLCTL1/2, CSDIS, GHVSRC, LPOMONCTL, CLKTEST etc.)
+        # Append reg_system.h so LLM sees authoritative SYSTEM_ macro names alongside reg_pll.h
+        if mod_name.upper() == "PLL":
+            sys_reg_path = output_dir / "include" / "reg_system.h"
+            if sys_reg_path.exists():
+                sys_content = extract_register_essentials(sys_reg_path)
+                reg_content = reg_content + "\n\n// === SYSTEM REGISTERS (PLLCTL1/2, CSDIS, GHVSRC etc.) ===\n" + sys_content
+
         # 2. Get Hardware Info (for Base Address)
         soc_periph = find_soc_peripheral(soc_data, mod_name)
         soc_slice = dump_yaml_str(soc_periph) if soc_periph else ""
         
         # 3. Get Bus Info (for Clocks/Baud Rates)
-        # We pass the whole bus structure as a string, it's usually small enough. 
-        # Or we filters it if it grows too large. For now, dump all.
-        bus_slice = dump_yaml_str(bus_data)
+        # PLL gets a focused slice (sources + domains + SYSTEM/PLL numbers only).
+        # Other peripherals get the full bus dump (usually small enough).
+        if mod_name.upper() == "PLL":
+            bus_slice = build_pll_bus_slice(bus_data)
+        else:
+            bus_slice = dump_yaml_str(bus_data)
 
         # 4. Launch Parallel Gens
         t_h = asyncio.create_task(_generate_header(mod_name, mod_data, reg_content))

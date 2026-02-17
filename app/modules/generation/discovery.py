@@ -81,7 +81,8 @@ async def run_discovery_pass(
     max_tokens: int = 20000,
     token_allocator=None,
     enable_validation: bool = True,
-    allowed_modules: Optional[List[str]] = None
+    allowed_modules: Optional[List[str]] = None,
+    bus_data: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Pass 1: Architecture Discovery & Registry Build.
@@ -400,6 +401,13 @@ async def run_discovery_pass(
         # (This is expected for some peripherals that may not have register definitions yet)
         if not regs_slice:
             logger.warning(f"Discovery: No register definition found for module '{name}' (type='{p_type}'). Header will likely be empty.")
+
+        # For PLL: append focused bus topology so manifest can enumerate all clock domains/sources
+        if name.upper() == "PLL" and bus_data:
+            from .implementation import build_pll_bus_slice
+            pll_bus_summary = build_pll_bus_slice(bus_data)
+            if pll_bus_summary:
+                soc_slice = soc_slice + "\n\n# Bus Clock Topology (for clock_domain_t enum):\n" + pll_bus_summary
 
         # Run both tasks in parallel
         man_task = asyncio.create_task(_process_module_manifest(name, soc_slice))

@@ -56,23 +56,93 @@ CORE_MANIFEST_ALIASES = {
 }
 
 
-def gather_all_clock_domains(soc_data: dict) -> list:
+def gather_all_clock_domains(soc_data: dict, bus_data: dict = None) -> list:
     """
-    Scan all peripherals in soc_data and collect every unique clock_ref value.
-    Returns a sorted list of unique clock domain strings.
+    Collect every unique clock domain name from soc.yaml and bus.yaml.
+
+    Sources:
+    1. soc.yaml peripherals: clock_ref and x-ext.clock_refs fields
+    2. bus.yaml top-level domains (GCLK, HCLK, VCLK, VCLK2, ...)
+    3. bus.yaml top-level sources (OSCIN, PLL1, PLL2, ...)
+    4. bus.yaml x-ext.peripheral_clocks.SYSTEM.clock_domains (domain_number mapping)
+
+    Returns a sorted, deduplicated list used to build the complete clock_domain_t enum.
     """
     domains = set()
+
+    # 1. Scan soc.yaml peripherals
     for periph in soc_data.get("peripherals", []):
         ref = periph.get("clock_ref")
         if ref and isinstance(ref, str):
             domains.add(ref)
-        # Also check x-ext.clock_refs for multi-clock peripherals
         x_ext = periph.get("x-ext") or {}
-        extra_refs = x_ext.get("clock_refs") or []
-        for r in extra_refs:
+        for r in (x_ext.get("clock_refs") or []):
             if r and isinstance(r, str):
                 domains.add(r)
+
+    # 2+3. Scan bus.yaml for all named domains and sources (both are lists of {name: ...})
+    if bus_data:
+        for entry in (bus_data.get("domains") or []):
+            name = entry.get("name") if isinstance(entry, dict) else entry
+            if name and isinstance(name, str):
+                domains.add(name.upper())
+        for entry in (bus_data.get("sources") or []):
+            name = entry.get("name") if isinstance(entry, dict) else entry
+            if name and isinstance(name, str):
+                domains.add(name.upper())
+
+        # 4. Pull SYSTEM clock_domain/source names from x-ext.peripheral_clocks.SYSTEM
+        x_ext_all = bus_data.get("x-ext") or {}
+        periph_clocks = x_ext_all.get("peripheral_clocks") or {}
+        system_clocks = periph_clocks.get("SYSTEM") or {}
+        for entry in (system_clocks.get("clock_domains") or []):
+            name = entry.get("name") if isinstance(entry, dict) else entry
+            if name and isinstance(name, str):
+                domains.add(name.upper())
+        for entry in (system_clocks.get("clock_sources") or []):
+            name = entry.get("name") if isinstance(entry, dict) else entry
+            if name and isinstance(name, str):
+                domains.add(name.upper())
+
     return sorted(domains)
+
+
+def _build_system_bus_slice(bus_data: dict) -> str:
+    """
+    Build a focused bus.yaml slice for system_init prompt.
+    Includes top-level sources/domains with frequencies/dividers and the
+    SYSTEM x-ext.peripheral_clocks section with source/domain numbers.
+    Omits per-peripheral clock entries to keep context tight.
+    """
+    from modules.yaml.yaml_utils import dump_yaml_str
+
+    if not bus_data:
+        return ""
+
+    slice_data = {}
+
+    # Top-level clock sources (with freq_hz, PLL config)
+    if "sources" in bus_data:
+        slice_data["sources"] = bus_data["sources"]
+
+    # Top-level clock domains (with divider registers)
+    if "domains" in bus_data:
+        slice_data["domains"] = bus_data["domains"]
+
+    # SYSTEM peripheral clocks (source_number and domain_number mappings)
+    x_ext = bus_data.get("x-ext") or {}
+    periph_clocks = x_ext.get("peripheral_clocks") or {}
+    system_section = periph_clocks.get("SYSTEM") or {}
+    pll_section_data = periph_clocks.get("PLL") or {}
+    if system_section or pll_section_data:
+        focused = {}
+        if system_section:
+            focused["SYSTEM"] = system_section
+        if pll_section_data:
+            focused["PLL"] = pll_section_data
+        slice_data["x-ext"] = {"peripheral_clocks": focused}
+
+    return dump_yaml_str(slice_data) if slice_data else ""
 
 
 async def _invoke_and_write(
@@ -615,7 +685,7 @@ async def main():
     # Collect all clock_ref values from all peripherals so the PLL manifest
     # can generate a complete clock_domain_t enum without needing to see all
     # peripherals during its isolated manifest generation step.
-    all_clock_domains = gather_all_clock_domains(soc_data)
+    all_clock_domains = gather_all_clock_domains(soc_data, bus_data)
     if all_clock_domains:
         print(f"[info] Discovered {len(all_clock_domains)} clock domains: {', '.join(all_clock_domains)}")
         # Inject into PLL peripheral's x-ext so the manifest prompt can find it
@@ -638,7 +708,8 @@ async def main():
             max_tokens=args.max_tokens,
             token_allocator=token_allocator,
             enable_validation=True,
-            allowed_modules=pass1_modules if pass1_modules else None
+            allowed_modules=pass1_modules if pass1_modules else None,
+            bus_data=bus_data
         )
         print("\n[info] Pass 1 Complete.")
 
@@ -777,9 +848,12 @@ async def main():
         system_soc_slice, system_regs_slice = build_system_slices_for_prompt(
             soc_data, regs_data
         )
+        # Build a focused bus slice (sources, domains, SYSTEM clock numbers only)
+        system_bus_slice = _build_system_bus_slice(bus_data) if bus_data else ""
         system_init_user_prompt = build_system_init_prompt(
             system_soc_slice, system_regs_slice,
-            manifest=bsp_manifest
+            manifest=bsp_manifest,
+            bus_yaml=system_bus_slice
         )
 
     linker_user_prompt = None

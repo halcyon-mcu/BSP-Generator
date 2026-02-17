@@ -919,7 +919,7 @@ irq.yaml fragment (full list):
     """ % (soc_yaml, regs_yaml, irq_yaml)
 
 
-def build_system_init_prompt(soc_yaml: str, regs_yaml: str, manifest: dict = None):
+def build_system_init_prompt(soc_yaml: str, regs_yaml: str, manifest: dict = None, bus_yaml: str = ""):
     # Extract typedef name from manifest (Pass 1 generated header)
     system_typedef = "SYSTEM_REGS_t"  # Default fallback
 
@@ -1016,6 +1016,26 @@ CLOCK MODULE INTEGRATION (MANDATORY)
 - Peripheral drivers will call PLL_EnableClock() for their own clock_ref(s). system_init
   should only ensure minimal base clocks are enabled.
 
+SYSTEM MODULE SCOPE (MANDATORY CONSTRAINTS)
+-------------------------------------------
+system.c owns chip bring-up ONLY. It MUST NOT touch PLL configuration registers.
+
+FORBIDDEN in system.c (these belong exclusively to pll_driver.c):
+  - SYS->PLLCTL1, SYS->PLLCTL2, SYS->PLLCTL3  — PLL multiplier/divider config
+  - SYS->CSDIS, SYS->CSDISSET, SYS->CSDISCLR  — clock source disable/enable
+  - SYS->CDDIS, SYS->CDDISSET, SYS->CDDISCLR  — clock domain disable/enable
+  - SYS->GHVSRC                                 — GCLK/HCLK/VCLK source mux
+  - SYS->CLKCNTL (VCLKR, VCLK2R divider fields) — domain frequency dividers
+
+If SYSTEM.x-ext.init contains any of the above register names, SKIP those entries with a comment:
+    /* Skipped: PLLCTL1/CSDIS/GHVSRC/etc. are owned by pll_driver.c */
+
+PERMITTED in system.c:
+  - SYS->CLKCNTL CLKENA bit (oscillator enable) — only if in x-ext.init
+  - PCR power-down clear registers (PCR.PSPWRDWNCLR*)
+  - SYS->MINITGCR, SYS->MSIENA — memory init trigger if in x-ext.init
+  - Any other SYSTEM register NOT in the forbidden list above
+
 Your task:
 - Generate two files: system.h and system.c.
 - These files must be self-contained and ISO C90 compatible:
@@ -1045,9 +1065,13 @@ Requirements:
 1) system.h
 -----------
 - Provide an include guard.
-- Declare:
-    void system_init(void);
-- Keep the API minimal.
+- Include <stdint.h>.
+- Declare the following functions (all of these are REQUIRED):
+    void     system_init(void);
+    uint32_t system_get_reset_cause(void);   /* Returns SYS->SYSESR reset status register value */
+    void     system_soft_reset(void);        /* Writes SYS->SYSECR to trigger a software reset */
+    uint32_t system_get_device_id(void);     /* Returns SYS->DEVID device identification value */
+    void     system_clear_status_flags(void); /* Clears SYS->SYSESR by writing it back to itself */
 
 2) system.c
 -----------
@@ -1071,16 +1095,29 @@ Requirements:
 
 - Implement void system_init(void) that performs, in this exact order:
   1) Apply SYSTEM.x-ext.init register operations in order using struct member access as shown above.
-  2) Enable base clocks:
+     (Skip any forbidden PLL-owned registers per SYSTEM MODULE SCOPE constraints above.)
+  2) Call PLL_Init() to configure the PLL and activate the complete clock tree.
+     This is MANDATORY — entry.c calls system_init() and then main(); it does NOT call PLL_Init()
+     separately. Without this call the device runs unconfigured on OSCIN only.
+  3) Enable additional base clocks (optional):
      - If SYSTEM.x-ext.base_clock_refs exists, call PLL_EnableClock() for each listed ref, in order.
-     - If absent, do nothing (do NOT enable clocks implicitly).
+     - If absent, skip this step (PLL_Init() already enables the core domains).
 
 - The effective behavior MUST match exactly:
-  - The provided SYSTEM.x-ext.init list
-  - The provided SYSTEM.x-ext.base_clock_refs list (if present)
+  - The provided SYSTEM.x-ext.init list (minus forbidden PLL registers)
+  - A call to PLL_Init() after the register operations
+  - The provided SYSTEM.x-ext.base_clock_refs list (if present, called after PLL_Init)
 
 - You MAY add a comment such as:
     /* Clock configuration (PLL/dividers/mux) is application-owned; see PLL_Configure* APIs in pll_driver.h (do not call here). */
+
+- Also implement the following utility functions (use register member names from reg_system.h):
+    uint32_t system_get_reset_cause(void)  { return SYS->SYSESR; }
+    void     system_soft_reset(void)       { SYS->SYSECR = 0x8000u; }  /* bit 15 = SW reset */
+    uint32_t system_get_device_id(void)    { return SYS->DEVID; }
+    void     system_clear_status_flags(void) { SYS->SYSESR = SYS->SYSESR; }  /* write-1-to-clear */
+  CRITICAL: Look up the exact register member names from reg_system.h (provided in regs.yaml input).
+  Use ONLY member names that exist in the register struct. If a register is not present, add a TODO.
 
 3) Assumptions:
 ---------------
@@ -1103,10 +1140,14 @@ Here is regs.yaml (relevant slice):
 
 %s
 
+Here is bus.yaml (clock topology - sources, domains, and SYSTEM clock numbering):
+
+%s
+
 Now, output FACTS MIRROR, then system.h followed by system.c, obeying the global HARD OUTPUT CONTRACT.
 
 
-    """ % (soc_yaml, regs_yaml)
+    """ % (soc_yaml, regs_yaml, bus_yaml if bus_yaml else "(not provided)")
 
 def build_linker_prompt(memmap_yaml: str):
     return """You are generating a TI ARM CGT linker command file (linker.cmd) for an ARM-based TI Hercules RM46-like MCU, built with the TI ARM CGT linker (armcl) from Code Composer Studio (CCS).
@@ -1581,20 +1622,22 @@ CLOCK DOMAIN ENUM NAMING RULE (MANDATORY):
   * "GCLK"   → CLOCKDOMAIN_GCLK
   * "HCLK"   → CLOCKDOMAIN_HCLK
 
-CLOCK DOMAIN DISCOVERY:
-- The SOC YAML provided may include x-ext.all_clock_domains listing ALL clock domains used by peripherals in this system.
-- If x-ext.all_clock_domains is present in any peripheral entry, include ALL entries from that list in the enum.
+CLOCK DOMAIN DISCOVERY (MANDATORY):
+- You MUST define a complete clock_domain_t enum.
+- Use ALL entries from x-ext.all_clock_domains injected into this peripheral's soc slice.
+- Naming convention: CLOCKDOMAIN_<UPPERCASE_REF> (replace non-alphanumeric with underscore).
+- Do NOT reduce or filter the list. Add CLOCKDOMAIN_MAX as a sentinel at the end.
 - Also scan all soc.peripherals[*].clock_ref values and include them.
 - Also scan soc.peripherals[*].x-ext.clock_refs arrays if present.
+- A bus clock topology summary may be appended after the SOC YAML. If present, include ALL domain and source names from it as CLOCKDOMAIN_<UPPERCASE_NAME> values.
 
 REQUIRED enum format in the "types" array:
 {{
   "name": "clock_domain_t",
   "type": "enum",
-  "values": ["CLOCKDOMAIN_GCLK", "CLOCKDOMAIN_HCLK", "CLOCKDOMAIN_VCLK", "CLOCKDOMAIN_VCLK2", "CLOCKDOMAIN_VCLK3", "CLOCKDOMAIN_VCLK4", "CLOCKDOMAIN_RTICLK", "CLOCKDOMAIN_HF_LPO", "CLOCKDOMAIN_LF_LPO", "CLOCKDOMAIN_OSCIN"],
+  "values": [/* Populate from x-ext.all_clock_domains - do NOT use hardcoded list */],
   "description": "Clock domain identifiers for all system clock domains"
 }}
-(Include only domains that appear in the SOC YAML or all_clock_domains list - use this as a minimum set)
 
 The PLL module is THE clock service provider for the entire system.
 All peripherals will call PLL_GetFrequency() and PLL_EnableClock() for clock management.
@@ -1735,6 +1778,16 @@ Generate the C header file defining the register map struct.
 - Do NOT include base address pointers (those go in the driver).
 - Wrap the output in a C code block (```c ... ```).
 
+MULTIPLE BASE ADDRESS HANDLING:
+- If the YAML input contains registers for TWO peripherals with DIFFERENT base_address values
+  (e.g. "system" at 0xFFFFFF00 AND "system2" at 0xFFFFE100), you MUST generate TWO separate
+  typedef volatile struct definitions, one per base address.
+- Name each typedef using the peripheral name in SCREAMING_SNAKE with _REG_MAP_t suffix:
+    system  → SYSTEM_REG_MAP_t   (base 0xFFFFFF00)
+    system2 → SYSTEM2_REG_MAP_t  (base 0xFFFFE100)
+- Generate macros for each struct using its own prefix (SYSTEM_ vs SYSTEM2_).
+- Both typedefs go in the same header file (reg_{module_name.lower()}.h).
+
 OUTPUT:
 Return the C code content inside markdown code blocks.
 """
@@ -1787,7 +1840,7 @@ OUTPUT:
 Return ONLY the C code content.
 """
 
-def build_pass2_driver_c_prompt(module_name: str, manifest_json: str, reg_header_content: str, soc_slice: str = "", bus_slice: str = "") -> str:
+def build_pass2_driver_c_prompt(module_name: str, manifest_json: str, reg_header_content: str, soc_slice: str = "", bus_slice: str = "", manifest: dict = None) -> str:
     """
     Constructs the prompt for "Pass 2B" - Driver Implementation Generation.
     Uses the Registry Manifest + Register Header + Hardware Info + Bus Info (optional).
@@ -1795,61 +1848,142 @@ def build_pass2_driver_c_prompt(module_name: str, manifest_json: str, reg_header
     # PLL-specific implementation requirements
     pll_section = ""
     if module_name.upper() == "PLL":
-        pll_section = """
+        # Extract the SYSTEM register typedef name from the manifest so the LLM uses
+        # the exact name generated by Pass 1 rather than guessing.
+        system_typedef = "SYSTEM_REG_MAP_t"  # safe fallback
+        if manifest:
+            api_catalog = manifest.get("api_catalog") or {}
+            system_entry = api_catalog.get("SYSTEM") or {}
+            td = system_entry.get("register_typedef")
+            if td:
+                system_typedef = td
+
+        pll_section = f"""
 PLL MODULE SPECIAL REQUIREMENTS (MANDATORY):
 --------------------------------------------
-This is the central clock service module. You MUST implement the following:
+
+HARD RULE — MACRO VERIFICATION (ENFORCED):
+Before writing ANY code, scan INPUT CONTEXT 3 (register headers) line by line.
+INPUT CONTEXT 3 contains reg_pll.h followed by reg_system.h.
+Create a mental list of every #define visible there.
+You MUST ONLY use macro names that appear verbatim in that list.
+If you want to use a macro that is NOT in that list, you MUST NOT use it.
+Instead, either use the closest named macro that IS present, or derive the
+value from a MASK/SHIFT pair that IS present.
+
+This is the central clock service module. You MUST implement ALL functions completely.
+NO STUB FUNCTIONS. NO TODO COMMENTS in switch cases. Every case in every switch MUST be handled.
 
 ENUM NAMING RULE (CRITICAL):
 - All clock domain enum values use: CLOCKDOMAIN_<UPPERCASE_REF>
 - Example: VCLK → CLOCKDOMAIN_VCLK, HF_LPO → CLOCKDOMAIN_HF_LPO
 - Use the EXACT values from the clock_domain_t enum in the manifest
+- Every enum value MUST have a corresponding case in PLL_EnableClock() and PLL_GetFrequency()
 
 REQUIRED INCLUDES in pll_driver.c:
 - #include "pll_driver.h"
-- #include "reg_pll.h"    (PLL register access)
-- #include "reg_system.h" (SYSTEM register access for clock gating)
+- #include "reg_system.h" (contains PLLCTL1/2, CSDIS/CDDIS/CLR/SET, CLKCNTL, GHVSRC, CSVSTAT)
+- Do NOT include a separate reg_pll.h if PLL registers are already in reg_system.h
 
 REGISTER ACCESS (MANDATORY):
-- Declare register pointers using struct-based access from Pass 1 headers
-- Example:
-    static PLL_REG_t * const PLLREG = (PLL_REG_t *)0xFFFFE100u;
-    static SYSTEM_REG_t * const SYSREG = (SYSTEM_REG_t *)0xFFFFFF00u;
-- Use EXACT typedef names from the Register Header (INPUT CONTEXT 3)
+- The EXACT typedef name for the SYSTEM register struct is: {system_typedef}  (from Pass 1 manifest)
+- Declare ONE register pointer to the SYSTEM base (which contains both PLL and clock control regs):
+    static {system_typedef} * const SYSREG = ({system_typedef} *)0xFFFFFF00u;
+- If reg_system.h contains SYSTEM2_REG_MAP_t (secondary system registers at 0xFFFFE100),
+  ALSO declare:
+    static SYSTEM2_REG_MAP_t * const SYSREG2 = (SYSTEM2_REG_MAP_t *)0xFFFFE100u;
+- Use SYSREG2->PLLCTL3  for PLL2 configuration
+- Use SYSREG2->CLK2CNTRL for VCLK3R (bits[3:0]) and VCLK4R (bits[11:8]) dividers
+- Use SYSREG2->VCLKACON1 for VCLKA3 and VCLKA4 source and divider configuration
+- Only declare SYSREG2 if SYSTEM2_REG_MAP_t is actually present in INPUT CONTEXT 3.
+- Use EXACT member names from reg_system.h (e.g. SYSREG->PLLCTL1, SYSREG->CSDISCLR, SYSREG->CLKCNTL)
+- NEVER use undefined symbols. Every constant you use MUST exist in reg_system.h or your FACTS MIRROR.
+
+CSDIS/CDDIS REGISTER USAGE (CRITICAL):
+- CSDIS controls clock SOURCES (oscillator, PLL1, LF_LPO, HF_LPO, etc.)
+- CDDIS controls clock DOMAINS (GCLK, HCLK, VCLK, VCLK2, etc.)
+- Both registers use active-HIGH disable semantics: bit=1 means disabled, bit=0 means enabled.
+- To ENABLE: write the bit to the CLR register (CSDISCLR or CDDISCLR). Do NOT read-modify-write CSDIS.
+- CSDISCLR macros in reg_system.h: SYSTEM_CSDISCLR_CLRCLKSR0OFF (OSCIN/bit0), SYSTEM_CSDISCLR_CLRCLKSR1OFF (PLL1/bit1), SYSTEM_CSDISCLR_CLRCLKSR4OFF (LF_LPO/bit4), SYSTEM_CSDISCLR_CLRCLKSR5OFF (HF_LPO/bit5), SYSTEM_CSDISCLR_CLRCLKSR6OFF (PLL2/bit6)
+- CDDISCLR macros in reg_system.h: SYSTEM_CDDISCLR_CLRGCLKOFF (GCLK/bit0), SYSTEM_CDDISCLR_CLRHCLKOFF (HCLK/bit1), SYSTEM_CDDISCLR_CLRVCLKPOFF (VCLK/bit2), SYSTEM_CDDISCLR_CLRVCLK2OFF (VCLK2/bit3), SYSTEM_CDDISCLR_CLRVCLKA1OFF (VCLKA1/bit4), SYSTEM_CDDISCLR_CLRRTI1CLKOFF (RTICLK/bit6), SYSTEM_CDDISCLR_CLRVCLK3OFF (VCLK3/bit8), SYSTEM_CDDISCLR_CLRVCLK4OFF (VCLK4/bit9), SYSTEM_CDDISCLR_CLRVCLKA3OFF (VCLKA3/bit10), SYSTEM_CDDISCLR_CLRVCLKA4OFF (VCLKA4/bit11)
+
+REQUIRED FUNCTION: PLL_Init(void)
+This function owns the COMPLETE clock tree activation. Perform in this exact order:
+1. Enable OSCIN: SYSREG->CSDISCLR = SYSTEM_CSDISCLR_CLRCLKSR0OFF;
+2. Configure PLL1 multipliers using the values in INPUT CONTEXT 5 (bus.yaml slice) under
+   sources → PLL1 → x-ext → default_config. Extract nr, nf, r, odpll values from there.
+   FACTS MIRROR REQUIRED: mirror these exact values before writing any code.
+   Do NOT hardcode numeric divider values — read them from the bus slice.
+   - Write PLLCTL1: set REFCLKDIV (NR-1 in bits 16-21), PLLMUL (NF in bits 0-15), PLLDIV (R in bits 24-28)
+   - Write PLLCTL2: set ODPLL (bits 9-11), clear FMENA (bit 31) for non-modulating
+3. Enable PLL1 source: SYSREG->CSDISCLR = SYSTEM_CSDISCLR_CLRCLKSR1OFF;
+4. Wait for PLL1 lock: poll SYSREG->CSVSTAT bit 1 (SYSTEM_CSVSTAT_CLKSR1V) with bounded iteration counter
+5. Switch GHVSRC to PLL1 source using the source_number for PLL1 from
+   x-ext.peripheral_clocks.SYSTEM.clock_sources in bus slice (source_number=1 → GHVSRC=1).
+   Mirror the source_number in FACTS MIRROR.
+6. Set VCLK divider: write CLKCNTL with VCLKR=1 (divide-by-2) and VCLK2R=1 (divide-by-2) in bits 16-19 and 24-27
+7. Enable core domains: SYSREG->CDDISCLR = SYSTEM_CDDISCLR_CLRGCLKOFF | SYSTEM_CDDISCLR_CLRHCLKOFF | SYSTEM_CDDISCLR_CLRVCLKPOFF | SYSTEM_CDDISCLR_CLRVCLK2OFF;
+8. Enable peripheral enable: set SYSTEM_CLKCNTL_PENA bit in SYSREG->CLKCNTL
 
 REQUIRED FUNCTION: PLL_EnableClock(clock_domain_t domain)
-- Clear the disable bit in SYSTEM.CSDIS (clock source disable) for the source
-- Clear the disable bit in SYSTEM.CDDIS (clock domain disable) for the domain
-- Must be idempotent (safe to call multiple times)
-- Must NEVER disable clocks
+Must have a case for EVERY enum value in clock_domain_t. Handle as follows:
+- CLOCKDOMAIN_OSCIN / CLOCKDOMAIN_EXTCLKIN1 / CLOCKDOMAIN_EXTCLKIN2: already enabled; return PLL_STATUS_OK
+- CLOCKDOMAIN_PLL1: SYSREG->CSDISCLR = SYSTEM_CSDISCLR_CLRCLKSR1OFF; break;
+- CLOCKDOMAIN_PLL2: SYSREG->CSDISCLR = SYSTEM_CSDISCLR_CLRCLKSR6OFF; break;
+- CLOCKDOMAIN_HF_LPO: SYSREG->CSDISCLR = SYSTEM_CSDISCLR_CLRCLKSR5OFF; break;
+- CLOCKDOMAIN_LF_LPO: SYSREG->CSDISCLR = SYSTEM_CSDISCLR_CLRCLKSR4OFF; break;
+- CLOCKDOMAIN_GCLK: SYSREG->CDDISCLR = SYSTEM_CDDISCLR_CLRGCLKOFF; break;
+- CLOCKDOMAIN_HCLK: SYSREG->CDDISCLR = SYSTEM_CDDISCLR_CLRHCLKOFF; break;
+- CLOCKDOMAIN_VCLK: SYSREG->CDDISCLR = SYSTEM_CDDISCLR_CLRVCLKPOFF; break;
+- CLOCKDOMAIN_VCLK2: SYSREG->CDDISCLR = SYSTEM_CDDISCLR_CLRVCLK2OFF; break;
+- CLOCKDOMAIN_VCLK3: SYSREG->CDDISCLR = SYSTEM_CDDISCLR_CLRVCLK3OFF; break;
+- CLOCKDOMAIN_VCLK4: SYSREG->CDDISCLR = SYSTEM_CDDISCLR_CLRVCLK4OFF; break;
+- CLOCKDOMAIN_VCLKA1: SYSREG->CDDISCLR = SYSTEM_CDDISCLR_CLRVCLKA1OFF; break;
+- CLOCKDOMAIN_VCLKA3: SYSREG->CDDISCLR = SYSTEM_CDDISCLR_CLRVCLKA3OFF; break;
+- CLOCKDOMAIN_VCLKA4: SYSREG->CDDISCLR = SYSTEM_CDDISCLR_CLRVCLKA4OFF; break;
+- CLOCKDOMAIN_RTICLK: SYSREG->CDDISCLR = SYSTEM_CDDISCLR_CLRRTI1CLKOFF; break;
+- default: return PLL_STATUS_INVALID_PARAM;
+Must be idempotent. Must NEVER disable clocks.
 
 REQUIRED FUNCTION: PLL_GetFrequency(clock_domain_t domain)
-- MUST calculate frequencies DYNAMICALLY by reading hardware registers
-- For PLL-derived clocks: Read PLLCTL1 and PLLCTL2 registers to extract:
-  * NF (feedback multiplier) from PLLCTL1 bits [8:15]
-  * NR (reference divider) from PLLCTL1 bits [0:5], actual_NR = NR + 1
-  * R (post divider) from PLLCTL2 bits [0:3], actual_R = 2^R
-  * ODPLL (output divider) from PLLCTL2 bits [24:27]
-  * Formula: PLLCLK = (OSCIN_HZ * NF) / (actual_NR * actual_R)
-- For GCLK/HCLK: return PLLCLK (same as PLL output)
-- For VCLK: read CLKCNTL.VCLKR (bits 16-19), divide = VCLKR + 1
-  * VCLK = HCLK / (VCLKR + 1)
-- For VCLK2: read CLKCNTL.VCLK2R (bits 20-23)
-- For VCLK3: read VCLKACON1.VCLK3R (bits 0-3)
-- For VCLK4: read VCLKACON1.VCLK4R (bits 8-11)
-- For RTICLK: same as VCLK (derived from VCLK)
-- For OSCIN: return fixed 16000000 (from bus.yaml)
-- For HF_LPO: return fixed 9600000 (from bus.yaml)
-- For LF_LPO: return fixed 85000 (from bus.yaml)
-- If a register field encoding is not known from regs.yaml, return 0 and add TODO comment
+Must handle EVERY enum value. Calculate DYNAMICALLY from hardware registers:
+1. Read SYSREG->PLLCTL1 and SYSREG->PLLCTL2
+2. Extract: NF = (PLLCTL1 & SYSTEM_PLLCTL1_PLLMUL_MASK) >> SYSTEM_PLLCTL1_PLLMUL_SHIFT (feedback multiplier)
+            NR_raw = (PLLCTL1 & SYSTEM_PLLCTL1_REFCLKDIV_MASK) >> SYSTEM_PLLCTL1_REFCLKDIV_SHIFT
+            actual_NR = NR_raw + 1
+            PLLDIV_raw = (PLLCTL1 & SYSTEM_PLLCTL1_PLLDIV_MASK) >> SYSTEM_PLLCTL1_PLLDIV_SHIFT
+            actual_R = 1u << PLLDIV_raw  (2^PLLDIV)
+            ODPLL_raw = (PLLCTL2 & SYSTEM_PLLCTL2_ODPLL_MASK) >> SYSTEM_PLLCTL2_ODPLL_SHIFT
+            actual_ODPLL = ODPLL_raw + 1
+3. pllclk_hz = (OSCIN_HZ * (NF + 1u)) / (actual_NR * actual_R)  [NF is stored as NF-1 on some RM46 variants - verify from reg header reset value or use NF as-is and let bus.yaml default_config validate]
+   Use the bus.yaml default_config values (from INPUT CONTEXT 5: sources → PLL1 → x-ext → default_config)
+   to verify the formula gives the expected result (e.g., if nr=5, nf=120, r=1, odpll=2 then expect 160MHz).
+4. hclk_hz = pllclk_hz / actual_ODPLL
+Cases per domain:
+- CLOCKDOMAIN_GCLK / CLOCKDOMAIN_HCLK / CLOCKDOMAIN_PLL1: return hclk_hz
+- CLOCKDOMAIN_VCLK: vclkr = (SYSREG->CLKCNTL & SYSTEM_CLKCNTL_VCLKR_MASK) >> SYSTEM_CLKCNTL_VCLKR_SHIFT; return hclk_hz / (vclkr + 1u)
+- CLOCKDOMAIN_VCLK2: vclk2r = (SYSREG->CLKCNTL & SYSTEM_CLKCNTL_VCLK2R_MASK) >> SYSTEM_CLKCNTL_VCLK2R_SHIFT; return hclk_hz / (vclk2r + 1u)
+- CLOCKDOMAIN_VCLK3: if VCLKACON1 is in reg_system.h, read VCLK3R field (bits 0-3); else return hclk_hz / 2u
+- CLOCKDOMAIN_VCLK4: if VCLKACON1 is in reg_system.h, read VCLK4R field (bits 8-11); else return hclk_hz / 2u
+- CLOCKDOMAIN_RTICLK / CLOCKDOMAIN_VCLKA1 / CLOCKDOMAIN_VCLKA3 / CLOCKDOMAIN_VCLKA4: return same as VCLK
+- CLOCKDOMAIN_OSCIN: return OSCIN_HZ (16000000U)
+- CLOCKDOMAIN_HF_LPO: return HF_LPO_HZ (9600000U)
+- CLOCKDOMAIN_LF_LPO: return LF_LPO_HZ (85000U)
+- CLOCKDOMAIN_PLL2: return hclk_hz  (secondary PLL, treat as same frequency)
+- default: return 0u
+OSCIN_HZ, HF_LPO_HZ, LF_LPO_HZ MUST be in the FACTS MIRROR (pulled from bus.yaml).
 
-REQUIRED CLOCK DOMAIN ENUM USAGE:
-- Use ONLY enum values defined in clock_domain_t from the manifest
-- Never invent new enum values not in the manifest
+REQUIRED FUNCTION: PLL_ConfigureClock(const pll_divider_config_t* divider_config)
+- Read divider_config->domain and divider_config->divider
+- For VCLK: validate divider in [0,15]; write VCLKR field of CLKCNTL
+- For VCLK2: validate; write VCLK2R field of CLKCNTL
+- For VCLK3/VCLK4: write VCLKACON1 if register exists in reg_system.h
+- Return PLL_STATUS_OK on success, PLL_STATUS_INVALID_PARAM if out of range or unknown domain
 
 FORBIDDEN:
-- Do NOT hardcode PLLCLK or any clock frequency as a #define constant
-- Do NOT return a constant for PLL-derived frequencies - always read registers
+- Do NOT hardcode PLLCLK or any PLL-derived frequency as a #define constant
+- Do NOT stub any function or leave any switch case as TODO
+- Do NOT reference undefined symbols (every macro you use must exist in reg_system.h)
 """
 
     return f"""

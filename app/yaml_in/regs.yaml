@@ -675,8 +675,7 @@ peripherals:
 
   SYSTEM2:
     base_address: '0xFFFFE100'
-    desc: "Secondary System Control Registers (SYS2). Additional control for PLL, clocks, and\
-  \ EFUSE."
+    desc: "Secondary System Control Registers (SYS2). Additional control for PLL, clocks, and EFUSE."
     registers:
       PLLCTL3:
         offset: '0x00'
