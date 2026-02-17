@@ -95,12 +95,45 @@ CODING RULES:
 - Add a short provenance comment above each register access:
   // [prov] regs.yaml:<PERIPH>.<REGISTER>
 - C standard = C11. Build target = CCS for Cortex-R4 (RM46) with TI ARM CGT.
-- Write ISO C90-compatible code:
-  - Declare all local variables at the start of a block, before any statements.
-  - Do NOT use `for (int i = 0; ...)`; instead:
-      int i;
-      for (i = 0; i < n; ++i)
-- Do NOT use C99-only features (no mixed declarations/statements, no variable-length arrays, etc.).
+- Write ISO C90/C89-compatible code (TI compiler defaults to C89 mode):
+  - ALL variable declarations MUST be at the beginning of their block, before any executable statements.
+  - Do NOT use `for (int i = 0; ...)` or `for (uint32_t i = 0; ...)`:
+      // WRONG:
+      for (uint32_t i = 0; i < n; i++) {{ }}
+
+      // CORRECT:
+      uint32_t i;
+      for (i = 0; i < n; i++) {{ }}
+
+  - Do NOT declare variables after any executable statement:
+      // WRONG:
+      some_function();
+      uint32_t x = 5;  // Declaration after statement!
+
+      // CORRECT:
+      uint32_t x;
+      some_function();
+      x = 5;
+
+  - Static file-scope variables are automatically zero-initialized:
+      // CORRECT (no explicit initialization needed):
+      static MyStruct_t g_state;
+
+      // AVOID (may cause issues with complex types):
+      static MyStruct_t g_state = {{0}};
+
+- Do NOT use C99-only features (no mixed declarations/statements, no variable-length arrays, no designated initializers where not supported).
+
+RESERVED KEYWORD AVOIDANCE (CRITICAL for TI ARM Compiler):
+- Do NOT use reserved keywords as function parameter names or local variable names.
+- Prohibited keywords include:
+  * 'interrupt' - causes "invalid storage class for a parameter" errors
+  * 'inline', 'restrict', 'register' (as variable names)
+  * Any compiler-specific keywords
+- Use alternative names instead:
+  * Instead of 'interrupt': use 'flags', 'int_flags', 'irq_flags', 'event', etc.
+  * Instead of 'register': use 'reg_value', 'reg', 'config', etc.
+- This applies to ALL function signatures in headers and implementations.
 
 DOCUMENTATION / DOXYGEN RULES (required):
 - All generated C header (.h) and source (.c) files MUST use Doxygen-style comments for public APIs and types.
@@ -390,7 +423,10 @@ CODING RULES
 - C11, but ISO C90-compatible style
 - Declare locals at block start
 - Public headers MUST NOT include vendor headers
-- Use <stdint.h>
+- Use <stdint.h> for uint8_t, uint32_t, int32_t, etc.
+- Use <stddef.h> for NULL, size_t, ptrdiff_t
+- Use <stdbool.h> for bool, true, false (if needed)
+- Include all dependencies needed for types used in the file
 - Use ONLY FACTS MIRROR constants
 - You may define:
     #define REG32(addr) (*(volatile uint32_t *)(addr))
@@ -449,8 +485,15 @@ def build_clock_prompt(soc_yaml: str, regs_yaml: str, bus_yaml: str, manifest: d
 
         if "register_typedef" in pll_entry:
             pll_typedef = pll_entry["register_typedef"]
-        if "register_typedef" in system_entry:
-            system_typedef = system_entry["register_typedef"]
+
+        # Try new array format first, fall back to old single typedef
+        typedefs = system_entry.get("register_typedefs", [])
+        if typedefs:
+            system_typedef = typedefs[0]  # Use primary typedef
+        else:
+            # Fallback for old manifests
+            if "register_typedef" in system_entry:
+                system_typedef = system_entry["register_typedef"]
 
     typedef_section = f"""
     REGISTER ACCESS (MANDATORY - CRITICAL FOR COMPILATION):
@@ -720,7 +763,10 @@ def build_clock_prompt(soc_yaml: str, regs_yaml: str, bus_yaml: str, manifest: d
     - C11, but ISO C90-compatible style
     - Declare locals at block start (no declarations inside for loops)
     - Public headers MUST NOT include vendor headers
-    - Use <stdint.h>
+    - Use <stdint.h> for uint8_t, uint32_t, int32_t, etc.
+    - Use <stddef.h> for NULL, size_t, ptrdiff_t
+    - Use <stdbool.h> for bool, true, false (if needed)
+    - Include all dependencies needed for types used in the file
     - Use ONLY FACTS MIRROR constants
     - You may define:
         #define REG32(addr) (*(volatile uint32_t *)(addr))
@@ -922,13 +968,25 @@ irq.yaml fragment (full list):
 def build_system_init_prompt(soc_yaml: str, regs_yaml: str, manifest: dict = None, bus_yaml: str = ""):
     # Extract typedef name from manifest (Pass 1 generated header)
     system_typedef = "SYSTEM_REGS_t"  # Default fallback
+    has_system2 = False
+    system2_typedef = None
 
     if manifest:
         api_catalog = manifest.get("api_catalog", {})
         system_entry = api_catalog.get("SYSTEM", {})
 
-        if "register_typedef" in system_entry:
-            system_typedef = system_entry["register_typedef"]
+        # Try new array format first, fall back to old single typedef
+        typedefs = system_entry.get("register_typedefs", [])
+        if typedefs:
+            system_typedef = typedefs[0]  # Use primary typedef
+            # Check if there are secondary typedefs (like SYSTEM2)
+            if len(typedefs) > 1:
+                has_system2 = True
+                system2_typedef = typedefs[1]
+        else:
+            # Fallback for old manifests
+            if "register_typedef" in system_entry:
+                system_typedef = system_entry["register_typedef"]
 
     typedef_section = f"""
     REGISTER ACCESS (MANDATORY - CRITICAL FOR COMPILATION):
@@ -948,7 +1006,19 @@ def build_system_init_prompt(soc_yaml: str, regs_yaml: str, manifest: dict = Non
 
     CRITICAL: You MUST use this EXACT typedef name. It comes from Pass 1 generated header.
     DO NOT guess, modify, or assume a different typedef name - use this name EXACTLY.
+"""
 
+    if has_system2:
+        typedef_section += f"""
+    NOTE: This header contains TWO register structures:
+    - {system_typedef} at 0xFFFFFF00 (primary SYSTEM registers)
+    - {system2_typedef} at 0xFFFFE100 (secondary SYSTEM2 registers)
+
+    For system initialization, you MUST use {system_typedef} for the primary SYSTEM registers.
+    Do NOT use {system2_typedef} unless accessing SYSTEM2-specific registers at 0xFFFFE100.
+"""
+
+    typedef_section += """
     DO NOT use inline #define macros for register access:
     ```c
     // WRONG - Do not do this:
@@ -1771,7 +1841,15 @@ INPUT CONTEXT:
 TASK:
 Generate the C header file defining the register map struct.
 - Filename: reg_{module_name.lower()}.h
-- Use "typedef volatile struct" for the register map.
+- Use "typedef struct" for the register map (NOT "typedef volatile struct").
+- CRITICAL: Each register member MUST be declared as "volatile uint32_t" (not plain "uint32_t").
+- The volatile keyword MUST be on each member, NOT on the struct typedef itself.
+- This is essential for preventing compiler optimization of hardware register access.
+- Example:
+    typedef struct {{
+        volatile uint32_t REG_NAME;    /**< Register description */
+        volatile uint32_t RESERVED0;   /**< Reserved */
+    }} PERIPHERAL_REG_MAP_t;
 - Use uint32_t for all register widths (unless specified otherwise).
 - Define bit-masks as macros (e.g., #define {module_name.upper()}_BIT_NAME ...).
 - Do NOT use bit-fields.
@@ -1781,7 +1859,7 @@ Generate the C header file defining the register map struct.
 MULTIPLE BASE ADDRESS HANDLING:
 - If the YAML input contains registers for TWO peripherals with DIFFERENT base_address values
   (e.g. "system" at 0xFFFFFF00 AND "system2" at 0xFFFFE100), you MUST generate TWO separate
-  typedef volatile struct definitions, one per base address.
+  typedef struct definitions with volatile members, one per base address.
 - Name each typedef using the peripheral name in SCREAMING_SNAKE with _REG_MAP_t suffix:
     system  → SYSTEM_REG_MAP_t   (base 0xFFFFFF00)
     system2 → SYSTEM2_REG_MAP_t  (base 0xFFFFE100)
@@ -1836,6 +1914,18 @@ ORDERING:
 - Do NOT implement functions here
 - Wrap output in a C code block
 
+CLOCK FREQUENCY CONSTANTS IN HEADERS - FORBIDDEN:
+-------------------------------------------------
+- Do NOT define clock frequency constants (#define *_FREQUENCY, *_HZ, *_CLOCK)
+- Do NOT define prescaler constants based on assumed clock values
+- Do NOT use magic numbers for clock-related calculations
+- Header may declare configuration functions (e.g., SetBaudRate, SetPrescaler)
+- Implementation (.c file) MUST query clock frequency dynamically at runtime
+
+If user needs to configure frequency-dependent features:
+- Provide function that takes desired value (e.g., SetBaudRate(uint32_t baud))
+- Implementation queries actual clock and calculates register values
+
 OUTPUT:
 Return ONLY the C code content.
 """
@@ -1851,12 +1941,25 @@ def build_pass2_driver_c_prompt(module_name: str, manifest_json: str, reg_header
         # Extract the SYSTEM register typedef name from the manifest so the LLM uses
         # the exact name generated by Pass 1 rather than guessing.
         system_typedef = "SYSTEM_REG_MAP_t"  # safe fallback
+        system2_typedef = None
+        has_system2 = False
+
         if manifest:
             api_catalog = manifest.get("api_catalog") or {}
             system_entry = api_catalog.get("SYSTEM") or {}
-            td = system_entry.get("register_typedef")
-            if td:
-                system_typedef = td
+
+            # Try new array format first
+            typedefs = system_entry.get("register_typedefs", [])
+            if typedefs:
+                system_typedef = typedefs[0]  # Primary
+                if len(typedefs) > 1:
+                    system2_typedef = typedefs[1]  # Secondary
+                    has_system2 = True
+            else:
+                # Fallback to old format
+                td = system_entry.get("register_typedef")
+                if td:
+                    system_typedef = td
 
         pll_section = f"""
 PLL MODULE SPECIAL REQUIREMENTS (MANDATORY):
@@ -1886,16 +1989,28 @@ REQUIRED INCLUDES in pll_driver.c:
 - Do NOT include a separate reg_pll.h if PLL registers are already in reg_system.h
 
 REGISTER ACCESS (MANDATORY):
-- The EXACT typedef name for the SYSTEM register struct is: {system_typedef}  (from Pass 1 manifest)
-- Declare ONE register pointer to the SYSTEM base (which contains both PLL and clock control regs):
+- The EXACT typedef name for the PRIMARY SYSTEM register struct is: {system_typedef}
+- Declare register pointer to the SYSTEM base (0xFFFFFF00):
     static {system_typedef} * const SYSREG = ({system_typedef} *)0xFFFFFF00u;
-- If reg_system.h contains SYSTEM2_REG_MAP_t (secondary system registers at 0xFFFFE100),
-  ALSO declare:
+"""
+
+        if has_system2:
+            pll_section += f"""
+- The header ALSO contains {system2_typedef} for secondary registers at 0xFFFFE100:
+    static {system2_typedef} * const SYSREG2 = ({system2_typedef} *)0xFFFFE100u;
+- Use SYSREG2 for: PLLCTL3, CLK2CNTRL, VCLKACON1, CLKSLIP, STCCLKDIV
+- Use SYSREG for: PLLCTL1, PLLCTL2, CLKCNTL, CSDIS, CDDIS, GHVSRC
+"""
+        else:
+            pll_section += """
+- If reg_system.h contains SYSTEM2_REG_MAP_t (check INPUT CONTEXT 3), also declare:
     static SYSTEM2_REG_MAP_t * const SYSREG2 = (SYSTEM2_REG_MAP_t *)0xFFFFE100u;
-- Use SYSREG2->PLLCTL3  for PLL2 configuration
+- Use SYSREG2->PLLCTL3 for PLL2 configuration
 - Use SYSREG2->CLK2CNTRL for VCLK3R (bits[3:0]) and VCLK4R (bits[11:8]) dividers
 - Use SYSREG2->VCLKACON1 for VCLKA3 and VCLKA4 source and divider configuration
-- Only declare SYSREG2 if SYSTEM2_REG_MAP_t is actually present in INPUT CONTEXT 3.
+"""
+
+        pll_section += """
 - Use EXACT member names from reg_system.h (e.g. SYSREG->PLLCTL1, SYSREG->CSDISCLR, SYSREG->CLKCNTL)
 - NEVER use undefined symbols. Every constant you use MUST exist in reg_system.h or your FACTS MIRROR.
 
@@ -1986,10 +2101,58 @@ FORBIDDEN:
 - Do NOT reference undefined symbols (every macro you use must exist in reg_system.h)
 """
 
+    UNIVERSAL_CLOCK_RULES = """
+CLOCK FREQUENCY HANDLING - MANDATORY FOR ALL PERIPHERAL DRIVERS:
+================================================================
+Never hardcode clock frequencies. Always call available API functions to establish clock frequencies.
+
+This applies to ANY calculation involving:
+- Baud rates (UART, SCI, CAN, I2C)
+- Prescalers (ADC, PWM, Timers)
+- Timeouts (Watchdog, RTI)
+- Dividers (SPI clocks, PWM frequency)
+
+ABSOLUTELY FORBIDDEN:
+```c
+// ❌ NEVER do this:
+#define VCLK_FREQUENCY 110000000U
+#define SCI_CLOCK_HZ 110000000U
+#define PRESCALER_VALUE 5  // hardcoded for specific frequency
+uint32_t freq = 110000000; // magic number
+prescaler = (110000000 / baud) - 1;  // hardcoded calculation
+```
+
+ALWAYS REQUIRED:
+```c
+// ✅ ALWAYS do this:
+#include "pll_driver.h"
+uint32_t clk_hz = PLL_GetFrequency(CLOCKDOMAIN_VCLK);  // Query at runtime
+uint32_t prescaler = (clk_hz / (16 * baud)) - 1;       // Use queried value
+```
+
+WHY THIS MATTERS:
+- Clock frequencies are board-specific and configurable
+- PLL settings vary by application
+- Runtime clock changes must be supported
+- Hardcoded values WILL cause wrong baud rates and timing failures
+
+If manifest shows "PLL" in dependencies, these APIs are guaranteed available:
+- PLL_GetFrequency(clock_domain_t domain) → Returns Hz for specified domain
+- PLL_EnableClock(clock_domain_t domain) → Enables clock before peripheral access
+
+Use the clock_domain_t enum value matching your peripheral's clock_ref from the manifest.
+
+VALIDATION: After writing code, scan for patterns like:
+- "#define.*FREQUENCY", "#define.*HZ", "#define.*CLOCK"
+- Numeric literals > 1000000 in calculations
+If found, replace with PLL_GetFrequency() calls.
+"""
+
     return f"""
 You are an Expert Embedded C Developer.
 Generate the Driver Implementation file for the "{module_name}" peripheral.
 {pll_section}
+{UNIVERSAL_CLOCK_RULES}
 
 INPUT CONTEXT:
 1. Module Name: "{module_name}"
@@ -2315,6 +2478,30 @@ async def invoke_model(model: Model, max_tokens: int, messages: list[Message]) -
         # If you see ThrottlingException, reduce this number
         # If you have increased quotas, you can raise it to 30-50
         _model_semaphore = asyncio.Semaphore(15)
+
+    # Token limit protection: Claude models have 200K total context limit (input + output)
+    # Dynamically calculate available output tokens based on actual input size
+    MODEL_CONTEXT_LIMIT = 200000
+    SAFETY_MARGIN = 5000  # Buffer for tokenizer estimation error
+
+    # Estimate input token count (rough: ~4 chars per token)
+    total_input_chars = sum(len(msg["content"]) for msg in messages)
+    estimated_input_tokens = total_input_chars // 4
+
+    # Calculate maximum available output tokens
+    available_output = MODEL_CONTEXT_LIMIT - estimated_input_tokens - SAFETY_MARGIN
+
+    # Adjust max_tokens if it exceeds available space
+    if max_tokens > available_output:
+        if available_output < 4096:
+            # Input is extremely large, use minimum viable output
+            print(f"[warn] Input very large (~{estimated_input_tokens} tokens). "
+                  f"Only {available_output} tokens available for output. Using minimum 4096.")
+            max_tokens = 4096
+        else:
+            print(f"[info] Requested {max_tokens} output tokens, but only {available_output} available "
+                  f"(estimated input: ~{estimated_input_tokens} tokens). Adjusting output to {available_output}.")
+            max_tokens = available_output
 
     async with _model_semaphore:
         body = {

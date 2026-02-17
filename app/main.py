@@ -6,6 +6,7 @@ import os
 import signal
 import sys
 from pathlib import Path
+from typing import List, Dict
 
 from config import YAMLS_DIR, TARGET_FILES, FACTS_CANON, PATTERN_SNIPS
 
@@ -25,7 +26,7 @@ from modules.generation.prompt import (
     _progress,                    # global progress tracker
     _cost_tracker,                # global cost tracker
 )
-from modules.utils.user import prompt_user_for_peripherals
+from modules.utils.user import prompt_user_for_peripherals, get_peripheral_list
 
 from modules.yaml.yaml_utils import (
     dump_yaml_str,
@@ -45,6 +46,7 @@ CORE_MODULES = [
     "SYSTEM",    # Base system initialization
     "PLL",       # Clock/PLL hardware (generates manifest entry)
     "VIM",       # Vectored interrupt manager
+    "PCR",       # Peripheral Central Resource (power control)
 ]
 
 # Manifest API name aliases: Some hardware modules need API aliases in manifest
@@ -52,8 +54,39 @@ CORE_MODULES = [
 # DISABLED: Using PLL directly as the clock module for consistency
 # Peripherals should reference "PLL" for clock dependencies
 CORE_MANIFEST_ALIASES = {
-    # Removed PLL→clock alias. PLL module provides clock APIs directly.
+    # Removed PLL->clock alias. PLL module provides clock APIs directly.
 }
+
+
+def resolve_dependencies(modules: List[str], manifest: Dict) -> List[str]:
+    """
+    Recursively resolve all dependencies for the given modules.
+
+    Args:
+        modules: List of module names to generate
+        manifest: Complete BSP manifest with api_catalog
+
+    Returns:
+        List of modules including all transitive dependencies
+    """
+    resolved = set(modules)
+    to_process = list(modules)
+
+    api_catalog = manifest.get("api_catalog", {})
+
+    while to_process:
+        current = to_process.pop().upper()
+
+        if current in api_catalog:
+            deps = api_catalog[current].get("dependencies", [])
+            for dep in deps:
+                dep_upper = dep.upper()
+                if dep_upper not in resolved and dep_upper not in ["SYSTEM", "VIM"]:
+                    # Don't add SYSTEM/VIM as they're already in Pass 3
+                    resolved.add(dep_upper)
+                    to_process.append(dep_upper)
+
+    return sorted(resolved)
 
 
 def gather_all_clock_domains(soc_data: dict, bus_data: dict = None) -> list:
@@ -155,6 +188,7 @@ async def _invoke_and_write(
     out_dir: Path,
     soc_data: dict = None,
     regs_data: dict = None,
+    token_allocator = None,
 ):
     """
     Helper to:
@@ -163,6 +197,7 @@ async def _invoke_and_write(
       - save raw text,
       - split and write files immediately upon completion,
       - validate FACTS MIRROR (if soc_data and regs_data provided).
+      - track token usage (if token_allocator provided).
     """
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -188,6 +223,17 @@ async def _invoke_and_write(
 
     text = extract_text_from_bedrock_response(resp)
     ts = _now_tag()
+
+    # Track token usage for Pass 3 platform files
+    if token_allocator:
+        try:
+            from modules.utils.utils import extract_usage_from_bedrock_response
+            usage = extract_usage_from_bedrock_response(resp)
+            tokens_used = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+            if tokens_used > 0:
+                token_allocator.record_success(f"pass3_{tag}", tokens_used)
+        except Exception:
+            pass  # Don't fail if token tracking fails
 
     if not text.strip():
         (artifacts_dir / f"{tag}_empty_text_{ts}.txt").write_text(
@@ -374,6 +420,7 @@ async def _generate_startup(
     artifacts_dir: Path,
     out_dir: Path,
     start_user_prompt: str,
+    token_allocator = None,
 ):
     """Generate start.s (assembly vector / SP setup)"""
     return await _invoke_and_write(
@@ -384,6 +431,7 @@ async def _generate_startup(
         max_tokens=max_tokens,
         artifacts_dir=artifacts_dir,
         out_dir=out_dir,
+        token_allocator=token_allocator,
     )
 
 
@@ -394,8 +442,9 @@ async def _generate_entry(
     artifacts_dir: Path,
     out_dir: Path,
     entry_user_prompt: str,
+    token_allocator = None,
 ):
-    """Generate entry.c (Reset_Handler_C → system_init() → main())"""
+    """Generate entry.c (Reset_Handler_C -> system_init() -> main())"""
     return await _invoke_and_write(
         tag="entry_c",
         system_prompt=system_prompt,
@@ -404,6 +453,7 @@ async def _generate_entry(
         max_tokens=max_tokens,
         artifacts_dir=artifacts_dir,
         out_dir=out_dir,
+        token_allocator=token_allocator,
     )
 
 
@@ -414,6 +464,7 @@ async def _generate_clock(
     artifacts_dir: Path,
     out_dir: Path,
     clock_user_prompt: str,
+    token_allocator = None,
 ):
     """Generate clock setup code"""
     return await _invoke_and_write(
@@ -424,6 +475,7 @@ async def _generate_clock(
         max_tokens=max_tokens,
         artifacts_dir=artifacts_dir,
         out_dir=out_dir,
+        token_allocator=token_allocator,
     )
 
 
@@ -434,6 +486,7 @@ async def _generate_system(
     artifacts_dir: Path,
     out_dir: Path,
     system_init_user_prompt: str,
+    token_allocator = None,
 ):
     """Generate system.c / system.h"""
     return await _invoke_and_write(
@@ -444,6 +497,7 @@ async def _generate_system(
         max_tokens=max_tokens,
         artifacts_dir=artifacts_dir,
         out_dir=out_dir,
+        token_allocator=token_allocator,
     )
 
 
@@ -454,6 +508,7 @@ async def _generate_linker(
     artifacts_dir: Path,
     out_dir: Path,
     linker_user_prompt: str,
+    token_allocator = None,
 ):
     """Generate linker script"""
     return await _invoke_and_write(
@@ -464,6 +519,7 @@ async def _generate_linker(
         max_tokens=max_tokens,
         artifacts_dir=artifacts_dir,
         out_dir=out_dir,
+        token_allocator=token_allocator,
     )
 
 
@@ -474,6 +530,7 @@ async def _generate_vim(
     artifacts_dir: Path,
     out_dir: Path,
     vim_user_prompt: str,
+    token_allocator = None,
 ):
     """Generate VIM driver"""
     return await _invoke_and_write(
@@ -484,6 +541,7 @@ async def _generate_vim(
         max_tokens=max_tokens,
         artifacts_dir=artifacts_dir,
         out_dir=out_dir,
+        token_allocator=token_allocator,
     )
 
 
@@ -531,7 +589,7 @@ async def main():
     signal.signal(signal.SIGINT, signal_handler)
 
     parser = argparse.ArgumentParser(
-        description="YAML-in → Claude → BSP-out (multi-peripheral BSP)"
+        description="YAML-in -> Claude -> BSP-out (multi-peripheral BSP)"
     )
     parser.add_argument(
         "--out",
@@ -570,6 +628,15 @@ async def main():
         "-y", "--yes",
         action="store_true",
         help="Skip cost confirmation prompt and proceed automatically",
+    )
+    parser.add_argument(
+        "--modules",
+        nargs="+",
+        help=(
+            "Specify peripheral modules to generate (e.g., --modules SCI LIN GIO). "
+            "If not specified, will prompt interactively. "
+            "Use with --targets peripherals or --targets all."
+        ),
     )
     args = parser.parse_args()
 
@@ -638,9 +705,21 @@ async def main():
     pass2_modules = ["PLL"]  # Pass 2: Always include PLL driver + user peripherals
 
     if generate_peripherals:
-        print("\n[user] Select Peripherals for BSP Generation:")
-        print("[info] Core infrastructure (SYSTEM, VIM) are platform files; PLL driver provides clock APIs")
-        chosen_peripherals = prompt_user_for_peripherals(soc_data)
+        # Use --modules argument if provided, otherwise prompt interactively
+        if args.modules:
+            print(f"\n[info] Using peripherals from command line: {', '.join(args.modules)}")
+            # Filter soc_data to only include specified modules
+            all_peripherals = get_peripheral_list(soc_data)
+            chosen_peripherals = [p for p in all_peripherals if p.get("name", "").upper() in [m.upper() for m in args.modules]]
+            if len(chosen_peripherals) != len(args.modules):
+                found_names = [p.get("name") for p in chosen_peripherals]
+                missing = set(m.upper() for m in args.modules) - set(n.upper() for n in found_names)
+                print(f"[warn] Could not find modules: {', '.join(missing)}")
+        else:
+            print("\n[user] Select Peripherals for BSP Generation:")
+            print("[info] Core infrastructure (SYSTEM, VIM) are platform files; PLL driver provides clock APIs")
+            chosen_peripherals = prompt_user_for_peripherals(soc_data)
+
         if chosen_peripherals:
             user_selected_peripherals = [p.get("name") for p in chosen_peripherals]
             # Add user selections to pass1 for manifest, avoiding duplicates
@@ -662,7 +741,15 @@ async def main():
 
         print(f"  Model: {model_enum.get_display_name()}")
         print(f"  Modules to generate: {estimate['num_modules']}")
-        print(f"  Estimated tokens: {estimate['total_tokens']:,} (~{estimate['avg_tokens_per_module']:,} per module)")
+        print(f"  Estimated tokens: {estimate['total_tokens']:,}")
+
+        # Show breakdown by pass
+        if 'breakdown' in estimate:
+            breakdown = estimate['breakdown']
+            print(f"    Pass 1 (headers):    {breakdown['pass1_tokens']:,}")
+            print(f"    Pass 2 (drivers):    {breakdown['pass2_tokens']:,}")
+            print(f"    Pass 3 (platform):   {breakdown['pass3_tokens']:,}")
+
         print(f"  Estimated cost: ${estimate['cost_usd']:.2f} USD")
 
         if not estimate['has_history']:
@@ -720,7 +807,7 @@ async def main():
 
         # --- CREATE MANIFEST ALIASES ---
         # Some hardware modules need API aliases so peripherals can reference them
-        # Example: PLL hardware → clock API (peripherals call clock_enable, not PLL_Enable)
+        # Example: PLL hardware -> clock API (peripherals call clock_enable, not PLL_Enable)
         if bsp_manifest and CORE_MANIFEST_ALIASES:
             api_catalog = bsp_manifest.get("api_catalog", {})
             for hw_name, api_name in CORE_MANIFEST_ALIASES.items():
@@ -728,7 +815,7 @@ async def main():
                     # Create alias entry (copy of hardware entry with different name)
                     alias_entry = api_catalog[hw_name].copy()
                     alias_entry["module_name"] = api_name
-                    # Update function names to use alias (PLL_Init → clock_init)
+                    # Update function names to use alias (PLL_Init -> clock_init)
                     if "init_function" in alias_entry:
                         alias_entry["init_function"] = alias_entry["init_function"].replace(hw_name, api_name)
                     # Update header file names
@@ -738,11 +825,22 @@ async def main():
                         alias_entry["reg_header_file"] = alias_entry["reg_header_file"].replace(hw_name.lower(), api_name.lower())
 
                     api_catalog[api_name] = alias_entry
-                    print(f"[info] Created manifest alias: {hw_name} → {api_name}")
+                    print(f"[info] Created manifest alias: {hw_name} -> {api_name}")
 
             # Save updated manifest with aliases
             manifest_path = out_dir / "bsp_manifest.json"
             manifest_path.write_text(json.dumps(bsp_manifest, indent=2), encoding="utf-8")
+
+        # --- DEPENDENCY RESOLUTION ---
+        # Resolve dependencies to include PCR and other required modules
+        if generate_peripherals and pass2_modules and bsp_manifest:
+            print("[info] Resolving module dependencies...")
+            original_count = len(pass2_modules)
+            pass2_modules = resolve_dependencies(pass2_modules, bsp_manifest)
+
+            if len(pass2_modules) > original_count:
+                added = set(pass2_modules) - set([m.upper() for m in pass2_modules[:original_count]])
+                print(f"[info] Auto-included dependencies: {', '.join(sorted(added))}")
 
         # --- PASS 2: Implementation ---
         pass2_validation_results = []
@@ -757,7 +855,8 @@ async def main():
                 max_tokens=args.max_tokens,
                 allowed_modules=pass2_modules,
                 regs_data=regs_data,
-                enable_validation=True
+                enable_validation=True,
+                token_allocator=token_allocator
             )
             print("\n[info] Pass 2 Complete.")
 
@@ -798,14 +897,14 @@ async def main():
 
         if init_order.is_valid():
             print(f"[ok] Dependency graph valid - {len(init_order.order)} modules")
-            print(f"[info] Init order: {' → '.join(init_order.order[:5])}{'...' if len(init_order.order) > 5 else ''}")
+            print(f"[info] Init order: {' -> '.join(init_order.order[:5])}{'...' if len(init_order.order) > 5 else ''}")
 
             # Generate main.c with correct init sequence
             main_c_path = generate_main_c(init_order, dep_graph, out_dir)
             print(f"[ok] Generated {main_c_path.name} with dependency-ordered init sequence")
         else:
             print(f"[error] Circular dependency detected!")
-            print(f"[error] Cycle: {' → '.join(init_order.cycle_nodes)}")
+            print(f"[error] Cycle: {' -> '.join(init_order.cycle_nodes)}")
             print(f"[warn] Skipping main.c generation due to dependency cycle")
 
     except Exception as e:
@@ -878,7 +977,7 @@ async def main():
         generation_tasks.append(
             _generate_startup(
                 system_prompt, model_enum, args.max_tokens, artifacts, out_dir,
-                start_user_prompt
+                start_user_prompt, token_allocator
             )
         )
         print("[debug] Added task: start_asm")
@@ -887,7 +986,7 @@ async def main():
         generation_tasks.append(
             _generate_entry(
                 system_prompt, model_enum, args.max_tokens, artifacts, out_dir,
-                entry_user_prompt
+                entry_user_prompt, token_allocator
             )
         )
         print("[debug] Added task: entry_c")
@@ -901,6 +1000,7 @@ async def main():
                 artifacts,
                 out_dir,
                 clock_user_prompt,
+                token_allocator,
             )
         )
         print("[debug] Added task: clock_setup")
@@ -915,6 +1015,7 @@ async def main():
                 artifacts,
                 out_dir,
                 system_init_user_prompt,
+                token_allocator,
             )
         )
         print("[debug] Added task: system_init")
@@ -928,6 +1029,7 @@ async def main():
                 artifacts,
                 out_dir,
                 linker_user_prompt,
+                token_allocator,
             )
         )
         print("[debug] Added task: linker")
@@ -941,6 +1043,7 @@ async def main():
                 artifacts,
                 out_dir,
                 vim_user_prompt,
+                token_allocator,
             )
         )
         print("[debug] Added task: vim_driver")
@@ -1088,7 +1191,7 @@ async def main():
         print(f"    Input tokens:  {stats['input_tokens']:,}")
         print(f"    Output tokens: {stats['output_tokens']:,}")
         print(f"    Total tokens:  {stats['total_tokens']:,}")
-        print(f"    Estimated cost: ${stats['cost_usd']:.2f} USD")
+        print(f"    Actual cost: ${stats['cost_usd']:.2f} USD")
     except Exception as e:
         print(f"[warn] Could not display cost summary: {e}")
 

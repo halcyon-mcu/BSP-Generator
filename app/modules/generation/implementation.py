@@ -170,7 +170,8 @@ async def run_implementation_pass(
     max_tokens: int = 20000,
     allowed_modules: Optional[List[str]] = None,
     regs_data: Optional[Dict[str, Any]] = None,
-    enable_validation: bool = True
+    enable_validation: bool = True,
+    token_allocator = None
 ):
     """
     Pass 2: Driver Implementation.
@@ -181,6 +182,7 @@ async def run_implementation_pass(
     :param allowed_modules: If provided, only implement modules with names in this list.
     :param regs_data: Register definitions for validation
     :param enable_validation: Whether to run validation on generated files
+    :param token_allocator: Optional token allocator for tracking token usage
     """
     
     api_catalog = manifest.get("api_catalog", {})
@@ -219,6 +221,17 @@ async def run_implementation_pass(
                 prompt = build_pass2_driver_h_prompt(mod_name, json.dumps(mod_data, indent=2), reg_content)
                 resp = await invoke_model(model, current_tokens, [{"role": "user", "content": prompt}])
                 text = extract_text_from_bedrock_response(resp)
+
+                # Track token usage for cost estimation
+                if token_allocator:
+                    try:
+                        from ..utils.utils import extract_usage_from_bedrock_response
+                        usage = extract_usage_from_bedrock_response(resp)
+                        tokens_used = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+                        if tokens_used > 0:
+                            token_allocator.record_success(f"pass2_{mod_name.lower()}_header", tokens_used)
+                    except Exception:
+                        pass  # Don't fail if token tracking fails
 
                 # Check for truncation
                 truncation_reason = detect_simple_truncation(text)
@@ -265,6 +278,17 @@ async def run_implementation_pass(
                 prompt = build_pass2_driver_c_prompt(mod_name, json.dumps(mod_data, indent=2), reg_content, soc_slice, bus_slice, manifest=manifest)
                 resp = await invoke_model(model, current_tokens, [{"role": "user", "content": prompt}])
                 text = extract_text_from_bedrock_response(resp)
+
+                # Track token usage for cost estimation
+                if token_allocator:
+                    try:
+                        from ..utils.utils import extract_usage_from_bedrock_response
+                        usage = extract_usage_from_bedrock_response(resp)
+                        tokens_used = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+                        if tokens_used > 0:
+                            token_allocator.record_success(f"pass2_{mod_name.lower()}_source", tokens_used)
+                    except Exception:
+                        pass  # Don't fail if token tracking fails
 
                 # Check for truncation
                 truncation_reason = detect_simple_truncation(text)

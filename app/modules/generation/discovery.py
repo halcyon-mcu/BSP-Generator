@@ -42,36 +42,33 @@ def clean_json_string(json_str: str) -> str:
     return json_str
 
 
-def extract_typedef_from_header(header_content: str) -> Optional[str]:
+def extract_typedefs_from_header(header_content: str) -> List[str]:
     """
-    Extract the register typedef name from a generated register header.
+    Extract ALL register typedefs from a generated register header in order they appear.
     Looks for patterns like:
       typedef volatile struct { ... } typename_t;
     or
       } typename_t;
 
-    Returns the typedef name (e.g., "pll_reg_map_t", "SYSTEM_REGS_t") or None if not found.
+    Returns a list of typedef names (e.g., ["SYSTEM_REG_MAP_t", "SYSTEM2_REG_MAP_t"]) or empty list if not found.
     """
     if not header_content:
-        return None
+        return []
 
     import re
 
-    # Pattern 1: typedef volatile struct { ... } name_t;
+    # Pattern: typedef volatile struct { ... } name_t;
     # Match the closing brace and typedef name
-    pattern1 = r'}\s*(\w+_t)\s*;'
-    matches = re.findall(pattern1, header_content)
+    pattern = r'}\s*(\w+_t)\s*;'
+    matches = re.findall(pattern, header_content)
 
-    # Return the last match (usually the main struct typedef)
-    if matches:
-        # Filter out common non-register typedefs
-        register_typedefs = [m for m in matches if not m.endswith('_type_t') and not m.startswith('vim_')]
-        if register_typedefs:
-            return register_typedefs[-1]  # Return last match (main typedef)
-        elif matches:
-            return matches[-1]  # Fallback to any typedef
+    # Filter out common non-register typedefs and return ALL matches
+    register_typedefs = [
+        m for m in matches
+        if not m.endswith('_type_t') and not m.startswith('vim_')
+    ]
 
-    return None
+    return register_typedefs  # Return ALL, not just one
 
 async def run_discovery_pass(
     soc_data: Dict[str, Any],
@@ -387,15 +384,18 @@ async def run_discovery_pass(
 
 
         # 5. SPECIAL CASE: SYSTEM Aggregation
-        # If this is the "SYSTEM" module, we want to include "system2" definitions as well
+        # If this is the "SYSTEM" module, we want to include "SYSTEM2" definitions as well
         # so they appear in the same reg_system.h file.
         if name.upper() == "SYSTEM":
             extra_slice = ""
-            if "system2" in all_peripherals:
-                extra_slice = dump_yaml_str({"system2": all_peripherals["system2"]})
-                # Append to existing slice
-                regs_slice = regs_slice + "\n" + extra_slice
-                logger.info("Merged 'system2' registers into SYSTEM discovery context.")
+            # Try both uppercase and lowercase for robustness
+            for key in ["SYSTEM2", "system2"]:
+                if key in all_peripherals:
+                    extra_slice = dump_yaml_str({key: all_peripherals[key]})
+                    # Append to existing slice
+                    regs_slice = regs_slice + "\n" + extra_slice
+                    logger.info(f"Merged '{key}' registers into SYSTEM discovery context.")
+                    break
 
         # 6. Warn if no registers found
         # (This is expected for some peripherals that may not have register definitions yet)
@@ -435,16 +435,39 @@ async def run_discovery_pass(
         tasks.append(_process_module_full(p))
 
     print(f"[pass1] Launched {len(peripherals)} tasks (double-threaded). Waiting for results...")
-    
-    # Use as_completed to show progress
+
+    # Use as_completed to show progress and write files immediately
     results = []
+    manifest_entries = {}  # Collect manifest entries
+
     for f in asyncio.as_completed(tasks):
         res = await f
-        results.append(res)
-        print(".", end="", flush=True)
+
+        if res:
+            mod_name = res.get("module_name", "Unknown")
+
+            # Write register header immediately (if exists)
+            header_content = res.get("reg_header_content")
+            if header_content:
+                # Extract manifest to get proper header filename
+                mod_manifest = res.get("manifest", {})
+                header_name = mod_manifest.get("reg_header_file", f"reg_{mod_name.lower()}.h") if mod_manifest else f"reg_{mod_name.lower()}.h"
+                header_path = include_dir / header_name
+                header_path.write_text(header_content, encoding="utf-8")
+                print(f"\n[ok] {mod_name}: Register header written")
+
+            # Collect manifest entry for later (manifest needs all entries)
+            manifest_entry = res.get("manifest")
+            if manifest_entry:
+                manifest_entries[mod_name] = manifest_entry
+
+            # Keep results for backward compatibility
+            results.append(res)
+        else:
+            print(".", end="", flush=True)  # Fallback for empty results
     print("\n")
     
-    # 5. Process Results
+    # 5. Process Results - Build manifest and run validation
     success_count = 0
     validation_results = []
 
@@ -452,39 +475,30 @@ async def run_discovery_pass(
         if not res:
             continue
 
-        # Extract Manifest
-        mod_manifest = res.get("manifest", {})
-        mod_name = mod_manifest.get("module_name") or res.get("module_name")
+        mod_name = res.get("module_name")
+        if not mod_name:
+            continue
 
-        if mod_name:
-            if mod_manifest:
-                # Extract typedef name from register header and add to manifest
-                header_content = res.get("reg_header_content")
-                if header_content:
-                    typedef_name = extract_typedef_from_header(header_content)
-                    if typedef_name:
-                        mod_manifest["register_typedef"] = typedef_name
-                        logger.info(f"Extracted typedef '{typedef_name}' for {mod_name}")
-                    else:
-                        logger.warning(f"Could not extract typedef from register header for {mod_name}")
-
-                manifest["api_catalog"][mod_name] = mod_manifest
-            success_count += 1
-
-            # Write Register Header
+        # Extract typedef names from register header and add to manifest
+        mod_manifest = manifest_entries.get(mod_name)
+        if mod_manifest:
             header_content = res.get("reg_header_content")
-            header_name = mod_manifest.get("reg_header_file", f"reg_{mod_name.lower()}.h") if mod_manifest else f"reg_{mod_name.lower()}.h"
-
             if header_content:
-                header_path = include_dir / header_name
-                header_path.write_text(header_content, encoding="utf-8")
-                # logger.info(f"Generated {header_name}")
+                typedefs = extract_typedefs_from_header(header_content)
+                if typedefs:
+                    mod_manifest["register_typedef"] = typedefs[0]      # Primary (backward compat)
+                    mod_manifest["register_typedefs"] = typedefs        # All (array)
+                    logger.info(f"Extracted {len(typedefs)} typedef(s) for {mod_name}: {typedefs}")
+                else:
+                    logger.warning(f"Could not extract typedef from register header for {mod_name}")
 
-                # Run validation if enabled
+                # Run validation if enabled (header already written in as_completed loop)
                 if enable_validation and soc_data and regs_data:
                     from ..validation.validation_engine import validate_generation_output
 
                     try:
+                        header_name = mod_manifest.get("reg_header_file", f"reg_{mod_name.lower()}.h")
+                        header_path = include_dir / header_name
                         header_raw = res.get("reg_header_raw", "")
                         validation_result = validate_generation_output(
                             tag=f"pass1_{mod_name.lower()}",
@@ -503,9 +517,26 @@ async def run_discovery_pass(
                     except Exception as e:
                         logger.error(f"Validation error for {mod_name}: {e}")
 
-    # 6. Write Source of Truth
+            success_count += 1
+
+    # Build final manifest from collected entries
+    for mod_name, manifest_entry in manifest_entries.items():
+        if manifest_entry:
+            manifest["api_catalog"][mod_name] = manifest_entry
+
+    # 6. Write complete manifest (after ALL modules complete)
     manifest_path = output_dir / "bsp_manifest.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2),
+        encoding="utf-8"
+    )
+    print(f"[ok] BSP manifest written: {manifest_path}")
+
+    # Summary
+    print(f"\n[info] Pass 1 Complete:")
+    print(f"  Modules processed: {len(manifest_entries)}")
+    print(f"  Headers generated: {len([r for r in results if r and r.get('reg_header_content')])}")
+    print(f"  Manifest entries: {len(manifest['api_catalog'])}")
 
     logger.info(f"Pass 1 Complete. Registry built with {success_count} modules.")
     logger.info(f"Manifest: {manifest_path}")

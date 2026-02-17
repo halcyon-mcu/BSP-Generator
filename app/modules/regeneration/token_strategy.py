@@ -113,7 +113,7 @@ class AdaptiveTokenAllocator:
 
     def estimate_cost(self, num_modules: int, model_pricing: tuple, default_tokens: int = 20000) -> dict:
         """
-        Estimate the cost of generating modules based on historical data.
+        Estimate the cost of generating modules including all three passes.
 
         Args:
             num_modules: Number of modules to generate
@@ -125,16 +125,30 @@ class AdaptiveTokenAllocator:
         """
         input_price, output_price = model_pricing
 
-        # Calculate average tokens from history
+        # Calculate average from history (Pass 1 data)
         if self.module_history:
             all_tokens = [token for history in self.module_history.values() for token in history]
-            avg_tokens_per_module = int(sum(all_tokens) / len(all_tokens)) if all_tokens else default_tokens
+            avg_pass1_tokens = int(sum(all_tokens) / len(all_tokens)) if all_tokens else default_tokens
         else:
-            avg_tokens_per_module = default_tokens
+            avg_pass1_tokens = default_tokens
 
-        # Estimate token usage (rough approximation: 60% input, 40% output ratio)
-        estimated_input_tokens = int(num_modules * avg_tokens_per_module * 0.6)
-        estimated_output_tokens = int(num_modules * avg_tokens_per_module * 0.4)
+        # Account for all passes with realistic multipliers
+        # Pass 1: Manifest + register headers (baseline)
+        pass1_total = num_modules * avg_pass1_tokens
+
+        # Pass 2: Driver implementations are ~2x larger than headers
+        # (includes manifest context + register data + driver logic)
+        pass2_total = num_modules * int(avg_pass1_tokens * 2.0)
+
+        # Pass 3: Platform files (fixed overhead, ~5 files × 250K tokens each)
+        pass3_overhead = 1_250_000
+
+        # Total estimated tokens
+        total_estimated_tokens = pass1_total + pass2_total + pass3_overhead
+
+        # Adjust input/output ratio (observed to be closer to 75/25 than 60/40)
+        estimated_input_tokens = int(total_estimated_tokens * 0.75)
+        estimated_output_tokens = int(total_estimated_tokens * 0.25)
 
         # Calculate costs
         input_cost = (estimated_input_tokens / 1_000_000) * input_price
@@ -142,11 +156,16 @@ class AdaptiveTokenAllocator:
         total_cost = input_cost + output_cost
 
         return {
+            "num_modules": num_modules,
+            "total_tokens": total_estimated_tokens,
             "input_tokens": estimated_input_tokens,
             "output_tokens": estimated_output_tokens,
-            "total_tokens": estimated_input_tokens + estimated_output_tokens,
             "cost_usd": total_cost,
-            "avg_tokens_per_module": avg_tokens_per_module,
-            "num_modules": num_modules,
-            "has_history": bool(self.module_history)
+            "avg_tokens_per_module": avg_pass1_tokens,
+            "has_history": bool(self.module_history),
+            "breakdown": {
+                "pass1_tokens": pass1_total,
+                "pass2_tokens": pass2_total,
+                "pass3_tokens": pass3_overhead
+            }
         }
