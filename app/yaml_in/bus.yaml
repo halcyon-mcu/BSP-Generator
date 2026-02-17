@@ -3,25 +3,124 @@ sources:
 - name: OSCIN
   type: external_xtal
   freq_hz: 16000000
+- name: PLL1
+  type: pll
+  parent: OSCIN
+  x-ext:
+    description: Main PLL with frequency modulation capability
+    pll_registers:
+      control: PLLCTL1
+      control2: PLLCTL2
+      control3: PLLCTL3
+    multiplier_field:
+      register: PLLCTL1
+      field: NF
+      bits: [8, 15]
+      description: Feedback multiplier
+      range: [1, 255]
+      formula: "PLLCLK = OSCIN * NF / (NR * R)"
+    ref_divider_field:
+      register: PLLCTL1
+      field: NR
+      bits: [0, 5]
+      description: Reference divider
+      range: [0, 63]
+      note: "Actual divider = NR + 1"
+    post_divider_field:
+      register: PLLCTL2
+      field: R
+      bits: [0, 3]
+      description: Post divider for spreading
+      range: [0, 15]
+      encoding: power_of_2
+      note: "Actual divider = 2^R"
+    output_divider_field:
+      register: PLLCTL2
+      field: ODPLL
+      bits: [24, 27]
+      description: Output divider
+      range: [1, 31]
+      encoding: "linear - 1"
+      note: "Actual divider = ODPLL (0 reserved)"
+    default_config:
+      nr: 5
+      nf: 120
+      r: 1
+      odpll: 2
+      expected_output_hz: 160000000
+- name: PLL2
+  type: pll
+  parent: OSCIN
+  x-ext:
+    description: Secondary PLL without frequency modulation
+    note: "Similar structure to PLL1 but uses separate control registers"
 domains:
 - name: GCLK
   parent: PLL1
+  x-ext:
+    description: CPU clock - typically no divider, direct from PLL1
+    configurable: false
 - name: HCLK
   parent: PLL1
+  x-ext:
+    description: High-speed bus clock - typically no divider, direct from PLL1
+    configurable: false
 - name: VCLK
   parent: HCLK
   divider: 2
+  x-ext:
+    description: Primary peripheral clock
+    divider_register: CLKCNTL
+    divider_field: VCLKR
+    divider_bits: [16, 19]
+    divider_encoding: linear
+    divider_formula: "VCLK = HCLK / (divider + 1)"
+    divider_range: [0, 15]
+    divider_note: "Value 0 = divide by 1, value 1 = divide by 2, etc."
+    default_divider: 1
 - name: VCLK2
   parent: HCLK
   divider: 2
+  x-ext:
+    description: N2HET peripheral clock
+    divider_register: CLKCNTL
+    divider_field: VCLK2R
+    divider_bits: [20, 23]
+    divider_encoding: linear
+    divider_formula: "VCLK2 = HCLK / (divider + 1)"
+    divider_range: [0, 15]
+    default_divider: 1
 - name: VCLK3
   parent: HCLK
   divider: 2
+  x-ext:
+    description: EMAC/USB/EMIF peripheral clock
+    divider_register: VCLKACON1
+    divider_field: VCLK3R
+    divider_bits: [0, 3]
+    divider_encoding: linear
+    divider_formula: "VCLK3 = HCLK / (divider + 1)"
+    divider_range: [0, 15]
+    default_divider: 1
 - name: VCLK4
   parent: HCLK
   divider: 2
+  x-ext:
+    description: ePWM/eCAP/eQEP peripheral clock
+    divider_register: VCLKACON1
+    divider_field: VCLK4R
+    divider_bits: [8, 11]
+    divider_encoding: linear
+    divider_formula: "VCLK4 = HCLK / (divider + 1)"
+    divider_range: [0, 15]
+    default_divider: 1
 - name: RTICLK
   parent: VCLK
+  x-ext:
+    description: RTI timer clock - derived from VCLK
+    divider_register: RTICLKSEL
+    divider_note: "RTI can select from multiple sources, divider configuration in SYSTEM module"
+    configurable: true
 x-ext:
   clock_domain_details:
     GCLK:

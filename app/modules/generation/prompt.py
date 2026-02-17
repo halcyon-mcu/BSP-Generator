@@ -593,11 +593,22 @@ def build_clock_prompt(soc_yaml: str, regs_yaml: str, bus_yaml: str, manifest: d
     --------------------------------
     You MUST implement the following:
 
-    1) clock_ref_t enum
+    1) clock_ref_t enum - COMPREHENSIVE DOMAIN SUPPORT
     - Create a public enum clock_ref_t in clock.h with one entry per unique clock reference.
     - Discover clock references from soc.yaml:
         - include soc.peripherals[*].clock_ref
         - include all entries from x-ext.clock_refs if present
+    - CRITICAL: Support ALL standard RM46 clock domains, including:
+        * GCLK (global clock - typically PLL output)
+        * HCLK (high-speed bus clock)
+        * VCLK (peripheral bus clock 1)
+        * VCLK2 (peripheral bus clock 2)
+        * VCLK3 (peripheral bus clock 3)
+        * VCLK4 (peripheral bus clock 4)
+        * RTICLK (RTI/timer clock)
+        * HF_LPO (high-frequency low-power oscillator)
+        * LF_LPO (low-frequency low-power oscillator)
+        * OSCIN (external oscillator input)
     - Normalize enum names deterministically:
         CLOCKREF_<UPPERCASE_REF>
         - Replace non-alphanumeric with underscore
@@ -617,39 +628,69 @@ def build_clock_prompt(soc_yaml: str, regs_yaml: str, bus_yaml: str, manifest: d
         // [prov] regs.yaml:SYSTEM.<REGISTER>
         // [prov] regs.yaml:PCR.<REGISTER> (only if used)
 
-    3) Frequency query function (safe)
+    3) Frequency query function (safe) - DYNAMIC CALCULATION REQUIRED
     uint32_t clock_get_hz(clock_ref_t ref);
-    - MUST return best-known frequency derived ONLY from YAML facts:
-        - If frequency is a fixed source -> return it
-        - If derived from parent/divider:
-            - If divider value is known (default_divider or explicitly configured value tracked by this module) -> compute
-            - If divider encoding is unknown and no default_divider -> return 0 and document
-        - If PLL parameters are unknown -> return 0 unless bus.yaml provides a concrete freq_hz for that PLL output
-    - MUST NEVER guess.
+    - MUST return actual frequency by READING HARDWARE REGISTERS dynamically
+    - For fixed sources (OSCIN, HF_LPO, LF_LPO):
+        - Return the fixed frequency from bus.yaml
+    - For PLL-derived clocks:
+        - READ PLL registers (PLLCTL1, PLLCTL2) to extract:
+          * NR (reference divider) from PLLCTL1 bits [0:5]
+          * NF (feedback multiplier) from PLLCTL1 bits [8:15]
+          * R (post divider) from PLLCTL2 bits [0:3]
+          * OD (output divider) from PLLCTL2 bits [24:27]
+        - Calculate PLL output frequency using formula from datasheet:
+          PLLCLK = (OSCIN * NF) / (NR * R)  or similar
+        - If register bit positions not in regs.yaml, document limitation and return 0
+    - For clock domains with dividers (GCLK, HCLK, VCLK, VCLK2, VCLK3, VCLK4):
+        - READ divider registers (CLKCNTL, VCLKASRC, etc.) from SYSTEM
+        - Calculate: domain_freq = parent_freq / (divider + 1) or per encoding
+    - For RTI clock (RTICLK):
+        - READ RTICLK divider from SYSTEM registers
+        - Calculate from VCLK or appropriate parent
+    - MUST NEVER use hardcoded frequencies or assumptions
+    - MUST NEVER guess register encodings - if unknown, return 0 with TODO comment
 
-    CLOCK MODIFICATION API (APPLICATION-ONLY) (REQUIRED IF POSSIBLE)
-    ---------------------------------------------------------------
+    CLOCK MODIFICATION API (APPLICATION-ONLY) (REQUIRED)
+    ----------------------------------------------------
     Provide clock modification APIs that are intended ONLY for developer application code (main.c).
     These functions MUST NOT be called automatically by clock_enable(), clock_get_hz(), or any internal init.
     Peripheral drivers MUST NOT call them.
 
-    Required shape (choose ONE strategy):
+    REQUIRED PLL CONFIGURATION FUNCTIONS:
+    You MUST provide these PLL configuration functions if PLL register encodings are available:
 
-    Strategy A (preferred): single config entry point
-    - In clock.h:
-        typedef struct clock_config_t { ... } clock_config_t;
-        int clock_configure(const clock_config_t *cfg);
-    - clock_config_t must represent OPTIONAL per-ref settings (e.g., divider selections) and default to "no change".
-    - clock_configure() MUST validate inputs and return error without touching hardware if encodings are missing.
+    1) PLL Multiplier/Divider Setters:
+       int clock_set_pll_multiplier(uint8_t nf);  // Set NF (feedback multiplier)
+       int clock_set_pll_ref_divider(uint8_t nr); // Set NR (reference divider)
+       int clock_set_pll_post_divider(uint8_t r); // Set R (post divider)
+       int clock_set_pll_output_divider(uint8_t od); // Set OD (output divider)
 
-    OR
+    2) High-Level PLL Configuration:
+       int clock_configure_pll(uint32_t target_freq_hz);
+       - Calculate NR, NF, R, OD to achieve target frequency
+       - Validate against PLL constraints from bus.yaml
+       - Apply configuration to PLL registers
+       - Return error if target frequency not achievable
 
-    Strategy B: explicit divider setters
-    - In clock.h:
-        int clock_set_divider(clock_ref_t ref, uint32_t divider);
-    - Implement only for refs that have divider_reg/divider_field encodings present in YAML.
-    - For unsupported refs, return error.
-    - MUST NOT guess divider field encodings.
+    REQUIRED DIVIDER CONFIGURATION FUNCTIONS:
+    You MUST provide divider setters for each configurable clock domain:
+
+    For each domain with configurable divider (GCLK, HCLK, VCLK, VCLK2, VCLK3, VCLK4, RTICLK):
+       int clock_set_<domain>_divider(uint32_t divider);
+       - Write divider value to appropriate SYSTEM register field
+       - Return error if divider out of range or encoding unknown
+
+    Example:
+       int clock_set_vclk_divider(uint32_t divider);
+       int clock_set_hclk_divider(uint32_t divider);
+       int clock_set_rticlk_divider(uint32_t divider);
+
+    IMPLEMENTATION NOTES:
+    - All setter functions MUST validate inputs against bus.yaml constraints
+    - MUST return error codes (0 = success, negative = error)
+    - MUST NOT modify hardware if validation fails
+    - If register field encodings are not in YAML, function should return -ENOTSUP with comment
 
     In all cases:
     - Put a prominent comment in clock.h:
@@ -697,9 +738,9 @@ def build_clock_prompt(soc_yaml: str, regs_yaml: str, bus_yaml: str, manifest: d
     - optional: inline wrappers for common refs
 
     clock.c:
-    - include <stdint.h> and "clock.h"
-    - define base + offsets macros from FACTS MIRROR
-    - implement register operations with volatile accesses
+    - include <stdint.h>, "clock.h", "reg_pll.h", and "reg_system.h"
+    - declare register base pointers using struct-based access (as shown in REGISTER ACCESS section)
+    - implement register operations through struct member access (e.g., PLL->PLLCTL1, SYS->CSDIS)
     - implement clock_enable() and clock_get_hz() as switch(ref) dispatchers
     - implement application-only config API without calling it internally
     - add provenance comments above each register access
@@ -1010,38 +1051,26 @@ Requirements:
 
 2) system.c
 -----------
-- Include <stdint.h>, "system.h", and "pll_driver.h".
-- Define macros for SYSTEM and PCR base addresses and register offsets using the YAML data, for example:
-    #define SYSTEM_BASE 0xFFFFFF00u
-    #define SYSTEM_CLKCNTL_OFFSET 0x00D0u
-    #define PCR_BASE 0xFFFFE000u
-    #define PCR_PSPWRDWNCLR0_OFFSET 0x00A0u
-- Use the exact names and values taken from regs.yaml.
-- You may define:
-    #define REG32(addr) (*(volatile uint32_t *)(addr))
+- Include <stdint.h>, "system.h", "reg_system.h", and "pll_driver.h".
+- Include "reg_pcr.h" if PCR register access is needed for x-ext.init operations.
 
-- Implement a static helper to perform a register operation:
-    #define OP_SET_BITS   1
-    #define OP_CLEAR_BITS 2
-    #define OP_WRITE      3
+- Declare register base pointers using struct-based access (as shown in REGISTER ACCESS section):
+    static {system_typedef} * const SYS = ({system_typedef} *)0xFFFFFF00u;
+    static PCR_REGS_t * const PCR = (PCR_REGS_t *)0xFFFFE000u;  /* if needed */
 
-    static void reg_write_op(uint32_t base, uint32_t offset, uint32_t value, int op)
-    {
-        volatile uint32_t *reg;
+- For SYSTEM.x-ext.init operations:
+    - Parse each "reg" field to determine peripheral (SYSTEM or PCR) and register name
+    - Access registers through the struct pointer, e.g.:
+        SYS->CLKCNTL |= value;    /* for set_bits */
+        SYS->CLKCNTL &= ~value;   /* for clear_bits */
+        SYS->CLKCNTL = value;     /* for write */
+        PCR->PSPWRDWNCLR0 = value; /* for PCR registers */
 
-        reg = (volatile uint32_t *)(base + offset);
-
-        if (op == OP_SET_BITS) {
-            *reg |= value;
-        } else if (op == OP_CLEAR_BITS) {
-            *reg &= ~value;
-        } else if (op == OP_WRITE) {
-            *reg = value;
-        }
-    }
+- You MUST use the EXACT register member names from the Pass 1 generated headers.
+- The base addresses MUST come from regs.yaml.
 
 - Implement void system_init(void) that performs, in this exact order:
-  1) Apply SYSTEM.x-ext.init register operations in order via reg_write_op(...).
+  1) Apply SYSTEM.x-ext.init register operations in order using struct member access as shown above.
   2) Enable base clocks:
      - If SYSTEM.x-ext.base_clock_refs exists, call PLL_EnableClock() for each listed ref, in order.
      - If absent, do nothing (do NOT enable clocks implicitly).
@@ -1539,15 +1568,33 @@ Required Clock API Functions:
 3. PLL_ConfigureClock(...) - Optional: Configure PLL/dividers (for application use only)
 
 CRITICAL - Clock Domain Enum:
-You MUST define a "clock_domain_t" enum in the "types" section with ALL clock domains found in soc.yaml.
-Look for clock_ref values across all peripherals and include them all.
-Common domains include: GCLK, HCLK, VCLK, VCLK2, VCLK3, VCLK4, RTICLK, etc.
-Example enum format:
+You MUST define a "clock_domain_t" enum in the "types" section.
+
+CLOCK DOMAIN ENUM NAMING RULE (MANDATORY):
+- Transform each clock_ref string to: CLOCKDOMAIN_<UPPERCASE_REF>
+- Replace non-alphanumeric characters with underscores
+- Examples:
+  * "VCLK"   → CLOCKDOMAIN_VCLK
+  * "HF_LPO" → CLOCKDOMAIN_HF_LPO
+  * "VCLK2"  → CLOCKDOMAIN_VCLK2
+  * "RTICLK" → CLOCKDOMAIN_RTICLK
+  * "GCLK"   → CLOCKDOMAIN_GCLK
+  * "HCLK"   → CLOCKDOMAIN_HCLK
+
+CLOCK DOMAIN DISCOVERY:
+- The SOC YAML provided may include x-ext.all_clock_domains listing ALL clock domains used by peripherals in this system.
+- If x-ext.all_clock_domains is present in any peripheral entry, include ALL entries from that list in the enum.
+- Also scan all soc.peripherals[*].clock_ref values and include them.
+- Also scan soc.peripherals[*].x-ext.clock_refs arrays if present.
+
+REQUIRED enum format in the "types" array:
 {{
   "name": "clock_domain_t",
   "type": "enum",
-  "values": ["CLOCK_DOMAIN_GCLK", "CLOCK_DOMAIN_HCLK", "CLOCK_DOMAIN_VCLK", ...]
+  "values": ["CLOCKDOMAIN_GCLK", "CLOCKDOMAIN_HCLK", "CLOCKDOMAIN_VCLK", "CLOCKDOMAIN_VCLK2", "CLOCKDOMAIN_VCLK3", "CLOCKDOMAIN_VCLK4", "CLOCKDOMAIN_RTICLK", "CLOCKDOMAIN_HF_LPO", "CLOCKDOMAIN_LF_LPO", "CLOCKDOMAIN_OSCIN"],
+  "description": "Clock domain identifiers for all system clock domains"
 }}
+(Include only domains that appear in the SOC YAML or all_clock_domains list - use this as a minimum set)
 
 The PLL module is THE clock service provider for the entire system.
 All peripherals will call PLL_GetFrequency() and PLL_EnableClock() for clock management.
@@ -1574,10 +1621,37 @@ CRITICAL TYPE REQUIREMENTS:
 - Example: If a function takes "my_config_t*", you MUST define "my_config_t" in types
 - Example: If a function returns "status_code_t", you MUST define "status_code_t" in types
 
+DEPENDENCY DETECTION (CRITICAL):
+----------------------------------
+You MUST analyze the peripheral's functionality and declare ALL required dependencies.
+
+CLOCK DEPENDENCY (MANDATORY RULE):
+- If the peripheral uses ANY clock-derived values, it MUST declare "PLL" in dependencies
+- Clock-derived values include:
+  * Baud rates (UART/SCI)
+  * Timeouts (timers, watchdogs)
+  * Prescalers (ADC, PWM, timers)
+  * Sampling rates (ADC)
+  * Bit timing (CAN, I2C)
+  * Any calculation based on peripheral clock frequency
+
+Examples:
+- UART/SCI: Uses VCLK for baud rate → MUST include "PLL" in dependencies
+- Timers/RTI: Use RTICLK or VCLK → MUST include "PLL" in dependencies
+- CAN: Uses VCLK for bit timing → MUST include "PLL" in dependencies
+- ADC: Uses clock for conversion timing → MUST include "PLL" in dependencies
+- SPI: Uses VCLK for clock generation → MUST include "PLL" in dependencies
+- I2C: Uses clock for timing → MUST include "PLL" in dependencies
+- PWM: Uses clock for period/duty cycle → MUST include "PLL" in dependencies
+
+OTHER DEPENDENCIES:
+- VIM: If the peripheral has interrupts (check soc.yaml for irq_ref)
+- PCR: If the peripheral requires power domain control
+
 INTERFACE DESIGN:
 - Naming Convention: {module_name.upper()}_FunctionName
 - Init Function: {module_name.upper()}_Init (required)
-- Dependencies: Identify other modules this module needs (e.g., SYSTEM for register access, VIM for interrupts)
+- Dependencies: List in the "dependencies" array (e.g., ["PLL", "VIM", "PCR"])
 
 OUTPUT FORMAT (CRITICAL - READ CAREFULLY):
 Your response MUST be ONLY a valid JSON object. Follow these rules strictly:
@@ -1629,10 +1703,12 @@ Return exactly this structure:
             "description": "Configure the module"
         }}
     ],
-    "dependencies": ["PCR", "SYSTEM"]
+    "dependencies": ["PLL", "PCR"]
 }}
 
-IMPORTANT: The "types" array is MANDATORY. Every custom type used in function prototypes must be listed here.
+IMPORTANT:
+- The "types" array is MANDATORY. Every custom type used in function prototypes must be listed here.
+- The "dependencies" array is MANDATORY. Follow the DEPENDENCY DETECTION rules above to determine required dependencies.
 """
 
 def build_reg_header_prompt(module_name: str, soc_slice: str, regs_slice: str) -> str:
@@ -1716,9 +1792,70 @@ def build_pass2_driver_c_prompt(module_name: str, manifest_json: str, reg_header
     Constructs the prompt for "Pass 2B" - Driver Implementation Generation.
     Uses the Registry Manifest + Register Header + Hardware Info + Bus Info (optional).
     """
+    # PLL-specific implementation requirements
+    pll_section = ""
+    if module_name.upper() == "PLL":
+        pll_section = """
+PLL MODULE SPECIAL REQUIREMENTS (MANDATORY):
+--------------------------------------------
+This is the central clock service module. You MUST implement the following:
+
+ENUM NAMING RULE (CRITICAL):
+- All clock domain enum values use: CLOCKDOMAIN_<UPPERCASE_REF>
+- Example: VCLK → CLOCKDOMAIN_VCLK, HF_LPO → CLOCKDOMAIN_HF_LPO
+- Use the EXACT values from the clock_domain_t enum in the manifest
+
+REQUIRED INCLUDES in pll_driver.c:
+- #include "pll_driver.h"
+- #include "reg_pll.h"    (PLL register access)
+- #include "reg_system.h" (SYSTEM register access for clock gating)
+
+REGISTER ACCESS (MANDATORY):
+- Declare register pointers using struct-based access from Pass 1 headers
+- Example:
+    static PLL_REG_t * const PLLREG = (PLL_REG_t *)0xFFFFE100u;
+    static SYSTEM_REG_t * const SYSREG = (SYSTEM_REG_t *)0xFFFFFF00u;
+- Use EXACT typedef names from the Register Header (INPUT CONTEXT 3)
+
+REQUIRED FUNCTION: PLL_EnableClock(clock_domain_t domain)
+- Clear the disable bit in SYSTEM.CSDIS (clock source disable) for the source
+- Clear the disable bit in SYSTEM.CDDIS (clock domain disable) for the domain
+- Must be idempotent (safe to call multiple times)
+- Must NEVER disable clocks
+
+REQUIRED FUNCTION: PLL_GetFrequency(clock_domain_t domain)
+- MUST calculate frequencies DYNAMICALLY by reading hardware registers
+- For PLL-derived clocks: Read PLLCTL1 and PLLCTL2 registers to extract:
+  * NF (feedback multiplier) from PLLCTL1 bits [8:15]
+  * NR (reference divider) from PLLCTL1 bits [0:5], actual_NR = NR + 1
+  * R (post divider) from PLLCTL2 bits [0:3], actual_R = 2^R
+  * ODPLL (output divider) from PLLCTL2 bits [24:27]
+  * Formula: PLLCLK = (OSCIN_HZ * NF) / (actual_NR * actual_R)
+- For GCLK/HCLK: return PLLCLK (same as PLL output)
+- For VCLK: read CLKCNTL.VCLKR (bits 16-19), divide = VCLKR + 1
+  * VCLK = HCLK / (VCLKR + 1)
+- For VCLK2: read CLKCNTL.VCLK2R (bits 20-23)
+- For VCLK3: read VCLKACON1.VCLK3R (bits 0-3)
+- For VCLK4: read VCLKACON1.VCLK4R (bits 8-11)
+- For RTICLK: same as VCLK (derived from VCLK)
+- For OSCIN: return fixed 16000000 (from bus.yaml)
+- For HF_LPO: return fixed 9600000 (from bus.yaml)
+- For LF_LPO: return fixed 85000 (from bus.yaml)
+- If a register field encoding is not known from regs.yaml, return 0 and add TODO comment
+
+REQUIRED CLOCK DOMAIN ENUM USAGE:
+- Use ONLY enum values defined in clock_domain_t from the manifest
+- Never invent new enum values not in the manifest
+
+FORBIDDEN:
+- Do NOT hardcode PLLCLK or any clock frequency as a #define constant
+- Do NOT return a constant for PLL-derived frequencies - always read registers
+"""
+
     return f"""
 You are an Expert Embedded C Developer.
 Generate the Driver Implementation file for the "{module_name}" peripheral.
+{pll_section}
 
 INPUT CONTEXT:
 1. Module Name: "{module_name}"
@@ -1747,20 +1884,73 @@ REGISTER ACCESS REQUIREMENTS:
   - Create the base pointer definition casting the address to the Struct Type found in Context 3
   - Example: `#define {module_name.lower()}REG ((volatile <STRUCT_TYPE_FROM_CTX3> *)0xFFF7E500U)`
 
+CLOCK SERVICE INTEGRATION (MANDATORY):
+--------------------------------------
+**CRITICAL:** If the manifest (INPUT CONTEXT 2) lists "PLL" in dependencies, you MUST follow these rules:
+
+1. INCLUDE REQUIREMENT:
+   - Add `#include "pll_driver.h"` to the .c file
+
+2. FORBIDDEN PATTERNS (will cause validation errors):
+   - Do NOT hardcode frequency values:
+     ```c
+     // WRONG - Do NOT do this:
+     #define SCI_VCLK_FREQUENCY 110000000U
+     #define VCLK_HZ 110000000U
+     ```
+   - Do NOT use magic numbers for frequency calculations
+   - Do NOT assume any specific clock frequency
+
+3. REQUIRED PATTERN - Clock Enable in Init Function:
+   The {module_name.upper()}_Init() function MUST enable the peripheral's clock FIRST:
+   ```c
+   void {module_name.upper()}_Init(void) {{
+       // STEP 1: Enable peripheral clock (MANDATORY - must be first)
+       PLL_EnableClock(CLOCKDOMAIN_<CLOCK_REF>);
+
+       // STEP 2: Then configure peripheral registers
+       ...
+   }}
+   ```
+   - Look at INPUT CONTEXT 4 (soc.yaml) to find the peripheral's clock_ref
+   - Convert clock_ref to enum name: CLOCKDOMAIN_<UPPERCASE_REF>
+   - Call PLL_EnableClock() BEFORE accessing ANY peripheral registers
+
+4. REQUIRED PATTERN - Baud Rate / Timing Calculations:
+   For peripherals with baud rates, timeouts, or prescalers, you MUST use PLL_GetFrequency():
+   ```c
+   // CORRECT - For UART/SCI baud rate:
+   uint32_t vclk_hz = PLL_GetFrequency(CLOCKDOMAIN_VCLK);
+   uint32_t prescaler = (vclk_hz / (16 * baud_rate)) - 1;
+
+   // CORRECT - For Timer period:
+   uint32_t clock_hz = PLL_GetFrequency(CLOCKDOMAIN_RTICLK);
+   uint32_t ticks = (clock_hz * timeout_ms) / 1000;
+   ```
+
+5. VALIDATION CHECKS:
+   Your generated code will be validated for:
+   - Presence of `#include "pll_driver.h"` when PLL is in dependencies
+   - NO hardcoded `#define *_FREQUENCY` or `#define *_HZ` macros
+   - Calls to PLL_EnableClock() in init function
+   - Calls to PLL_GetFrequency() for baud/timing calculations
+
 FUNCTION IMPLEMENTATION REQUIREMENTS:
 - Implement EVERY function listed in the Manifest "functions" section
 - Do NOT add extra functions not in the manifest
 - Init Function: Must perform initialization steps described in the Manifest/YAML
-- Dependencies: If Manifest lists "PCR" dependency, assume `PCR_EnablePeripheral(id)` is available
-- Clocks/Baud Rates: Use info from Bus/Clock Details for divider/baud rate calculations
+- Dependencies:
+  * If Manifest lists "PLL" dependency, MUST follow CLOCK SERVICE INTEGRATION rules above
+  * If Manifest lists "PCR" dependency, assume `PCR_EnablePeripheral(id)` is available
+  * If Manifest lists "VIM" dependency, assume VIM APIs are available for interrupt management
 
 **ABSOLUTE TYPE SAFETY RULES (CRITICAL - VIOLATIONS WILL CAUSE COMPILATION ERRORS):**
 1. **Enum Usage:**
    - ONLY use enum values that are explicitly listed in INPUT CONTEXT 2 (Manifest "types" section)
    - Check the manifest types array for the COMPLETE list of valid enum values
    - Do NOT invent, add, or guess enum values
-   - Example: If manifest defines enum clock_domain_t with values [CLOCK_DOMAIN_VCLK, CLOCK_DOMAIN_VCLK2],
-     you can ONLY use those two values. Do NOT use CLOCK_DOMAIN_VCLK3, VCLK4, etc.
+   - Example: If manifest defines enum clock_domain_t with values [CLOCKDOMAIN_VCLK, CLOCKDOMAIN_VCLK2],
+     you can ONLY use those two values. Do NOT use CLOCKDOMAIN_VCLK3, VCLK4, etc.
 
 2. **Struct Usage:**
    - ONLY use structs that are defined in the manifest "types" section

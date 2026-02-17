@@ -124,8 +124,8 @@ def validate_driver_implementation(
 
             try:
                 content = file_path.read_text(encoding='utf-8', errors='ignore')
-                # Look for clock_enable() call with the clock reference
-                if 'clock_enable' in content and clock_ref in content:
+                # Look for PLL_EnableClock() or clock_enable() call
+                if ('PLL_EnableClock' in content or 'clock_enable' in content):
                     found_clock_enable = True
                     break
             except Exception:
@@ -133,7 +133,7 @@ def validate_driver_implementation(
 
         if not found_clock_enable:
             warnings.append(
-                f"{module_name}: Has clock_ref '{clock_ref}' but doesn't call clock_enable()"
+                f"{module_name}: Has clock_ref '{clock_ref}' but doesn't call PLL_EnableClock() or clock_enable()"
             )
 
     # Check 5: No hardcoded addresses
@@ -170,17 +170,24 @@ def validate_driver_implementation(
             if f'#include "{expected_header}"' not in content and f"#include <{expected_header}>" not in content:
                 warnings.append(f"{file_path.name}: Missing #include for {expected_header}")
 
-            # If uses clock_enable, should include clock.h
-            if 'clock_enable' in content:
+            # If uses PLL_EnableClock, should include pll_driver.h
+            if 'PLL_EnableClock' in content or 'PLL_GetFrequency' in content:
+                if '#include "pll_driver.h"' not in content and '#include <pll_driver.h>' not in content:
+                    warnings.append(f"{file_path.name}: Uses PLL APIs but doesn't include pll_driver.h")
+            # If uses old clock API, should include clock.h
+            elif 'clock_enable' in content or 'clock_get_hz' in content:
                 if '#include "clock.h"' not in content and '#include <clock.h>' not in content:
-                    warnings.append(f"{file_path.name}: Uses clock_enable but doesn't include clock.h")
+                    warnings.append(f"{file_path.name}: Uses clock APIs but doesn't include clock.h")
 
         except Exception:
             pass
 
-    # Check 7: No hardcoded frequency constants (if module has clock dependency)
+    # Check 7: No hardcoded frequency constants (if module has clock/PLL dependency)
     manifest_deps = manifest_entry.get('dependencies', [])
-    has_clock_dep = 'clock' in [d.lower() if isinstance(d, str) else d for d in manifest_deps]
+    has_clock_dep = any(
+        d.lower() in ['clock', 'pll'] if isinstance(d, str) else False
+        for d in manifest_deps
+    )
 
     if has_clock_dep:
         for file_path in driver_c_files:
@@ -198,14 +205,14 @@ def validate_driver_implementation(
                     if matches:
                         errors.append(
                             f"{file_path.name}: Hardcoded frequency constant found: {matches[0]}. "
-                            "Use clock_get_hz() instead."
+                            "Use PLL_GetFrequency() instead."
                         )
                         break
 
             except Exception:
                 pass
 
-    # Check 8: clock_get_hz() usage for baud rate functions (if module has clock dependency)
+    # Check 8: PLL_GetFrequency() usage for baud rate functions (if module has clock dependency)
     if has_clock_dep:
         for file_path in driver_c_files:
             try:
@@ -219,26 +226,29 @@ def validate_driver_implementation(
                 )
 
                 if has_baud_func:
-                    # Check if clock_get_hz() is called
-                    if 'clock_get_hz' not in content:
+                    # Check if PLL_GetFrequency() or clock_get_hz() is called
+                    if 'PLL_GetFrequency' not in content and 'clock_get_hz' not in content:
                         errors.append(
-                            f"{file_path.name}: Has baud rate/timing function but doesn't call clock_get_hz(). "
+                            f"{file_path.name}: Has baud rate/timing function but doesn't call PLL_GetFrequency(). "
                             "Frequency must be queried dynamically, not hardcoded."
                         )
 
             except Exception:
                 pass
 
-    # Check 9: clock.h include if module has clock dependency
+    # Check 9: pll_driver.h include if module has PLL dependency
     if has_clock_dep:
         for file_path in driver_c_files:
             try:
                 content = file_path.read_text(encoding='utf-8', errors='ignore')
 
-                # Check for clock.h include
-                if '#include "clock.h"' not in content and '#include <clock.h>' not in content:
+                # Check for pll_driver.h or clock.h include
+                has_pll_include = '#include "pll_driver.h"' in content or '#include <pll_driver.h>' in content
+                has_clock_include = '#include "clock.h"' in content or '#include <clock.h>' in content
+
+                if not has_pll_include and not has_clock_include:
                     errors.append(
-                        f"{file_path.name}: Module has 'clock' dependency but doesn't include clock.h"
+                        f"{file_path.name}: Module has 'PLL' or 'clock' dependency but doesn't include pll_driver.h or clock.h"
                     )
 
             except Exception:
