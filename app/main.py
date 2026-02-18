@@ -32,6 +32,7 @@ from modules.yaml.yaml_utils import (
     dump_yaml_str,
     load_bus_yaml,
     load_soc_yaml,
+    load_pinmux_yaml,
     load_regs_yaml,
     load_memmap_yaml,
     load_irq_yaml,
@@ -44,9 +45,10 @@ from modules.yaml.yaml_utils import (
 # These provide foundational APIs that peripherals depend on
 CORE_MODULES = [
     "SYSTEM",    # Base system initialization
+    "PCR",       # Peripheral Central Resource (power control)
+    "IOMM",      # Pin multiplexing - MUST come before peripherals
     "PLL",       # Clock/PLL hardware (generates manifest entry)
     "VIM",       # Vectored interrupt manager
-    "PCR",       # Peripheral Central Resource (power control)
 ]
 
 # Manifest API name aliases: Some hardware modules need API aliases in manifest
@@ -189,6 +191,7 @@ async def _invoke_and_write(
     soc_data: dict = None,
     regs_data: dict = None,
     token_allocator = None,
+    progress_manager = None,
 ):
     """
     Helper to:
@@ -216,7 +219,10 @@ async def _invoke_and_write(
         }
     ]
 
-    print(f"[info] Invoking {model_enum.name} for {tag} …")
+    if progress_manager:
+        progress_manager.log_or_print(f"[info] Invoking {model_enum.name} for {tag} …")
+    else:
+        print(f"[info] Invoking {model_enum.name} for {tag} …")
 
     # invoke_model is now truly async
     resp = await invoke_model(model_enum, max_tokens, messages)
@@ -239,7 +245,10 @@ async def _invoke_and_write(
         (artifacts_dir / f"{tag}_empty_text_{ts}.txt").write_text(
             str(resp), encoding="utf-8"
         )
-        print(f"[warn] Empty model text for {tag}; raw response saved.")
+        if progress_manager:
+            progress_manager.log_or_print(f"[warn] Empty model text for {tag}; raw response saved.")
+        else:
+            print(f"[warn] Empty model text for {tag}; raw response saved.")
         return []
 
     (artifacts_dir / f"{tag}_llm_text_{ts}.txt").write_text(text, encoding="utf-8")
@@ -251,7 +260,10 @@ async def _invoke_and_write(
             relative_path = file.relative_to(out_dir)
         except ValueError:
             relative_path = file
-        print(f"[ok] {tag}: {relative_path}")
+        if progress_manager:
+            progress_manager.log_or_print(f"[ok] {tag}: {relative_path}")
+        else:
+            print(f"[ok] {tag}: {relative_path}")
 
     # Validate if YAML data provided
     if soc_data is not None and regs_data is not None and written_files:
@@ -266,14 +278,25 @@ async def _invoke_and_write(
             )
 
             if not validation_result.is_valid:
-                print(f"[warn] Validation warnings for {tag}:")
-                for error in validation_result.errors[:3]:  # Show first 3
-                    print(f"  - {error}")
+                if progress_manager:
+                    progress_manager.log_or_print(f"[warn] Validation warnings for {tag}:")
+                    for error in validation_result.errors[:3]:  # Show first 3
+                        progress_manager.log_or_print(f"  - {error}")
+                else:
+                    print(f"[warn] Validation warnings for {tag}:")
+                    for error in validation_result.errors[:3]:  # Show first 3
+                        print(f"  - {error}")
             elif validation_result.warnings:
-                print(f"[info] Validation passed with {len(validation_result.warnings)} warnings")
+                if progress_manager:
+                    progress_manager.log_or_print(f"[info] Validation passed with {len(validation_result.warnings)} warnings")
+                else:
+                    print(f"[info] Validation passed with {len(validation_result.warnings)} warnings")
 
         except Exception as e:
-            print(f"[warn] Validation error for {tag}: {e}")
+            if progress_manager:
+                progress_manager.log_or_print(f"[warn] Validation error for {tag}: {e}")
+            else:
+                print(f"[warn] Validation error for {tag}: {e}")
 
     return written_files
 
@@ -288,7 +311,8 @@ async def _invoke_and_write_with_retry(
     out_dir: Path,
     soc_data: dict = None,
     regs_data: dict = None,
-    retry_policy=None
+    retry_policy=None,
+    progress_manager=None
 ) -> tuple[list[Path], bool]:
     """
     Invoke model with automatic retry on failure.
@@ -306,7 +330,10 @@ async def _invoke_and_write_with_retry(
 
     for attempt in range(retry_policy.max_retries + 1):
         if attempt > 0:
-            print(f"[retry] Attempt {attempt + 1}/{retry_policy.max_retries + 1} for {tag} (tokens: {max_tokens})")
+            if progress_manager:
+                progress_manager.log_or_print(f"[retry] Attempt {attempt + 1}/{retry_policy.max_retries + 1} for {tag} (tokens: {max_tokens})")
+            else:
+                print(f"[retry] Attempt {attempt + 1}/{retry_policy.max_retries + 1} for {tag} (tokens: {max_tokens})")
 
         # Invoke model
         messages = [{
@@ -338,7 +365,10 @@ async def _invoke_and_write_with_retry(
         # Check for truncation
         truncation_reason = detect_truncation(text, written_files)
         if truncation_reason:
-            print(f"[warn] Truncation detected: {truncation_reason}")
+            if progress_manager:
+                progress_manager.log_or_print(f"[warn] Truncation detected: {truncation_reason}")
+            else:
+                print(f"[warn] Truncation detected: {truncation_reason}")
             should_retry, max_tokens = retry_policy.should_retry(
                 attempt + 1, FailureReason.TOKEN_TRUNCATION, max_tokens
             )
@@ -365,7 +395,10 @@ async def _invoke_and_write_with_retry(
 
                 # Check for FACTS MIRROR TODOs
                 if hasattr(validation_result, 'has_todos') and validation_result.has_todos:
-                    print(f"[warn] FACTS MIRROR contains TODOs")
+                    if progress_manager:
+                        progress_manager.log_or_print(f"[warn] FACTS MIRROR contains TODOs")
+                    else:
+                        print(f"[warn] FACTS MIRROR contains TODOs")
                     should_retry, max_tokens = retry_policy.should_retry(
                         attempt + 1, FailureReason.FACTS_MIRROR_TODO, max_tokens
                     )
@@ -379,7 +412,10 @@ async def _invoke_and_write_with_retry(
 
                 # Check for validation errors
                 if not validation_result.is_valid:
-                    print(f"[warn] Validation failed: {len(validation_result.errors)} errors")
+                    if progress_manager:
+                        progress_manager.log_or_print(f"[warn] Validation failed: {len(validation_result.errors)} errors")
+                    else:
+                        print(f"[warn] Validation failed: {len(validation_result.errors)} errors")
                     should_retry, max_tokens = retry_policy.should_retry(
                         attempt + 1, FailureReason.VALIDATION_ERROR, max_tokens
                     )
@@ -394,10 +430,16 @@ async def _invoke_and_write_with_retry(
 
                 # Validation passed - show summary
                 if validation_result.warnings:
-                    print(f"[info] Validation passed with {len(validation_result.warnings)} warnings")
+                    if progress_manager:
+                        progress_manager.log_or_print(f"[info] Validation passed with {len(validation_result.warnings)} warnings")
+                    else:
+                        print(f"[info] Validation passed with {len(validation_result.warnings)} warnings")
 
             except Exception as e:
-                print(f"[warn] Validation error for {tag}: {e}")
+                if progress_manager:
+                    progress_manager.log_or_print(f"[warn] Validation error for {tag}: {e}")
+                else:
+                    print(f"[warn] Validation error for {tag}: {e}")
 
         # SUCCESS
         for file in written_files:
@@ -405,7 +447,10 @@ async def _invoke_and_write_with_retry(
                 relative_path = file.relative_to(out_dir)
             except ValueError:
                 relative_path = file
-            print(f"[ok] {tag}: {relative_path}")
+            if progress_manager:
+                progress_manager.log_or_print(f"[ok] {tag}: {relative_path}")
+            else:
+                print(f"[ok] {tag}: {relative_path}")
 
         return (written_files, True)
 
@@ -421,6 +466,7 @@ async def _generate_startup(
     out_dir: Path,
     start_user_prompt: str,
     token_allocator = None,
+    progress_manager = None,
 ):
     """Generate start.s (assembly vector / SP setup)"""
     return await _invoke_and_write(
@@ -432,6 +478,7 @@ async def _generate_startup(
         artifacts_dir=artifacts_dir,
         out_dir=out_dir,
         token_allocator=token_allocator,
+        progress_manager=progress_manager,
     )
 
 
@@ -443,6 +490,7 @@ async def _generate_entry(
     out_dir: Path,
     entry_user_prompt: str,
     token_allocator = None,
+    progress_manager = None,
 ):
     """Generate entry.c (Reset_Handler_C -> system_init() -> main())"""
     return await _invoke_and_write(
@@ -454,6 +502,7 @@ async def _generate_entry(
         artifacts_dir=artifacts_dir,
         out_dir=out_dir,
         token_allocator=token_allocator,
+        progress_manager=progress_manager,
     )
 
 
@@ -465,6 +514,7 @@ async def _generate_clock(
     out_dir: Path,
     clock_user_prompt: str,
     token_allocator = None,
+    progress_manager = None,
 ):
     """Generate clock setup code"""
     return await _invoke_and_write(
@@ -476,6 +526,7 @@ async def _generate_clock(
         artifacts_dir=artifacts_dir,
         out_dir=out_dir,
         token_allocator=token_allocator,
+        progress_manager=progress_manager,
     )
 
 
@@ -487,6 +538,7 @@ async def _generate_system(
     out_dir: Path,
     system_init_user_prompt: str,
     token_allocator = None,
+    progress_manager = None,
 ):
     """Generate system.c / system.h"""
     return await _invoke_and_write(
@@ -498,6 +550,7 @@ async def _generate_system(
         artifacts_dir=artifacts_dir,
         out_dir=out_dir,
         token_allocator=token_allocator,
+        progress_manager=progress_manager,
     )
 
 
@@ -509,6 +562,7 @@ async def _generate_linker(
     out_dir: Path,
     linker_user_prompt: str,
     token_allocator = None,
+    progress_manager = None,
 ):
     """Generate linker script"""
     return await _invoke_and_write(
@@ -520,6 +574,7 @@ async def _generate_linker(
         artifacts_dir=artifacts_dir,
         out_dir=out_dir,
         token_allocator=token_allocator,
+        progress_manager=progress_manager,
     )
 
 
@@ -531,6 +586,7 @@ async def _generate_vim(
     out_dir: Path,
     vim_user_prompt: str,
     token_allocator = None,
+    progress_manager = None,
 ):
     """Generate VIM driver"""
     return await _invoke_and_write(
@@ -542,6 +598,7 @@ async def _generate_vim(
         artifacts_dir=artifacts_dir,
         out_dir=out_dir,
         token_allocator=token_allocator,
+        progress_manager=progress_manager,
     )
 
 
@@ -638,7 +695,22 @@ async def main():
             "Use with --targets peripherals or --targets all."
         ),
     )
+    parser.add_argument(
+        "--include-tests",
+        action="store_true",
+        help="Include test harness in main.c (conditional on BSP_RUN_TESTS define)",
+    )
+    parser.add_argument(
+        "--mock",
+        action="store_true",
+        help="Use mock API responses for testing (no real API calls, no cost)",
+    )
     args = parser.parse_args()
+
+    # Enable mock mode if requested
+    if args.mock:
+        import os
+        os.environ["BSP_MOCK_MODE"] = "1"
 
     # Parse target flags
     targets = set(args.targets)
@@ -657,6 +729,25 @@ async def main():
     out_dir = base_out / f"output_{run_tag}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Initialize unified progress manager EARLY (before any print statements)
+    import os
+    from modules.utils.unified_progress import UnifiedProgressManager
+    progress_mode = os.getenv("BSP_PROGRESS_MODE", "fancy")
+    enable_fancy = progress_mode == "fancy" and sys.stdout.isatty()
+
+    passes = ["Discovery", "Implementation", "Platform", "Validation"]
+    progress_manager = UnifiedProgressManager(
+        passes=passes,
+        output_dir=out_dir,
+        enable_fancy=enable_fancy,
+        enable_color=True,  # Enable colors for better visual distinction
+        cost_tracker=None  # Will set later after cost tracker is initialized
+    )
+
+    # Print initial messages
+    if args.mock:
+        progress_manager.log_or_print("[info] Mock mode enabled - using simulated API responses (no cost)")
+
     artifacts = out_dir / "_artifacts"
     artifacts.mkdir(parents=True, exist_ok=True)
 
@@ -666,6 +757,7 @@ async def main():
     irq_data = load_irq_yaml(Path(args.yamlpath) / "irq.yaml")
     memmap_data = load_memmap_yaml(Path(args.yamlpath) / "memmap.yaml")
     bus_data = load_bus_yaml(Path(args.yamlpath) / "bus.yaml")
+    pinmux_data = load_pinmux_yaml(Path(args.yamlpath) / "pinmux.yaml")
 
     # Setup model and system prompt
     system_prompt = build_system_prompt()
@@ -683,31 +775,41 @@ async def main():
     token_allocator = AdaptiveTokenAllocator()
     token_history_path = out_dir.parent / ".token_history.json"
     token_allocator.load_history(token_history_path)
-    print(f"[info] Loaded token history from {token_history_path.name}")
+    progress_manager.log_or_print(f"[info] Loaded token history from {token_history_path.name}")
 
     # Reset cost tracker for this generation run
     _cost_tracker.reset()
 
+    # Update progress manager with cost tracker and model name
+    progress_manager.cost_tracker = _cost_tracker
+    progress_manager.model_name = model_enum.get_display_name()
+
+    # Suppress Python logging output in fancy mode to avoid cluttering display
+    if progress_manager.should_suppress_prints():
+        import logging
+        logging.basicConfig(level=logging.CRITICAL)  # Only show critical errors
+
     # --- SELECT PERIPHERALS FIRST ---
     from modules.generation.discovery import run_discovery_pass
     from modules.generation.implementation import run_implementation_pass
-    import sys
 
     # Peripheral selection strategy:
     # - Pass 1 (Manifest): Generate API catalog for CORE + user selections
-    # - Pass 2 (Drivers): Generate drivers for PLL + user selections
+    # - Pass 2 (Drivers): Generate drivers for PLL, IOMM, PCR + user selections
     #   - PLL driver provides clock APIs (PLL_EnableClock, PLL_GetFrequency)
+    #   - IOMM driver provides pin multiplexing (IOMM_Init, IOMM_ConfigurePin)
+    #   - PCR driver provides power control (PCR_Init, PCR_EnablePeripheral)
     #   - SYSTEM and VIM are platform files (Pass 3)
     # - Pass 3 (Platform): Always generate system.c, vim.c, entry.c, start.s, linker.cmd
 
     user_selected_peripherals = []  # User-chosen peripherals only
     pass1_modules = list(CORE_MODULES)  # Pass 1: Always include core for manifest
-    pass2_modules = ["PLL"]  # Pass 2: Always include PLL driver + user peripherals
+    pass2_modules = ["PLL", "IOMM", "PCR"]  # Pass 2: Core infrastructure drivers
 
     if generate_peripherals:
         # Use --modules argument if provided, otherwise prompt interactively
         if args.modules:
-            print(f"\n[info] Using peripherals from command line: {', '.join(args.modules)}")
+            progress_manager.log_or_print(f"[info] Using peripherals from command line: {', '.join(args.modules)}")
             # Filter soc_data to only include specified modules
             all_peripherals = get_peripheral_list(soc_data)
             chosen_peripherals = [p for p in all_peripherals if p.get("name", "").upper() in [m.upper() for m in args.modules]]
@@ -724,18 +826,20 @@ async def main():
             user_selected_peripherals = [p.get("name") for p in chosen_peripherals]
             # Add user selections to pass1 for manifest, avoiding duplicates
             pass1_modules.extend([m for m in user_selected_peripherals if m not in pass1_modules])
-            # Pass 2 implements PLL + user peripherals (exclude SYSTEM and VIM which are Pass 3 platform files)
+            # Pass 2 implements core drivers + user peripherals (exclude SYSTEM and VIM which are Pass 3 platform files)
             pass2_modules.extend([m for m in user_selected_peripherals if m not in ["SYSTEM", "VIM"]])
-            print(f"[info] Manifest will include {len(pass1_modules)} modules ({len(CORE_MODULES)} core + {len(user_selected_peripherals)} peripheral)")
-            print(f"[info] Will implement {len(pass2_modules)} drivers (PLL + {len(user_selected_peripherals)} peripherals)")
+            progress_manager.log_or_print(f"[info] Manifest will include {len(pass1_modules)} modules ({len(CORE_MODULES)} core + {len(user_selected_peripherals)} peripheral)")
+            progress_manager.log_or_print(f"[info] Will implement {len(pass2_modules)} drivers (PLL/IOMM/PCR + {len(user_selected_peripherals)} peripherals)")
         else:
-            print(f"[info] No peripherals selected. Will generate PLL driver only (SYSTEM and VIM are platform files)")
+            print(f"[info] No peripherals selected. Will generate core drivers: PLL, IOMM, PCR")
     else:
         print("[info] Skipping peripheral driver selection due to --targets flag.")
 
     # --- COST ESTIMATION ---
+    # IMPORTANT: Always show cost estimation and confirmation, regardless of progress mode
     if pass1_modules:
         print("\n[info] Cost Estimation:")
+
         pricing = model_enum.get_pricing()
         estimate = token_allocator.estimate_cost(len(pass1_modules), pricing)
 
@@ -768,6 +872,16 @@ async def main():
         else:
             print("  [auto] Proceeding automatically (--yes flag set)")
 
+    # NOW clear screen and start fancy progress display (after user has confirmed)
+    # Add a small delay so user can see the confirmation message
+    import time
+    time.sleep(0.3)
+
+    if progress_manager.mode == "fancy" and progress_manager.supports_ansi:
+        sys.stdout.write('\033[2J')  # Clear screen
+        sys.stdout.write('\033[H')   # Move to top
+        sys.stdout.flush()
+
     # --- PRE-INJECT CLOCK DOMAINS INTO PLL ---
     # Collect all clock_ref values from all peripherals so the PLL manifest
     # can generate a complete clock_domain_t enum without needing to see all
@@ -786,7 +900,7 @@ async def main():
     # --- PASS 1: Architecture Discovery ---
     bsp_manifest = None
     if pass1_modules or not generate_peripherals:
-        print("\n[info] Starting Pass 1: Architecture Discovery...")
+        progress_manager.log_or_print("\n[info] Starting Pass 1: Architecture Discovery...")
         bsp_manifest = await run_discovery_pass(
             soc_data,
             regs_data,
@@ -796,9 +910,10 @@ async def main():
             token_allocator=token_allocator,
             enable_validation=True,
             allowed_modules=pass1_modules if pass1_modules else None,
-            bus_data=bus_data
+            bus_data=bus_data,
+            progress_manager=progress_manager
         )
-        print("\n[info] Pass 1 Complete.")
+        progress_manager.log_or_print("\n[info] Pass 1 Complete.")
 
         # Check for shutdown request
         if _shutdown_requested:
@@ -845,20 +960,22 @@ async def main():
         # --- PASS 2: Implementation ---
         pass2_validation_results = []
         if pass2_modules:
-            print(f"\n[info] Starting Pass 2: Implementation for {len(pass2_modules)} peripheral drivers...")
+            progress_manager.log_or_print(f"\n[info] Starting Pass 2: Implementation for {len(pass2_modules)} peripheral drivers...")
             pass2_validation_results = await run_implementation_pass(
                 bsp_manifest,
                 soc_data,
                 bus_data,
+                pinmux_data,
                 model_enum,
                 out_dir,
                 max_tokens=args.max_tokens,
                 allowed_modules=pass2_modules,
                 regs_data=regs_data,
                 enable_validation=True,
-                token_allocator=token_allocator
+                token_allocator=token_allocator,
+                progress_manager=progress_manager
             )
-            print("\n[info] Pass 2 Complete.")
+            progress_manager.log_or_print("\n[info] Pass 2 Complete.")
 
             # Check for shutdown request
             if _shutdown_requested:
@@ -900,8 +1017,15 @@ async def main():
             print(f"[info] Init order: {' -> '.join(init_order.order[:5])}{'...' if len(init_order.order) > 5 else ''}")
 
             # Generate main.c with correct init sequence
-            main_c_path = generate_main_c(init_order, dep_graph, out_dir)
-            print(f"[ok] Generated {main_c_path.name} with dependency-ordered init sequence")
+            main_c_path = generate_main_c(
+                init_order,
+                dep_graph,
+                out_dir,
+                include_tests=args.include_tests,
+                manifest=bsp_manifest
+            )
+            test_msg = " with test harness" if args.include_tests else ""
+            print(f"[ok] Generated {main_c_path.name} with dependency-ordered init sequence{test_msg}")
         else:
             print(f"[error] Circular dependency detected!")
             print(f"[error] Cycle: {' -> '.join(init_order.cycle_nodes)}")
@@ -977,19 +1101,19 @@ async def main():
         generation_tasks.append(
             _generate_startup(
                 system_prompt, model_enum, args.max_tokens, artifacts, out_dir,
-                start_user_prompt, token_allocator
+                start_user_prompt, token_allocator, progress_manager
             )
         )
-        print("[debug] Added task: start_asm")
+        progress_manager.log_or_print("[debug] Added task: start_asm")
 
     if generate_entry:
         generation_tasks.append(
             _generate_entry(
                 system_prompt, model_enum, args.max_tokens, artifacts, out_dir,
-                entry_user_prompt, token_allocator
+                entry_user_prompt, token_allocator, progress_manager
             )
         )
-        print("[debug] Added task: entry_c")
+        progress_manager.log_or_print("[debug] Added task: entry_c")
 
     if generate_clock:
         generation_tasks.append(
@@ -1001,9 +1125,10 @@ async def main():
                 out_dir,
                 clock_user_prompt,
                 token_allocator,
+                progress_manager,
             )
         )
-        print("[debug] Added task: clock_setup")
+        progress_manager.log_or_print("[debug] Added task: clock_setup")
 
     if generate_system:
         # This may overlap with system_driver.c from Pass 2, but usually contains sys_init/clocks logic.
@@ -1016,9 +1141,10 @@ async def main():
                 out_dir,
                 system_init_user_prompt,
                 token_allocator,
+                progress_manager,
             )
         )
-        print("[debug] Added task: system_init")
+        progress_manager.log_or_print("[debug] Added task: system_init")
 
     if generate_linker:
         generation_tasks.append(
@@ -1030,9 +1156,10 @@ async def main():
                 out_dir,
                 linker_user_prompt,
                 token_allocator,
+                progress_manager,
             )
         )
-        print("[debug] Added task: linker")
+        progress_manager.log_or_print("[debug] Added task: linker")
 
     if generate_vim:
         generation_tasks.append(
@@ -1044,9 +1171,10 @@ async def main():
                 out_dir,
                 vim_user_prompt,
                 token_allocator,
+                progress_manager,
             )
         )
-        print("[debug] Added task: vim_driver")
+        progress_manager.log_or_print("[debug] Added task: vim_driver")
 
     # Check for shutdown request before platform generation
     if _shutdown_requested:
@@ -1055,23 +1183,42 @@ async def main():
 
     # Run platform tasks
     if generation_tasks:
-        print(f"[info] Starting Platform Generation ({len(generation_tasks)} tasks)...")
-        _progress.set_total(len(generation_tasks))
-        _progress.stop_event.clear()
-        spinner_thread = _progress.start_spinner()
+        # Setup progress tracker for Platform pass
+        tracker = progress_manager.start_pass("Platform")
+        if tracker:
+            tracker.set_total_tasks(len(generation_tasks))
+
         try:
-            await asyncio.gather(*generation_tasks, return_exceptions=True)
+            # Run all generation tasks with progress tracking as they complete
+            results = []
+            for coro in asyncio.as_completed(generation_tasks):
+                try:
+                    result = await coro
+                    results.append(result)
+                    if tracker:
+                        tracker.increment_success()
+                except Exception as e:
+                    results.append(e)
+                    if tracker:
+                        tracker.increment_failure()
+                        tracker.add_message(f"Task failed: {str(e)}", level="error")
+
         except KeyboardInterrupt:
-            print("\n[info] Platform generation interrupted by user.")
-            _progress.stop_spinner()
-            spinner_thread.join(timeout=1)
+            if tracker:
+                tracker.add_message("Platform generation interrupted by user", level="warning")
+            else:
+                print("\n[info] Platform generation interrupted by user.")
+            progress_manager.complete_pass("Platform", success=False)
             return
         finally:
-            _progress.stop_spinner()
-            spinner_thread.join(timeout=1)
-            print()
+            # Complete the pass
+            progress_manager.complete_pass("Platform", success=True)
     else:
-        print("[info] No additional platform tasks to run.")
+        if progress_manager:
+            # Still mark as complete even if no tasks
+            progress_manager.complete_pass("Platform", success=True)
+        else:
+            print("[info] No additional platform tasks to run.")
 
     # Check for shutdown request before documentation
     if _shutdown_requested:
@@ -1079,10 +1226,10 @@ async def main():
         return
 
     # Generate documentation
-    await _generate_documentation(out_dir)
+    await _generate_documentation(out_dir, progress_manager)
 
     # --- FINAL VALIDATION REPORT ---
-    print("\n[info] Generating final validation report...")
+    progress_manager.log_or_print("\n[info] Generating final validation report...")
 
     try:
         from modules.validation.validation_report import (
@@ -1157,24 +1304,25 @@ async def main():
         write_json_report(final_report, json_path)
         write_markdown_report(final_report, md_path)
 
-        print(f"[ok] Validation report: {json_path.name}")
-        print(f"[ok] Validation report: {md_path.name}")
+        progress_manager.log_or_print(f"[ok] Validation report: {json_path.name}")
+        progress_manager.log_or_print(f"[ok] Validation report: {md_path.name}")
 
-        # Print console summary
+        # Cleanup progress display before printing validation results
+        progress_manager.cleanup()
+
+        # Print console summary (always show final validation results)
         print_console_summary(final_report)
 
     except Exception as e:
-        print(f"[warn] Could not generate final validation report: {e}")
+        progress_manager.log_or_print(f"[warn] Could not generate final validation report: {e}")
 
     # Save token history for future runs
     token_allocator.save_history(token_history_path)
-    print(f"[info] Saved token history to {token_history_path.name}")
+    progress_manager.log_or_print(f"[info] Saved token history to {token_history_path.name}")
 
-    # Display cost summary
-    print("[debug] Retrieving cost statistics...")
+    # Display cost summary (always show final costs)
     try:
         stats = _cost_tracker.get_stats()
-        print("[debug] Got cost statistics successfully")
         print(f"\n[info] API Usage Summary:")
 
         # Show per-model breakdown if multiple models were used
@@ -1198,31 +1346,60 @@ async def main():
     # Ensure any remaining spinner threads are stopped
     _progress.stop_spinner()
 
-    print(f"\n[info] ✓ BSP generation complete!")
-    print(f"[info] Output directory: {out_dir}")
+    # Update cost metrics and cleanup progress manager
+    if progress_manager:
+        stats = _cost_tracker.get_stats()
+        total_tokens = stats.get("total_tokens", 0)
+        total_cost = stats.get("cost_usd", 0.0)
+        progress_manager.add_cost_info(total_tokens, total_cost, model_enum.name)
 
-    print("[debug] main() function returning...")
+        # Print final messages (cleanup already called before validation output)
+        print(f"\n[info] Generation log saved to: {progress_manager.logger.log_file}")
+        print(f"\n[info] ✓ BSP generation complete!")
+        print(f"[info] Output directory: {out_dir}")
+    else:
+        print(f"\n[info] ✓ BSP generation complete!")
+        print(f"[info] Output directory: {out_dir}")
+
+    if not progress_manager or not progress_manager.should_suppress_prints():
+        print("[debug] main() function returning...")
 
 
-async def _generate_documentation(out_dir: Path):
+async def _generate_documentation(out_dir: Path, progress_manager=None):
     """Generate Doxygen documentation (optional, skipped if doxygen not available)"""
-    print(f"\n[info] Creating documentation with Doxygen")
+    if progress_manager:
+        progress_manager.log_or_print(f"\n[info] Creating documentation with Doxygen")
+    else:
+        print(f"\n[info] Creating documentation with Doxygen")
     docs_dir = out_dir / "docs"
     docs_dir.mkdir(parents=True, exist_ok=True)
     
     try:
         doxy_path = write_doxyfile(docs_dir)
         run_doxygen(out_dir, doxy_path)
-        print(f"[ok] Documentation generated in {docs_dir / 'html'}.")
-        
+        if progress_manager:
+            progress_manager.log_or_print(f"[ok] Documentation generated in {docs_dir / 'html'}.")
+        else:
+            print(f"[ok] Documentation generated in {docs_dir / 'html'}.")
+
         if (docs_dir / "html" / "index.html").exists():
             abs_path = os.path.abspath(docs_dir / "html" / "index.html")
-            print(f"[info] Docs index located at {abs_path}.")
+            if progress_manager:
+                progress_manager.log_or_print(f"[info] Docs index located at {abs_path}.")
+            else:
+                print(f"[info] Docs index located at {abs_path}.")
     except FileNotFoundError as e:
-        print(f"[warn] Doxygen not found in system PATH. Install doxygen to generate documentation.")
-        print(f"       Details: {e}")
+        msg = f"[warn] Doxygen not found in system PATH. Install doxygen to generate documentation."
+        if progress_manager:
+            progress_manager.log_or_print(msg)
+        else:
+            print(msg)
     except Exception as e:
-        print(f"[warn] Doxygen generation failed (documentation skipped).")
+        msg = f"[warn] Doxygen generation failed (documentation skipped)."
+        if progress_manager:
+            progress_manager.log_or_print(msg)
+        else:
+            print(msg)
         print(f"       Details: {e}")
 
 

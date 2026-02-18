@@ -161,17 +161,88 @@ def build_pll_bus_slice(bus_data: Dict[str, Any]) -> str:
     return dump_yaml_str(slice_data) if slice_data else ""
 
 
+def build_pinmux_slice(pinmux_data: Dict[str, Any], module_name: str) -> str:
+    """
+    Extract relevant pins from pinmux.yaml for a specific peripheral.
+
+    Searches for pins where any function.signal matches common peripheral patterns:
+    - SCI: SCIRX, SCITX
+    - LIN: LINRX, LINTX
+    - GIO: GIOA[n], GIOB[n]
+    - SPI: MIBSPI*SCLK, MIBSPI*MISO, MIBSPI*MOSI, MIBSPI*NCS
+    - I2C: I2C_SCL, I2C_SDA
+    - CAN: CANTX, CANRX
+    - PWM/EPWM: EPWM*A, EPWM*B
+    - N2HET: N2HET*[n]
+
+    Returns a YAML string containing only the relevant pins.
+    """
+    if not pinmux_data:
+        return ""
+
+    from ..yaml.yaml_utils import dump_yaml_str
+
+    # Map module names to signal patterns
+    signal_patterns = {
+        "SCI": ["SCIRX", "SCITX"],
+        "LIN": ["LINRX", "LINTX", "LINTX", "LIN2RX", "LIN2TX"],
+        "GIO": ["GIOA", "GIOB"],
+        "SPI": ["MIBSPI", "SPI"],
+        "I2C": ["I2C_SCL", "I2C_SDA"],
+        "CAN": ["CANTX", "CANRX", "DCAN"],
+        "PWM": ["EPWM", "PWMSYNC"],
+        "EPWM": ["EPWM"],
+        "N2HET": ["N2HET"],
+    }
+
+    module_upper = module_name.upper()
+    patterns = signal_patterns.get(module_upper, [])
+
+    if not patterns:
+        return ""
+
+    # Find matching pins
+    pins = pinmux_data.get("pins", [])
+    relevant_pins = []
+
+    for pin in pins:
+        functions = pin.get("functions", [])
+        for func in functions:
+            signal = func.get("signal", "")
+            # Check if this signal matches any of our patterns
+            for pattern in patterns:
+                if pattern in signal.upper():
+                    relevant_pins.append(pin)
+                    break  # Don't add the same pin twice
+            if pin in relevant_pins:
+                break  # Move to next pin
+
+    if not relevant_pins:
+        return ""
+
+    # Build a minimal pinmux slice
+    slice_data = {
+        "$id": pinmux_data.get("$id", "pinmux.schema.yaml"),
+        "package": pinmux_data.get("package", ""),
+        "pins": relevant_pins
+    }
+
+    return dump_yaml_str(slice_data)
+
+
 async def run_implementation_pass(
     manifest: Dict[str, Any],
     soc_data: Dict[str, Any],
     bus_data: Dict[str, Any],
+    pinmux_data: Dict[str, Any],
     model: Model,
     output_dir: Path,
     max_tokens: int = 20000,
     allowed_modules: Optional[List[str]] = None,
     regs_data: Optional[Dict[str, Any]] = None,
     enable_validation: bool = True,
-    token_allocator = None
+    token_allocator = None,
+    progress_manager = None
 ):
     """
     Pass 2: Driver Implementation.
@@ -197,12 +268,19 @@ async def run_implementation_pass(
     
     logger.info(f"Starting Pass 2 (Implementation) for {len(api_catalog)} modules...")
 
+    # Setup progress tracker
+    tracker = None
+    if progress_manager:
+        tracker = progress_manager.start_pass("Implementation")
+        if tracker:
+            tracker.set_total_tasks(len(api_catalog) * 2)  # header + source per module
+
     # Folder setup
     inc_dir = output_dir / "include"
     src_dir = output_dir / "source"
     inc_dir.mkdir(parents=True, exist_ok=True)
     src_dir.mkdir(parents=True, exist_ok=True)
-    
+
     tasks = []
 
     async def _generate_header(mod_name: str, mod_data: Dict, reg_content: str):
@@ -215,7 +293,10 @@ async def run_implementation_pass(
 
         for attempt in range(retry_policy.max_retries + 1):
             if attempt > 0:
-                print(f"  [retry] Pass2 header {mod_name} - Attempt {attempt + 1} (tokens: {current_tokens})")
+                if tracker:
+                    tracker.add_message(f"Retrying {mod_name} header - Attempt {attempt + 1} ({current_tokens} tokens)", level="warning")
+                else:
+                    print(f"  [retry] Pass2 header {mod_name} - Attempt {attempt + 1} (tokens: {current_tokens})")
 
             try:
                 prompt = build_pass2_driver_h_prompt(mod_name, json.dumps(mod_data, indent=2), reg_content)
@@ -262,7 +343,7 @@ async def run_implementation_pass(
 
         return ("error", f"Max retries exceeded for {mod_name} header", "")
 
-    async def _generate_source(mod_name: str, mod_data: Dict, reg_content: str, soc_slice: str, bus_slice: str):
+    async def _generate_source(mod_name: str, mod_data: Dict, reg_content: str, soc_slice: str, bus_slice: str, pinmux_slice: str):
         """Generate driver source with retry logic"""
         from ..regeneration.retry_policy import RetryPolicy, FailureReason
         from ..regeneration.truncation_detector import detect_simple_truncation
@@ -272,10 +353,13 @@ async def run_implementation_pass(
 
         for attempt in range(retry_policy.max_retries + 1):
             if attempt > 0:
-                print(f"  [retry] Pass2 source {mod_name} - Attempt {attempt + 1} (tokens: {current_tokens})")
+                if tracker:
+                    tracker.add_message(f"Retrying {mod_name} source - Attempt {attempt + 1} ({current_tokens} tokens)", level="warning")
+                else:
+                    print(f"  [retry] Pass2 source {mod_name} - Attempt {attempt + 1} (tokens: {current_tokens})")
 
             try:
-                prompt = build_pass2_driver_c_prompt(mod_name, json.dumps(mod_data, indent=2), reg_content, soc_slice, bus_slice, manifest=manifest)
+                prompt = build_pass2_driver_c_prompt(mod_name, json.dumps(mod_data, indent=2), reg_content, soc_slice, bus_slice, pinmux_slice, manifest=manifest)
                 resp = await invoke_model(model, current_tokens, [{"role": "user", "content": prompt}])
                 text = extract_text_from_bedrock_response(resp)
 
@@ -353,9 +437,12 @@ async def run_implementation_pass(
         else:
             bus_slice = dump_yaml_str(bus_data)
 
-        # 4. Launch Parallel Gens
+        # 4. Get Pinmux Info (for Pin Configuration)
+        pinmux_slice = build_pinmux_slice(pinmux_data, mod_name)
+
+        # 5. Launch Parallel Gens
         t_h = asyncio.create_task(_generate_header(mod_name, mod_data, reg_content))
-        t_c = asyncio.create_task(_generate_source(mod_name, mod_data, reg_content, soc_slice, bus_slice))
+        t_c = asyncio.create_task(_generate_source(mod_name, mod_data, reg_content, soc_slice, bus_slice, pinmux_slice))
         
         results = await asyncio.gather(t_h, t_c)
         
@@ -372,15 +459,26 @@ async def run_implementation_pass(
 
     for f in asyncio.as_completed(tasks):
         mod_name, results = await f
-        print(f".", end="", flush=True)
+
+        # Track progress
+        if tracker:
+            tracker.update_task_name(f"Completed {mod_name}")
+        else:
+            print(f".", end="", flush=True)
 
         # Collect written files and raw responses for validation
         written_files = []
         raw_responses = []
+        has_error = False
 
         for type_tag, content, raw_response in results:
             if type_tag == "error":
-                logger.error(f"[{mod_name}] {content}")
+                has_error = True
+                if tracker:
+                    tracker.add_message(f"{mod_name}: {content}", level="error")
+                    tracker.increment_failure()
+                else:
+                    logger.error(f"[{mod_name}] {content}")
                 continue
 
             # Clean Code Block
@@ -398,12 +496,16 @@ async def run_implementation_pass(
                 fpath.write_text(clean_code, encoding="utf-8")
                 written_files.append(fpath)
                 raw_responses.append(raw_response)
+                if tracker:
+                    tracker.increment_success()
             elif type_tag == "c":
                 fname = f"{mod_name.lower()}_driver.c"
                 fpath = src_dir / fname
                 fpath.write_text(clean_code, encoding="utf-8")
                 written_files.append(fpath)
                 raw_responses.append(raw_response)
+                if tracker:
+                    tracker.increment_success()
 
         # Run validation if enabled
         if enable_validation and written_files and soc_data and regs_data:
@@ -453,7 +555,12 @@ async def run_implementation_pass(
             except Exception as e:
                 logger.error(f"Validation error for {mod_name}: {e}")
 
-    print("\n[pass2] Implementation Complete.")
+    # Complete pass tracking
+    if progress_manager:
+        progress_manager.complete_pass("Implementation", success=True)
+
+    if not tracker:
+        print("\n[pass2] Implementation Complete.")
 
     if enable_validation and validation_results:
         failed_count = sum(1 for _, vr in validation_results if not vr.is_valid)

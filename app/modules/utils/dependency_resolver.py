@@ -152,6 +152,10 @@ def build_dependency_graph(
         irq_deps = _extract_irq_dependencies(soc_data, module_name)
         norm_deps.extend(irq_deps)
 
+        # Add IOMM dependencies for I/O peripherals
+        iomm_deps = _extract_iomm_dependencies(soc_data, module_name)
+        norm_deps.extend(iomm_deps)
+
         # Remove duplicates
         norm_deps = list(set(norm_deps))
 
@@ -172,6 +176,13 @@ def build_dependency_graph(
 def _add_system_nodes(graph: DependencyGraph) -> None:
     """
     Add predefined system-level nodes with known dependencies.
+
+    Initialization order:
+    1. SYSTEM (base)
+    2. PCR (power control for I/O)
+    3. IOMM (pin multiplexing - pins configured)
+    4. PLL (clocks)
+    5. VIM (interrupts)
     """
     # SYSTEM has no dependencies (base of dependency tree)
     system_node = DependencyNode(
@@ -181,6 +192,24 @@ def _add_system_nodes(graph: DependencyGraph) -> None:
         module_type="system"
     )
     graph.add_node(system_node)
+
+    # PCR depends on SYSTEM (power control for peripherals)
+    pcr_node = DependencyNode(
+        name="PCR",
+        dependencies=["SYSTEM"],
+        init_function="PCR_Init",
+        module_type="pcr"
+    )
+    graph.add_node(pcr_node)
+
+    # IOMM depends on PCR (I/O power domain must be active)
+    iomm_node = DependencyNode(
+        name="IOMM",
+        dependencies=["PCR"],
+        init_function="IOMM_Init",
+        module_type="pinmux"
+    )
+    graph.add_node(iomm_node)
 
     # PLL depends on SYSTEM (PLL provides clock services)
     pll_node = DependencyNode(
@@ -242,6 +271,38 @@ def _extract_clock_dependencies(soc_data: Dict[str, Any], module_name: str) -> L
             x_ext = periph.get("x-ext", {})
             if x_ext.get("clock_refs"):
                 return ["PLL"]
+
+    return []
+
+
+def _extract_iomm_dependencies(soc_data: Dict[str, Any], module_name: str) -> List[str]:
+    """
+    Extract IOMM dependencies for I/O-using peripherals.
+
+    Returns ["IOMM"] if module uses external pins.
+
+    Peripheral types that use external pins and require pin multiplexing:
+    - SCI, LIN: UART/LIN communication pins
+    - GIO: GPIO pins
+    - SPI, I2C: Serial communication pins
+    - CAN: CAN bus pins
+    - PWM, EPWM, ECAP, EQEP: PWM/capture pins
+    - N2HET: High-end timer event pins
+    - FlexRay: FlexRay communication pins
+    """
+    peripherals = soc_data.get("soc", {}).get("peripherals", [])
+
+    # Peripheral types that use external pins
+    io_peripheral_types = {
+        "sci", "lin", "gio", "spi", "i2c", "can",
+        "pwm", "epwm", "ecap", "eqep", "n2het", "flexray"
+    }
+
+    for periph in peripherals:
+        if periph.get("name", "").upper() == module_name.upper():
+            periph_type = periph.get("type", "").lower()
+            if periph_type in io_peripheral_types:
+                return ["IOMM"]
 
     return []
 
@@ -381,16 +442,18 @@ def generate_main_c(
     init_order: InitOrder,
     graph: DependencyGraph,
     out_dir: Path,
-    include_tests: bool = False
+    include_tests: bool = False,
+    manifest: dict = None
 ) -> Path:
     """
-    Generate main.c with correct initialization sequence.
+    Generate main.c with correct initialization sequence and optional test harness.
 
     Args:
         init_order: Resolved initialization order
         graph: Dependency graph (for metadata)
         out_dir: Output directory
-        include_tests: If True, add test stubs
+        include_tests: If True, generate test harness code
+        manifest: BSP manifest with API catalog (required for test generation)
 
     Returns:
         Path to generated main.c
@@ -432,6 +495,16 @@ def generate_main_c(
             lines.append(f"#include \"{header_name}\"")
 
     lines.append("")
+
+    # Generate test harness if requested
+    if include_tests and manifest:
+        from ..testing.bsp_test_generator import TestGenerator
+
+        test_gen = TestGenerator()
+        tests = test_gen.generate_tests(manifest, init_order.order)
+        test_code = test_gen.generate_test_code(tests)
+        lines.extend(test_code)
+
     lines.append("/**")
     lines.append(" * @brief Main application entry point")
     lines.append(" *")
@@ -478,9 +551,10 @@ def generate_main_c(
     lines.append("")
 
     if include_tests:
-        lines.append("    /* Run basic tests (if enabled) */")
+        lines.append("    /* Run BSP tests (if enabled) */")
         lines.append("    #ifdef BSP_RUN_TESTS")
-        lines.append("    // TODO: Call test functions")
+        lines.append("    uint32_t failures = BSP_RunTests();")
+        lines.append("    // Inspect 'failures' variable in debugger")
         lines.append("    #endif")
         lines.append("")
 

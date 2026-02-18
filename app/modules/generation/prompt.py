@@ -1749,13 +1749,21 @@ CLOCK DEPENDENCY (MANDATORY RULE):
   * Any calculation based on peripheral clock frequency
 
 Examples:
-- UART/SCI: Uses VCLK for baud rate → MUST include "PLL" in dependencies
+- UART/SCI: Uses VCLK for baud rate + pins for TX/RX → MUST include ["IOMM", "PLL"] in dependencies
 - Timers/RTI: Use RTICLK or VCLK → MUST include "PLL" in dependencies
-- CAN: Uses VCLK for bit timing → MUST include "PLL" in dependencies
+- CAN: Uses VCLK for bit timing + pins → MUST include ["IOMM", "PLL"] in dependencies
 - ADC: Uses clock for conversion timing → MUST include "PLL" in dependencies
-- SPI: Uses VCLK for clock generation → MUST include "PLL" in dependencies
-- I2C: Uses clock for timing → MUST include "PLL" in dependencies
-- PWM: Uses clock for period/duty cycle → MUST include "PLL" in dependencies
+- SPI: Uses VCLK + pins for SCLK/MOSI/MISO/CS → MUST include ["IOMM", "PLL"] in dependencies
+- I2C: Uses clock + pins for SDA/SCL → MUST include ["IOMM", "PLL"] in dependencies
+- PWM: Uses clock + pins for PWM outputs → MUST include ["IOMM", "PLL"] in dependencies
+- LIN: Uses VCLK + pins → MUST include ["IOMM", "PLL", "VIM"] in dependencies
+- GIO/GPIO: Uses pins for digital I/O → MUST include ["IOMM"] in dependencies
+
+IOMM DEPENDENCY (MANDATORY):
+- Peripherals using external pins MUST include "IOMM" in dependencies
+- This ensures pins are multiplexed to correct functions BEFORE peripheral registers are configured
+- I/O peripherals requiring IOMM: SCI, LIN, GIO, SPI, I2C, CAN, PWM, EPWM, ECAP, EQEP, N2HET
+- IOMM module is core infrastructure that initializes very early (after PCR, before peripherals)
 
 OTHER DEPENDENCIES:
 - VIM: If the peripheral has interrupts (check soc.yaml for irq_ref)
@@ -1930,10 +1938,10 @@ OUTPUT:
 Return ONLY the C code content.
 """
 
-def build_pass2_driver_c_prompt(module_name: str, manifest_json: str, reg_header_content: str, soc_slice: str = "", bus_slice: str = "", manifest: dict = None) -> str:
+def build_pass2_driver_c_prompt(module_name: str, manifest_json: str, reg_header_content: str, soc_slice: str = "", bus_slice: str = "", pinmux_yaml: str = "", manifest: dict = None) -> str:
     """
     Constructs the prompt for "Pass 2B" - Driver Implementation Generation.
-    Uses the Registry Manifest + Register Header + Hardware Info + Bus Info (optional).
+    Uses the Registry Manifest + Register Header + Hardware Info + Bus Info + Pin Mux Info (optional).
     """
     # PLL-specific implementation requirements
     pll_section = ""
@@ -2163,7 +2171,9 @@ INPUT CONTEXT:
 4. Hardware Details (YAML):
 {soc_slice}
 5. Bus/Clock Details (YAML):
-{bus_slice}   
+{bus_slice}
+6. Pin Multiplexing Data (YAML):
+{pinmux_yaml if pinmux_yaml else "Not provided - peripheral does not use external pins"}
 
 TASK:
 Generate the C source file (`{module_name.lower()}_driver.c`) implementing the driver.
@@ -2231,6 +2241,67 @@ CLOCK SERVICE INTEGRATION (MANDATORY):
    - NO hardcoded `#define *_FREQUENCY` or `#define *_HZ` macros
    - Calls to PLL_EnableClock() in init function
    - Calls to PLL_GetFrequency() for baud/timing calculations
+
+IOMM PIN MULTIPLEXING INTEGRATION (MANDATORY FOR I/O PERIPHERALS):
+-------------------------------------------------------------------
+**CRITICAL:** If the manifest (INPUT CONTEXT 2) lists "IOMM" in dependencies, the peripheral uses external pins that require multiplexing.
+
+**IMPORTANT:** Peripheral drivers MUST NOT directly access IOMM/PINMMR registers. Instead, they must use the IOMM driver API.
+
+1. INCLUDE REQUIREMENT:
+   - Add `#include "iomm_driver.h"` to the .c file
+
+2. PIN CONFIGURATION APPROACH:
+   **DO NOT directly configure pins in the peripheral Init() function.**
+
+   Instead, document required pins in a comment and assume they are pre-configured:
+   ```c
+   void {module_name.upper()}_Init(void) {{
+       // STEP 1: Enable peripheral clock (MANDATORY - must be first)
+       PLL_EnableClock(CLOCKDOMAIN_<CLOCK_REF>);
+
+       /* Pin Configuration Requirements (must be done before calling this function):
+        * The following pins must be configured via IOMM_ConfigurePin() or main.c:
+        * - <SIGNAL_NAME>: PINMMRx bit y (e.g., SCIRX: PINMMR7 bit 17)
+        * - <SIGNAL_NAME>: PINMMRx bit y (e.g., SCITX: PINMMR8 bit 1)
+        *
+        * Example configuration in main.c:
+        *   IOMM_Unlock();
+        *   // Set PINMMR7 bit 17 for SCIRX
+        *   // Set PINMMR8 bit 1 for SCITX
+        *   IOMM_Lock();
+        */
+
+       // STEP 2: Configure peripheral registers
+       ...
+   }}
+   ```
+
+3. EXTRACTING PIN REQUIREMENTS FROM PINMUX.YAML (INPUT CONTEXT 6):
+   - Find your peripheral's signal names in pinmux.yaml
+   - Look for entries where functions[].signal matches your peripheral (e.g., "SCIRX", "SCITX", "LINRX", "LINTX")
+   - The mux.register and mux.bit tell you which PINMMR register and bit control each signal
+   - Document these requirements in comments as shown above
+   - Example from pinmux.yaml:
+     ```yaml
+     - package_pin: 39
+       functions:
+         - {{ af: "1", signal: "SCIRX", mux: {{ register: "PINMMR7", bit: 17 }} }}
+     ```
+     This means: SCIRX requires PINMMR7 bit 17 to be set
+
+4. MULTIPLE INSTANCES:
+   - If your peripheral has multiple instances (e.g., LIN1, LIN2, SCI1, SCI2):
+     * Check INPUT CONTEXT 4 (soc.yaml) for the instance number
+     * Search pinmux.yaml for signals with instance suffixes
+     * Document only the pins for YOUR specific instance
+   - If instance information is unavailable, document the default/first pin set found
+
+5. WHY THIS APPROACH:
+   - Pin multiplexing is typically done once at system startup in main.c or board init
+   - Multiple peripherals may share IOMM configuration responsibility
+   - The IOMM driver provides proper lock/unlock management
+   - Peripheral drivers should focus on peripheral-specific configuration only
 
 FUNCTION IMPLEMENTATION REQUIREMENTS:
 - Implement EVERY function listed in the Manifest "functions" section
@@ -2406,7 +2477,23 @@ class _CostTracker:
 
 
 class _ProgressTracker:
-    """Thread-safe progress tracker for concurrent generation tasks."""
+    """
+    Thread-safe progress tracker for concurrent generation tasks.
+
+    .. deprecated:: 2.0
+        This class is deprecated and kept only for backward compatibility.
+        Use :class:`~modules.utils.unified_progress.UnifiedProgressManager` instead,
+        which provides hierarchical progress tracking with global and per-pass views.
+
+    The old _ProgressTracker provides basic spinner functionality but lacks:
+    - Hierarchical progress display (global + per-pass)
+    - Per-module progress tracking
+    - ETA calculation
+    - Success/failure counters
+    - Comprehensive logging
+
+    For new code, use UnifiedProgressManager from modules.utils.unified_progress.
+    """
     def __init__(self):
         self.total_tasks = 0
         self.completed_tasks = 0
@@ -2471,6 +2558,8 @@ async def invoke_model(model: Model, max_tokens: int, messages: list[Message]) -
     """
     Invoke the Bedrock model with concurrency limiting.
     Allows up to N concurrent model invocations to avoid rate limiting.
+
+    Set BSP_MOCK_MODE=1 environment variable to use mock responses for testing.
     """
     global _model_semaphore
     if _model_semaphore is None:
@@ -2478,6 +2567,26 @@ async def invoke_model(model: Model, max_tokens: int, messages: list[Message]) -
         # If you see ThrottlingException, reduce this number
         # If you have increased quotas, you can raise it to 30-50
         _model_semaphore = asyncio.Semaphore(15)
+
+    # Check for mock mode (for testing without API calls)
+    import os
+    if os.getenv("BSP_MOCK_MODE", "").lower() in ("1", "true", "yes"):
+        from modules.utils.mock_api import mock_invoke_model
+        async with _model_semaphore:
+            response = await mock_invoke_model(model, max_tokens, messages)
+
+            # Track mock usage for cost estimation
+            try:
+                from modules.utils.utils import extract_usage_from_bedrock_response
+                usage = extract_usage_from_bedrock_response(response)
+                _cost_tracker.add_usage(model, usage["input_tokens"], usage["output_tokens"])
+            except Exception:
+                pass
+
+            # Mark progress
+            _progress.increment()
+
+            return response
 
     # Token limit protection: Claude models have 200K total context limit (input + output)
     # Dynamically calculate available output tokens based on actual input size

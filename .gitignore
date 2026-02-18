@@ -13,6 +13,7 @@ __pycache__
 
 # Ignore all output folders with timestamp pattern
 app/output_*/
+output_*
 
 # Generated files in specific directories
 app/_artifacts/

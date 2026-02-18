@@ -79,7 +79,8 @@ async def run_discovery_pass(
     token_allocator=None,
     enable_validation: bool = True,
     allowed_modules: Optional[List[str]] = None,
-    bus_data: Optional[Dict[str, Any]] = None
+    bus_data: Optional[Dict[str, Any]] = None,
+    progress_manager=None
 ) -> Dict[str, Any]:
     """
     Pass 1: Architecture Discovery & Registry Build.
@@ -121,6 +122,13 @@ async def run_discovery_pass(
 
     logger.info(f"Starting Pass 1 (Discovery) for {len(peripherals)} modules...")
 
+    # Setup progress tracker
+    tracker = None
+    if progress_manager:
+        tracker = progress_manager.start_pass("Discovery")
+        if tracker:
+            tracker.set_total_tasks(len(peripherals) * 2)  # manifest + header per module
+
     async def _process_module_manifest(name: str, soc_slice: str) -> Optional[Dict[str, Any]]:
         """Fetch JSON Manifest with retry logic"""
         from ..regeneration.retry_policy import RetryPolicy, FailureReason
@@ -131,7 +139,10 @@ async def run_discovery_pass(
 
         for attempt in range(retry_policy.max_retries + 1):
             if attempt > 0:
-                print(f"  [retry] Pass1 manifest {name} - Attempt {attempt + 1}")
+                if tracker:
+                    tracker.add_message(f"Retrying {name} manifest - Attempt {attempt + 1}", level="warning")
+                else:
+                    print(f"  [retry] Pass1 manifest {name} - Attempt {attempt + 1}")
 
             try:
                 prompt = build_manifest_prompt(name, soc_slice)
@@ -237,7 +248,10 @@ async def run_discovery_pass(
 
         for attempt in range(retry_policy.max_retries + 1):
             if attempt > 0:
-                print(f"  [retry] Pass1 header {name} - Attempt {attempt + 1} (tokens: {current_tokens})")
+                if tracker:
+                    tracker.add_message(f"Retrying {name} header - Attempt {attempt + 1} ({current_tokens} tokens)", level="warning")
+                else:
+                    print(f"  [retry] Pass1 header {name} - Attempt {attempt + 1} (tokens: {current_tokens})")
 
             try:
                 prompt = build_reg_header_prompt(name, soc_slice, regs_slice)
@@ -267,9 +281,9 @@ async def run_discovery_pass(
                     end_block = code_text.find("```")
                     if end_block != -1:
                         extracted = code_text[:end_block].strip()
-                        # Record success
+                        # Record success with module count for Pass 1
                         if token_allocator:
-                            token_allocator.record_success(f"pass1_{name}_header", current_tokens)
+                            token_allocator.record_success(f"pass1_{name}_header", current_tokens, num_modules=len(peripherals))
                         return (extracted, text)
 
                 # 2. Try generic markdown
@@ -280,14 +294,14 @@ async def run_discovery_pass(
                     if end_block != -1:
                         extracted = code_text[:end_block].strip()
                         if token_allocator:
-                            token_allocator.record_success(f"pass1_{name}_header", current_tokens)
+                            token_allocator.record_success(f"pass1_{name}_header", current_tokens, num_modules=len(peripherals))
                         return (extracted, text)
 
                 # 3. Fallback: If it looks like a header, return full text
                 if "#ifndef" in text or "typedef" in text:
                     extracted = text.replace("```c", "").replace("```", "").strip()
                     if token_allocator:
-                        token_allocator.record_success(f"pass1_{name}_header", current_tokens)
+                        token_allocator.record_success(f"pass1_{name}_header", current_tokens, num_modules=len(peripherals))
                     return (extracted, text)
 
                 # Could not parse
@@ -434,7 +448,8 @@ async def run_discovery_pass(
     for p in peripherals:
         tasks.append(_process_module_full(p))
 
-    print(f"[pass1] Launched {len(peripherals)} tasks (double-threaded). Waiting for results...")
+    if not tracker:
+        print(f"[pass1] Launched {len(peripherals)} tasks (double-threaded). Waiting for results...")
 
     # Use as_completed to show progress and write files immediately
     results = []
@@ -454,17 +469,29 @@ async def run_discovery_pass(
                 header_name = mod_manifest.get("reg_header_file", f"reg_{mod_name.lower()}.h") if mod_manifest else f"reg_{mod_name.lower()}.h"
                 header_path = include_dir / header_name
                 header_path.write_text(header_content, encoding="utf-8")
-                print(f"\n[ok] {mod_name}: Register header written")
+
+                if tracker:
+                    tracker.increment_success()
+                    tracker.update_task_name(f"Completed {mod_name} header")
+                # Suppress output when using unified progress
+                # else:
+                #     print(f"\n[ok] {mod_name}: Register header written")
 
             # Collect manifest entry for later (manifest needs all entries)
             manifest_entry = res.get("manifest")
             if manifest_entry:
                 manifest_entries[mod_name] = manifest_entry
+                if tracker:
+                    tracker.increment_success()
+                    tracker.update_task_name(f"Completed {mod_name} manifest")
 
             # Keep results for backward compatibility
             results.append(res)
         else:
-            print(".", end="", flush=True)  # Fallback for empty results
+            if tracker:
+                tracker.increment_failure()
+            else:
+                print(".", end="", flush=True)  # Fallback for empty results
     print("\n")
     
     # 5. Process Results - Build manifest and run validation
@@ -530,13 +557,21 @@ async def run_discovery_pass(
         json.dumps(manifest, indent=2),
         encoding="utf-8"
     )
-    print(f"[ok] BSP manifest written: {manifest_path}")
+    if tracker:
+        pass  # Tracker already updated during progress
+    else:
+        print(f"[ok] BSP manifest written: {manifest_path}")
 
-    # Summary
-    print(f"\n[info] Pass 1 Complete:")
-    print(f"  Modules processed: {len(manifest_entries)}")
-    print(f"  Headers generated: {len([r for r in results if r and r.get('reg_header_content')])}")
-    print(f"  Manifest entries: {len(manifest['api_catalog'])}")
+    # Complete pass tracking
+    if progress_manager:
+        progress_manager.complete_pass("Discovery", success=True)
+
+    # Summary (only print if not using fancy progress display)
+    if not tracker:
+        print(f"\n[info] Pass 1 Complete:")
+        print(f"  Modules processed: {len(manifest_entries)}")
+        print(f"  Headers generated: {len([r for r in results if r and r.get('reg_header_content')])}")
+        print(f"  Manifest entries: {len(manifest['api_catalog'])}")
 
     logger.info(f"Pass 1 Complete. Registry built with {success_count} modules.")
     logger.info(f"Manifest: {manifest_path}")

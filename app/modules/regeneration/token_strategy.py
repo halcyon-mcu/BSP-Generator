@@ -20,6 +20,15 @@ class AdaptiveTokenAllocator:
 
     def __init__(self):
         """Initialize with empty history."""
+        # Pass-specific histories (v3 format with metadata)
+        # Pass 1: List of {"tokens": int, "num_modules": int} dicts (cumulative operation)
+        self.pass1_history: List[Dict[str, int]] = []
+        # Pass 2: Dict mapping module names to token lists (per-module operations)
+        self.pass2_history: Dict[str, List[int]] = {}
+        # Pass 3: Dict mapping file names to token lists (fixed overhead)
+        self.pass3_history: Dict[str, List[int]] = {}
+
+        # Legacy history (v1/v2 format) - kept for backwards compatibility
         self.module_history: Dict[str, List[int]] = {}
 
     def get_initial_tokens(self, module_name: str, default: int = 8000) -> int:
@@ -44,39 +53,81 @@ class AdaptiveTokenAllocator:
         max_historical = max(history)
         return int(max_historical * 1.2)
 
-    def record_success(self, module_name: str, tokens_used: int):
+    def record_success(self, module_name: str, tokens_used: int, num_modules: int = 1):
         """
         Record successful generation with token count.
+
+        Categorizes by pass type based on naming convention:
+        - pass1_*: Pass 1 (manifest + header generation) - cumulative operation
+        - pass2_*: Pass 2 (driver implementation) - per-module operation
+        - pass3_*: Pass 3 (platform files) - fixed overhead
 
         Args:
             module_name: Name of the module that succeeded
             tokens_used: Approximate token count used
+            num_modules: Number of modules (only relevant for Pass 1)
         """
+        # Detect pass type from naming convention
+        if module_name.startswith("pass1_") or (not module_name.startswith("pass2_") and not module_name.startswith("pass3_")):
+            # Pass 1: Store as cumulative operation with module count
+            # Only record once per pass (not per module)
+            if module_name.startswith("pass1_"):
+                # This is a Pass 1 call, check if we already recorded this run
+                if not self.pass1_history or self.pass1_history[-1]["tokens"] != tokens_used:
+                    self.pass1_history.append({
+                        "tokens": tokens_used,
+                        "num_modules": num_modules
+                    })
+                    # Keep only last 5 runs
+                    if len(self.pass1_history) > 5:
+                        self.pass1_history = self.pass1_history[-5:]
+        elif module_name.startswith("pass2_"):
+            # Pass 2: Store per-module
+            if module_name not in self.pass2_history:
+                self.pass2_history[module_name] = []
+            self.pass2_history[module_name].append(tokens_used)
+            # Keep only last 5 runs
+            if len(self.pass2_history[module_name]) > 5:
+                self.pass2_history[module_name] = self.pass2_history[module_name][-5:]
+        elif module_name.startswith("pass3_"):
+            # Pass 3: Store per-file
+            if module_name not in self.pass3_history:
+                self.pass3_history[module_name] = []
+            self.pass3_history[module_name].append(tokens_used)
+            # Keep only last 5 runs
+            if len(self.pass3_history[module_name]) > 5:
+                self.pass3_history[module_name] = self.pass3_history[module_name][-5:]
+
+        # Also update legacy module_history for backwards compatibility
         if module_name not in self.module_history:
             self.module_history[module_name] = []
-
         self.module_history[module_name].append(tokens_used)
-
-        # Keep only last 5 successful runs
         if len(self.module_history[module_name]) > 5:
             self.module_history[module_name] = self.module_history[module_name][-5:]
 
     def save_history(self, path: Path):
         """
-        Save token history to JSON file.
+        Save token history to JSON file (v3 format with module counts for Pass 1).
 
         Args:
             path: Path to save history file
         """
         try:
+            data = {
+                "version": 3,  # Version identifier
+                "pass1": self.pass1_history,  # List of {"tokens": int, "num_modules": int}
+                "pass2": self.pass2_history,  # Dict[str, List[int]]
+                "pass3": self.pass3_history,  # Dict[str, List[int]]
+                "legacy": self.module_history  # Backwards compatibility
+            }
             with open(path, 'w', encoding='utf-8') as f:
-                json.dump(self.module_history, f, indent=2)
+                json.dump(data, f, indent=2)
         except Exception as e:
             print(f"[warn] Could not save token history: {e}")
 
     def load_history(self, path: Path):
         """
-        Load token history from previous runs.
+        Load token history from previous runs (auto-migrates from v1/v2 to v3).
 
         Args:
             path: Path to history file
@@ -86,10 +137,62 @@ class AdaptiveTokenAllocator:
 
         try:
             with open(path, 'r', encoding='utf-8') as f:
-                self.module_history = json.load(f)
+                data = json.load(f)
+
+            version = data.get("version", 1) if isinstance(data, dict) else 1
+
+            if version == 3:
+                # V3 FORMAT: Pass 1 is list of dicts with module counts
+                self.pass1_history = data.get("pass1", [])
+                self.pass2_history = data.get("pass2", {})
+                self.pass3_history = data.get("pass3", {})
+                self.module_history = data.get("legacy", {})
+            elif version == 2:
+                # V2 FORMAT: Pass 1 is dict with duplicate values - convert to v3
+                pass1_dict = data.get("pass1", {})
+                self.pass2_history = data.get("pass2", {})
+                self.pass3_history = data.get("pass3", {})
+                self.module_history = data.get("legacy", {})
+
+                # Convert v2 Pass 1 to v3: extract unique token values with estimated module counts
+                if pass1_dict:
+                    # Get all token values from all modules (they should be the same for each run)
+                    all_values = []
+                    for history in pass1_dict.values():
+                        all_values.extend(history)
+
+                    # Find unique values (each represents a distinct run)
+                    unique_tokens = sorted(set(all_values))
+
+                    # Estimate num_modules from how many entries had same token count
+                    self.pass1_history = []
+                    for tokens in unique_tokens[-5:]:  # Keep only last 5
+                        # Count how many modules recorded this value
+                        count = sum(1 for history in pass1_dict.values() if tokens in history)
+                        self.pass1_history.append({
+                            "tokens": tokens,
+                            "num_modules": count  # Estimate from duplicate count
+                        })
+            else:
+                # V1 FORMAT: Flat dict - migrate to v3
+                self.module_history = data if isinstance(data, dict) else {}
+                self.pass1_history = []
+                self.pass2_history = {}
+                self.pass3_history = {}
+
+                # Auto-categorize based on naming convention
+                for name, history in self.module_history.items():
+                    if name.startswith("pass2_"):
+                        self.pass2_history[name] = history
+                    elif name.startswith("pass3_"):
+                        self.pass3_history[name] = history
+                    # Skip pass1_ entries - they'll be re-recorded properly in v3 format
         except Exception as e:
             print(f"[warn] Could not load token history: {e}")
             self.module_history = {}
+            self.pass1_history = []
+            self.pass2_history = {}
+            self.pass3_history = {}
 
     def get_statistics(self) -> Dict[str, Dict[str, int]]:
         """
@@ -113,7 +216,12 @@ class AdaptiveTokenAllocator:
 
     def estimate_cost(self, num_modules: int, model_pricing: tuple, default_tokens: int = 20000) -> dict:
         """
-        Estimate the cost of generating modules including all three passes.
+        Estimate the cost of generating modules with accurate pass-specific calculations.
+
+        Uses separate averages for each pass to provide realistic estimates:
+        - Pass 1: Manifest + headers (cumulative: ~60-100k base + ~3k per module)
+        - Pass 2: Driver implementations (~8-20k per module)
+        - Pass 3: Platform files (~58-60k total fixed overhead)
 
         Args:
             num_modules: Number of modules to generate
@@ -125,28 +233,59 @@ class AdaptiveTokenAllocator:
         """
         input_price, output_price = model_pricing
 
-        # Calculate average from history (Pass 1 data)
-        if self.module_history:
-            all_tokens = [token for history in self.module_history.values() for token in history]
-            avg_pass1_tokens = int(sum(all_tokens) / len(all_tokens)) if all_tokens else default_tokens
+        # Calculate Pass 1 total (manifest generation is ONE cumulative operation)
+        # Pass 1 generates a SINGLE manifest with all modules, not per-module files
+        # Use per-module average from history to scale for different project sizes
+        if self.pass1_history:
+            # Calculate per-module averages from historical runs
+            per_module_averages = []
+            for entry in self.pass1_history:
+                tokens = entry.get("tokens", 0)
+                modules = entry.get("num_modules", 1)
+                if modules > 0:
+                    per_module_averages.append(tokens / modules)
+
+            if per_module_averages:
+                # Use average per-module cost and scale to current project
+                avg_per_module = int(sum(per_module_averages) / len(per_module_averages))
+                pass1_total = avg_per_module * num_modules
+                avg_pass1 = avg_per_module
+            else:
+                # Fallback if history is malformed
+                base_tokens = 60000
+                per_module_overhead = 3000
+                pass1_total = base_tokens + (per_module_overhead * num_modules)
+                avg_pass1 = pass1_total
         else:
-            avg_pass1_tokens = default_tokens
+            # Fallback: Pass 1 is cumulative, not per-module. Base estimate with modest scaling.
+            # Typical observed: 60k-100k tokens for small projects (1-10 modules)
+            base_tokens = 60000  # Base cost for manifest generation
+            per_module_overhead = 3000  # Small incremental cost per additional module
+            pass1_total = base_tokens + (per_module_overhead * num_modules)
+            avg_pass1 = pass1_total
 
-        # Account for all passes with realistic multipliers
-        # Pass 1: Manifest + register headers (baseline)
-        pass1_total = num_modules * avg_pass1_tokens
+        # Calculate Pass 2 average (driver implementations - these ARE per-module)
+        if self.pass2_history:
+            pass2_tokens_list = [token for history in self.pass2_history.values() for token in history]
+            avg_pass2 = int(sum(pass2_tokens_list) / len(pass2_tokens_list))
+        else:
+            # Fallback: Typical observed Pass 2 usage is 8-20k tokens per driver
+            avg_pass2 = 12000  # Conservative middle estimate
 
-        # Pass 2: Driver implementations are ~2x larger than headers
-        # (includes manifest context + register data + driver logic)
-        pass2_total = num_modules * int(avg_pass1_tokens * 2.0)
+        # Calculate Pass 3 total (platform files - fixed set of 5 files)
+        if self.pass3_history:
+            # Sum the most recent token usage for each platform file
+            pass3_overhead = sum(max(history) for history in self.pass3_history.values())
+        else:
+            # Fallback: Conservative estimate for 5 platform files
+            pass3_overhead = 60_000
 
-        # Pass 3: Platform files (fixed overhead, ~5 files × 250K tokens each)
-        pass3_overhead = 1_250_000
+        # Calculate Pass 2 total (per-module generation)
+        pass2_total = num_modules * avg_pass2
 
-        # Total estimated tokens
         total_estimated_tokens = pass1_total + pass2_total + pass3_overhead
 
-        # Adjust input/output ratio (observed to be closer to 75/25 than 60/40)
+        # Input/output ratio (observed: 75/25)
         estimated_input_tokens = int(total_estimated_tokens * 0.75)
         estimated_output_tokens = int(total_estimated_tokens * 0.25)
 
@@ -161,11 +300,12 @@ class AdaptiveTokenAllocator:
             "input_tokens": estimated_input_tokens,
             "output_tokens": estimated_output_tokens,
             "cost_usd": total_cost,
-            "avg_tokens_per_module": avg_pass1_tokens,
-            "has_history": bool(self.module_history),
+            "has_history": bool(self.pass1_history or self.pass2_history or self.pass3_history),
             "breakdown": {
                 "pass1_tokens": pass1_total,
+                "pass1_note": "cumulative (one manifest for all modules)",
                 "pass2_tokens": pass2_total,
-                "pass3_tokens": pass3_overhead
+                "pass2_avg": avg_pass2,
+                "pass3_tokens": pass3_overhead,
             }
         }
