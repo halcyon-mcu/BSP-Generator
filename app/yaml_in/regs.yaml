@@ -769,7 +769,7 @@ peripherals:
         desc: "Fall-Back Address Parity Error Register"
 
   ADC:
-    base_address: '0x00000000'
+    base_address: '0xFFF7C000'
     desc: ''
     registers:
       ADRSTCR:
@@ -1039,7 +1039,7 @@ peripherals:
           - { name: "TEST", bit: 8, access: RW, desc: "Test mode to make parity RAM writable" }
 
   CCM:
-    base_address: '0x00000000'
+    base_address: '0xFFFFF600'
     desc: ''
     registers:
       CCMSR:
@@ -1061,7 +1061,7 @@ peripherals:
           - { name: "MKEY", msb: 3, lsb: 0, access: RW, desc: "Mode Key. 0=Lockstep mode, 6h=Self-test mode, 9h=Error Forcing mode, Fh=Self-test Error Forcing mode" }
 
   CRC:
-    base_address: '0x00000000'
+    base_address: '0xFE000000'
     desc: ''
     registers:
       CRC_CTRL0:
@@ -1344,7 +1344,7 @@ peripherals:
           - { name: "ITCMEn", bit: 0, access: RW, desc: "Enable/disables the tracing of instruction TCM (Flash data bus)" }
 
   DCAN:
-    base_address: '0x00000000'
+    base_address: '0xFFF7DC00'
     desc: ''
     registers:
       DCAN_CTL:
@@ -1521,7 +1521,7 @@ peripherals:
           - { name: "PU", bit: 18, access: RW, desc: "CAN_RX Pullup/Pulldown select" }
 
   DCC:
-    base_address: '0x00000000'
+    base_address: '0xFFFFEC00'
     desc: ''
     registers:
       DCCGCTRL:
@@ -2186,7 +2186,7 @@ peripherals:
           - { name: "CETCOUNT", msb: 12, lsb: 0, access: RW, desc: "Current element transfer count. Returns current remaining element counts. Only updated after channel arbitrated out from priority queue" }
 
   ECAP:
-    base_address: '0x00000000'
+    base_address: '0xFCF79300'
     desc: ''
     registers:
       TSCTR:
@@ -2319,7 +2319,7 @@ peripherals:
           - { name: "CEVT1", bit: 1, access: RW, desc: "Force Capture Event 1" }
 
   EFUSE:
-    base_address: '0x00000000'
+    base_address: '0xFFF8C000'
     desc: ''
     registers:
       EFCBOUND:
@@ -2342,7 +2342,7 @@ peripherals:
       EFCPINS:
         offset: '0x2C'
         access: RO
-        reset: '0xXXXXXXXX'
+        reset: '0x00000000'
         desc: "EFC Pins Register - Status of eFuse controller signals"
         fields:
           - { name: "EFC_SELFTEST_DONE", bit: 15, access: RW, desc: "Indicates when EFC ECC selftest is complete" }
@@ -2376,7 +2376,7 @@ peripherals:
           - { name: "SIGNATURE", msb: 31, lsb: 0, access: RW, desc: "Expected signature for eFuse ECC logic self test. Recommended value is 0x5362F97F" }
 
   EMACMDIO:
-    base_address: '0x00000000'
+    base_address: '0xFCF78900'
     desc: ''
     registers:
       REVID:
@@ -2594,13 +2594,13 @@ peripherals:
           - { name: "PHYADRMON", msb: 4, lsb: 0, access: RW, desc: "PHY address whose link status is to be monitored" }
 
   EMIF:
-    base_address: '0x00000000'
+    base_address: '0xFCFFE800'
     desc: ''
     registers:
       MIDR:
         offset: '0x00'
         access: RW
-        reset: '0xXXXXXXXX'
+        reset: '0x00000000'
         desc: "Module ID Register"
         fields:
           - { name: "REV", msb: 31, lsb: 0, access: RW, desc: "Module ID of EMIF" }
@@ -2778,7 +2778,7 @@ peripherals:
           - { name: "CS2_PG_MD_EN", bit: 0, access: RW, desc: "Page Mode enable for NOR Flash on CS2. 0=disabled, 1=enabled" }
 
   EPWM:
-    base_address: '0x00000000'
+    base_address: '0xFCF78C00'
     desc: ''
     registers:
       TBCTL:
@@ -2963,7 +2963,7 @@ peripherals:
           - { name: "CHPEN", bit: 0, access: RW, desc: "PWM-Chopper Enable" }
 
   ESM:
-    base_address: '0x00000000'
+    base_address: '0xFFFFF500'
     desc: ''
     registers:
       ESMEEPAPR1:
@@ -3135,7 +3135,7 @@ peripherals:
           - { name: "ESF", msb: 31, lsb: 0, access: RW, desc: "Error Status Flag for Group1 channels 32-63" }
 
   FMC:
-    base_address: '0x00000000'
+    base_address: '0xFFF87000'
     desc: ''
     registers:
       FRDCNTL:
@@ -3176,7 +3176,7 @@ peripherals:
       FCOR_ERR_ADD:
         offset: '0x14'
         access: RW
-        reset: 'undefined'
+        reset: '0x00000000'
         desc: "Flash Correctable Error Address Register"
         fields:
           - { name: "COR_ERR_ADD", msb: 31, lsb: 3, access: RW, desc: "Correctable Error Address. Records CPU logical address where correctable error detected. Frozen from update until read by CPU." }
@@ -3184,7 +3184,7 @@ peripherals:
       FCOR_ERR_POS:
         offset: '0x18'
         access: RW
-        reset: 'undefined'
+        reset: '0x00000000'
         desc: "Flash Correctable Error Position Register"
         fields:
           - { name: "BUS2", bit: 9, access: RW, desc: "Bus 2 Error. 0=error in main Flash, 1=error from OTP read" }
@@ -3193,7 +3193,7 @@ peripherals:
       FEDACSTATUS:
         offset: '0x1C'
         access: RO
-        reset: 'undefined'
+        reset: '0x00000000'
         desc: "Flash Error Detection and Correction Status Register"
         fields:
           - { name: "FSM_DONE", bit: 24, access: RW, desc: "Flash State Machine Done. Set when FSM completes program or erase operation. Generates interrupt on VIM channel 61 if FSM_EVT_EN bit set." }
@@ -3212,7 +3212,7 @@ peripherals:
       FUNC_ERR_ADD:
         offset: '0x20'
         access: RW
-        reset: 'undefined'
+        reset: '0x00000000'
         desc: "Flash Uncorrectable Error Address Register"
         fields:
           - { name: "UNC_ERR_ADD", msb: 31, lsb: 3, access: RW, desc: "Uncorrectable Error Address. Records CPU logical address where uncorrectable error detected or address bus parity mismatch. Frozen until read by CPU." }
@@ -3375,21 +3375,21 @@ peripherals:
       FRAW_DATAH:
         offset: '0x70'
         access: RW
-        reset: 'undefined'
+        reset: '0x00000000'
         desc: "Uncorrected Raw Data High Register"
         fields:
           - { name: "RAW_DATA", msb: 31, lsb: 0, access: RW, desc: "Uncorrected Raw Data. Upper 32 bits of 64-bit raw data used in diagnostic testing of ECC logic" }
       FRAW_DATAL:
         offset: '0x74'
         access: RW
-        reset: 'undefined'
+        reset: '0x00000000'
         desc: "Uncorrected Raw Data Low Register"
         fields:
           - { name: "RAW_DATA", msb: 31, lsb: 0, access: RW, desc: "Uncorrected Raw Data. Lower 32 bits of 64-bit raw data used in diagnostic testing of ECC logic" }
       FRAW_ECC:
         offset: '0x78'
         access: RW
-        reset: 'undefined'
+        reset: '0x00000000'
         desc: "Uncorrected Raw ECC Register"
         fields:
           - { name: "PIPE_BUF", bit: 8, access: RW, desc: "Error came from pipeline buffer hit. Cleared when RAW_ECC updated or by writing 1" }
@@ -3472,7 +3472,7 @@ peripherals:
       EE_COR_ERR_ADD:
         offset: '0x314'
         access: RW
-        reset: 'undefined'
+        reset: '0x00000000'
         desc: "EEPROM Emulation Correctable Error Address Register"
         fields:
           - { name: "COR_ERR_ADD", msb: 31, lsb: 3, access: RW, desc: "Correctable Error Address. Records CPU logical address where correctable error detected. Frozen until read by CPU." }
@@ -3480,7 +3480,7 @@ peripherals:
       EE_COR_ERR_POS:
         offset: '0x318'
         access: RW
-        reset: 'undefined'
+        reset: '0x00000000'
         desc: "EEPROM Emulation Correctable Error Position Register"
         fields:
           - { name: "TYPE", bit: 8, access: RW, desc: "Error Type. 0=error in 64 data bits, 1=error in 8 check bits" }
@@ -3488,7 +3488,7 @@ peripherals:
       EE_STATUS:
         offset: '0x31C'
         access: RO
-        reset: 'undefined'
+        reset: '0x00000000'
         desc: "EEPROM Emulation Error Status Register"
         fields:
           - { name: "EE_D_UNC_ERR", bit: 12, access: RW, desc: "Diagnostic Mode Uncorrectable Error Status Flag. 0=no error, 1=uncorrectable error in diagnostic mode 1" }
@@ -3502,7 +3502,7 @@ peripherals:
       EE_UNC_ERR_ADD:
         offset: '0x320'
         access: RW
-        reset: 'undefined'
+        reset: '0x00000000'
         desc: "EEPROM Emulation Uncorrectable Error Address Register"
         fields:
           - { name: "UNC_ERR_ADD", msb: 31, lsb: 3, access: RW, desc: "Uncorrectable Error Address. Records CPU logical address where uncorrectable error detected. Frozen until read by CPU." }
@@ -3761,7 +3761,7 @@ peripherals:
           - { name: "Reserved", msb: 31, lsb: 8, access: RW, desc: "Reserved. Reads return 0. Writes have no effect." }
 
   HTU:
-    base_address: '0x00000000'
+    base_address: '0xFFF7A400'
     desc: ''
     registers:
       HTU_GC:
@@ -3949,7 +3949,7 @@ peripherals:
       HTU_ID:
         offset: '0x60'
         access: RW
-        reset: 'Device-specific'
+        reset: '0x00000000'
         desc: "Module Identification Register"
         fields:
           - { name: "CLASS", msb: 23, lsb: 16, access: RO, desc: "Module Class. Module class number (read-only)." }
@@ -4005,21 +4005,21 @@ peripherals:
       HTU_IFADDRA:
         offset: '0x00'
         access: RW
-        reset: '0xXXXXXXXX'
+        reset: '0x00000000'
         desc: "Initial Full Address A Register (in DCP RAM)"
         fields:
           - { name: "IFADDRA", msb: 31, lsb: 2, access: RW, desc: "Initial byte address of buffer A in main memory (32-bit aligned)." }
       HTU_IFADDRB:
         offset: '0x04'
         access: RW
-        reset: '0xXXXXXXXX'
+        reset: '0x00000000'
         desc: "Initial Full Address B Register (in DCP RAM)"
         fields:
           - { name: "IFADDRB", msb: 31, lsb: 2, access: RW, desc: "Initial byte address of buffer B in main memory (32-bit aligned)." }
       HTU_IHADDRCT:
         offset: '0x08'
         access: RW
-        reset: '0xXXXXXXXX'
+        reset: '0x00000000'
         desc: "Initial N2HET Address and Control Register (in DCP RAM)"
         fields:
           - { name: "DIR", bit: 23, access: RW, desc: "Direction of Transfer. 0=read HET write memory, 1=read memory write HET." }
@@ -4032,7 +4032,7 @@ peripherals:
       HTU_ITCOUNT:
         offset: '0x0C'
         access: RW
-        reset: '0xXXXXXXXX'
+        reset: '0x00000000'
         desc: "Initial Transfer Count Register (in DCP RAM)"
         fields:
           - { name: "IETCOUNT", msb: 20, lsb: 16, access: RW, desc: "Initial Element Transfer Count. Number of element transfers per frame." }
@@ -4040,28 +4040,28 @@ peripherals:
       HTU_CFADDRA:
         offset: '0x100'
         access: RW
-        reset: '0xXXXXXXXX'
+        reset: '0x00000000'
         desc: "Current Full Address A Register (in DCP RAM)"
         fields:
           - { name: "CFADDRA", msb: 31, lsb: 0, access: RW, desc: "Current byte address of buffer A. Updated at end of each frame." }
       HTU_CFADDRB:
         offset: '0x104'
         access: RW
-        reset: '0xXXXXXXXX'
+        reset: '0x00000000'
         desc: "Current Full Address B Register (in DCP RAM)"
         fields:
           - { name: "CFADDRB", msb: 31, lsb: 0, access: RW, desc: "Current byte address of buffer B. Updated at end of each frame." }
       HTU_CFCOUNT:
         offset: '0x108'
         access: RW
-        reset: '0xXXXXXXXX'
+        reset: '0x00000000'
         desc: "Current Frame Count Register (in DCP RAM)"
         fields:
           - { name: "CFTCTA", msb: 23, lsb: 16, access: RW, desc: "Current Frame Transfer Count for CP A. Updated at end of each frame." }
           - { name: "CFTCTB", msb: 7, lsb: 0, access: RW, desc: "Current Frame Transfer Count for CP B. Updated at end of each frame." }
 
   INTER:
-    base_address: '0x00000000'
+    base_address: '0xFFF7D400'
     desc: ''
     registers:
       I2COAR:
@@ -4291,7 +4291,7 @@ peripherals:
           - { name: "SCLSRS", bit: 0, access: RW, desc: "SCL slew rate select - 0 for slow, 1 for normal" }
 
   IOMM:
-    base_address: '0x00000000'
+    base_address: '0xFFFFEA00'
     desc: ''
     registers:
       REVISION_REG:
@@ -4550,7 +4550,7 @@ peripherals:
           - { name: "PINMMR29_8", bit: 8, access: RW, desc: "Block EMIF SDRAM clock (EMIF_CLK) from output when set (default). Clear to enable SDRAM clock output" }
 
   LIN:
-    base_address: '0x00000000'
+    base_address: '0xFFF7E400'
     desc: ''
     registers:
       SCIGCR0:
@@ -4828,13 +4828,13 @@ peripherals:
         desc: "Input/Output Error Enable Register"
 
   PBIST:
-    base_address: '0x00000000'
+    base_address: '0xFFFFE400'
     desc: ''
     registers:
       RAMT:
         offset: '0x160'
         access: RW
-        reset: '0xXXXXXXXX'
+        reset: '0x00000000'
         desc: >-
           RAM Configuration Register - provides information regarding memory currently being tested
         fields:
@@ -4955,7 +4955,7 @@ peripherals:
           - { name: "RINFOU", msb: 31, lsb: 0, access: RW, desc: "RAM Group selection bits 33-64. Each bit selects corresponding RAM group" }
 
   SPI:
-    base_address: '0x00000000'
+    base_address: '0xFFF7F400'
     desc: ''
     registers:
       SPIGCR0:
@@ -5069,7 +5069,7 @@ peripherals:
           - { name: "MSPIENA", bit: 0, access: RW, desc: "Multi-buffer mode enable. 0=compatibility mode, 1=multi-buffer mode" }
 
   PLL:
-    base_address: '0x00000000'
+    base_address: '0xFFFFFF70'
     desc: ''
     registers:
       CSDIS:
@@ -5203,13 +5203,13 @@ peripherals:
         desc: "General Purpose Register"
 
   PMM:
-    base_address: '0x00000000'
+    base_address: '0xFFFF0000'
     desc: ''
     registers:
       LOGICPDPWRCTRL0:
         offset: '0x00'
         access: RW
-        reset: 'X'
+        reset: '0x00000000'
         desc: "Logic Power Domain Control Register 0"
         fields:
           - { name: "LOGICPDON0", msb: 27, lsb: 24, access: RW, desc: "Power domain PD2 control. Write 0xA to command OFF state, any other value commands Active state." }
@@ -5219,7 +5219,7 @@ peripherals:
       MEMPDPWRCTRL0:
         offset: '0x10'
         access: RW
-        reset: 'X'
+        reset: '0x00000000'
         desc: "Memory Power Domain Control Register 0"
         fields:
           - { name: "MEMPDON0", msb: 27, lsb: 24, access: RW, desc: "Power domain RAM_PD1 control. Write 0xA to command OFF state, any other value commands Active state." }
@@ -5227,7 +5227,7 @@ peripherals:
       PDCLKDIS:
         offset: '0x20'
         access: RW
-        reset: 'X'
+        reset: '0x00000000'
         desc: "Power Domain Clock Disable Register"
         fields:
           - { name: "PDCLK_DIS_3", bit: 3, access: RW, desc: "Disable clocks to logic power domain PD5. 0=Enable, 1=Disable." }
@@ -5237,7 +5237,7 @@ peripherals:
       PDCLKDISSET:
         offset: '0x24'
         access: RW
-        reset: 'X'
+        reset: '0x00000000'
         desc: "Power Domain Clock Disable Set Register"
         fields:
           - { name: "PDCLK_DISSET_3", bit: 3, access: RW, desc: "Set to disable clocks to logic power domain PD5. 0=No effect, 1=Disable clocks." }
@@ -5247,7 +5247,7 @@ peripherals:
       PDCLKDISCLR:
         offset: '0x28'
         access: RW
-        reset: 'X'
+        reset: '0x00000000'
         desc: "Power Domain Clock Disable Clear Register"
         fields:
           - { name: "PDCLK_DISCLR_3", bit: 3, access: RW, desc: "Clear to enable clocks to logic power domain PD5. 0=No effect, 1=Enable clocks." }
@@ -5257,7 +5257,7 @@ peripherals:
       LOGICPDPWRSTAT0:
         offset: '0x40'
         access: RO
-        reset: 'X'
+        reset: '0x00000000'
         desc: "Logic Power Domain PD2 Power Status Register"
         fields:
           - { name: "LOGIC_IN_TRANS0", bit: 24, access: RW, desc: "Logic in transition status for power domain PD2. 0=Steady state, 1=In transition." }
@@ -5267,7 +5267,7 @@ peripherals:
       LOGICPDPWRSTAT1:
         offset: '0x44'
         access: RO
-        reset: 'X'
+        reset: '0x00000000'
         desc: "Logic Power Domain PD3 Power Status Register"
         fields:
           - { name: "LOGIC_IN_TRANS1", bit: 24, access: RW, desc: "Logic in transition status for power domain PD3. 0=Steady state, 1=In transition." }
@@ -5277,7 +5277,7 @@ peripherals:
       LOGICPDPWRSTAT2:
         offset: '0x48'
         access: RO
-        reset: 'X'
+        reset: '0x00000000'
         desc: "Logic Power Domain PD4 Power Status Register"
         fields:
           - { name: "LOGIC_IN_TRANS2", bit: 24, access: RW, desc: "Logic in transition status for power domain PD4. 0=Steady state, 1=In transition." }
@@ -5287,7 +5287,7 @@ peripherals:
       LOGICPDPWRSTAT3:
         offset: '0x4C'
         access: RO
-        reset: 'X'
+        reset: '0x00000000'
         desc: "Logic Power Domain PD5 Power Status Register"
         fields:
           - { name: "LOGIC_IN_TRANS3", bit: 24, access: RW, desc: "Logic in transition status for power domain PD5. 0=Steady state, 1=In transition." }
@@ -5297,7 +5297,7 @@ peripherals:
       MEMPDPWRSTAT0:
         offset: '0x80'
         access: RO
-        reset: 'X'
+        reset: '0x00000000'
         desc: "Memory Power Domain RAM_PD1 Power Status Register"
         fields:
           - { name: "LOGIC_IN_TRANS0", bit: 24, access: RW, desc: "Logic in transition status for power domain RAM_PD1. 0=Steady state, 1=In transition." }
@@ -5307,7 +5307,7 @@ peripherals:
       MEMPDPWRSTAT1:
         offset: '0x84'
         access: RO
-        reset: 'X'
+        reset: '0x00000000'
         desc: "Memory Power Domain RAM_PD2 Power Status Register"
         fields:
           - { name: "LOGIC_IN_TRANS1", bit: 24, access: RW, desc: "Logic in transition status for power domain RAM_PD2. 0=Steady state, 1=In transition." }
@@ -5377,7 +5377,7 @@ peripherals:
           - { name: "ISO_DIAG_3_0", msb: 3, lsb: 0, access: RW, desc: "Isolation Diagnostic. Bit[3]=PD5, Bit[2]=PD4, Bit[1]=PD3, Bit[0]=PD2. 0=Isolation enabled, 1=Isolation disabled." }
 
   POM:
-    base_address: '0x00000000'
+    base_address: '0xFFA04000'
     desc: ''
     registers:
       POMGLBCTRL:
@@ -5416,21 +5416,21 @@ peripherals:
         fields:
           - { name: "TO", bit: 0, access: RWC, desc: "Timeout. This flag signals a timeout condition on the last CPU read access through the POM. This flag is only updated when the POM module is enabled (ON/OFF = Ah). 0 = No timeout occurred, 1 = Timeout occurred. Write 1 to clear." }
       POMPROGSTARTx:
-        offset: '0x200, 0x210, ..., 0x3F0'
+        offset: '0x200'
         access: RW
         reset: '0x00000000'
         desc: "POM Program Region Start Address Register x (x = 0 to 31)"
         fields:
           - { name: "STARTADDRESS", msb: 22, lsb: 0, access: RW, desc: "Defines the start address of the program memory region. The start address has to be a multiple of the region size. If the region start address is programmed to a non-region size boundary, the region will begin at the next lower region size boundary." }
       POMOVLSTARTx:
-        offset: '0x204, 0x214, ..., 0x3F4'
+        offset: '0x204'
         access: RW
         reset: '0x00000000'
         desc: "POM Overlay Region Start Address Register x (x = 0 to 31)"
         fields:
           - { name: "STARTADDRESS", msb: 22, lsb: 0, access: RW, desc: "Defines the start address of the overlay memory region. The start address has to be a multiple of the region size. If the region start address is programmed to a non-region size boundary, the region will begin at the next lower region size boundary." }
       POMREGSIZEx:
-        offset: '0x208, 0x218, ..., 0x3F8'
+        offset: '0x208'
         access: RW
         reset: '0x00000000'
         desc: "POM Region Size Register x (x = 0 to 31)"
@@ -5576,7 +5576,7 @@ peripherals:
           - { name: "Preamble", msb: 7, lsb: 0, access: RW, desc: "Preamble" }
 
   PULSE:
-    base_address: '0x00000000'
+    base_address: '0xFCF79900'
     desc: ''
     registers:
       QPOSCNT:
@@ -5825,7 +5825,7 @@ peripherals:
           - { name: "QCPRDLAT", msb: 15, lsb: 0, access: RW, desc: "Capture period latch - latched on unit timeout or CPU read of QPOSCNT" }
 
   RAM:
-    base_address: '0x00000000'
+    base_address: '0x08000000'
     desc: ''
     registers:
       RAMCTRL:
@@ -5905,7 +5905,7 @@ peripherals:
       RAMPERRADDR:
         offset: '0x3C'
         access: RW
-        reset: '0xXXXXXXXX'
+        reset: '0x00000000'
         desc: "TCRAM Module Parity Error Address Register"
         fields:
           - { name: "ADDRESS_PARITY_ERROR_ADDRESS", msb: 22, lsb: 3, access: RW, desc: "Address where parity error detected (64-bit aligned, offset from TCRAM base)" }
@@ -6579,7 +6579,7 @@ peripherals:
           - { name: "MBR", msb: 12, lsb: 0, access: RW, reset: "0", desc: "Maximum baud rate prescaler value." }
 
   STC:
-    base_address: '0x00000000'
+    base_address: '0xFFFFE600'
     desc: ''
     registers:
       STCGCR0:
@@ -6701,7 +6701,7 @@ peripherals:
           - { name: "SELF_CHECK_KEY", msb: 3, lsb: 0, access: RW, desc: "Signature compare logic self-check enable key. 0xA=Signature compare logic self-check is enabled. Any other value=Signature compare logic self-check is disabled." }
 
   TIMER:
-    base_address: '0x00000000'
+    base_address: '0xFFF7B800'
     desc: ''
     registers:
       HETGCR:
@@ -7100,7 +7100,7 @@ peripherals:
           - { name: "ANGI", msb: 3, lsb: 0, access: RW, desc: "Angle increment value sent to NHET (0-15)" }
 
   USB:
-    base_address: '0x00000000'
+    base_address: '0xFCF78A00'
     desc: ''
     registers:
       REV:
@@ -7175,7 +7175,7 @@ peripherals:
       FBPARERR:
         offset: '0xF8'
         access: RW
-        reset: 'undefined'
+        reset: '0x00000000'
         desc: >-
           Fall-Back Address Parity Error Register - provides fall-back address if parity error occurs
         fields:

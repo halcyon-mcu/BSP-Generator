@@ -1,0 +1,139 @@
+{
+  "$defs": {
+    "BoardInfo": {
+      "additionalProperties": true,
+      "description": "Board-specific pin information.",
+      "properties": {
+        "net": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Net name on board",
+          "title": "Net"
+        }
+      },
+      "title": "BoardInfo",
+      "type": "object"
+    },
+    "MuxInfo": {
+      "additionalProperties": true,
+      "description": "Multiplexer configuration for a pin function.",
+      "properties": {
+        "register": {
+          "description": "Mux control register name",
+          "title": "Register",
+          "type": "string"
+        },
+        "bit": {
+          "description": "Bit position in register",
+          "minimum": 0,
+          "title": "Bit",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "register",
+        "bit"
+      ],
+      "title": "MuxInfo",
+      "type": "object"
+    },
+    "PinDefinition": {
+      "additionalProperties": true,
+      "description": "Pin definition in pinmux.yaml.",
+      "properties": {
+        "package_pin": {
+          "description": "Physical package pin number",
+          "minimum": 0,
+          "title": "Package Pin",
+          "type": "integer"
+        },
+        "name": {
+          "description": "Pin name/primary signal",
+          "title": "Name",
+          "type": "string"
+        },
+        "board": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BoardInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Board-specific info"
+        },
+        "functions": {
+          "description": "Available alternate functions",
+          "items": {
+            "$ref": "#/$defs/PinFunction"
+          },
+          "title": "Functions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "package_pin",
+        "name",
+        "functions"
+      ],
+      "title": "PinDefinition",
+      "type": "object"
+    },
+    "PinFunction": {
+      "additionalProperties": true,
+      "description": "Pin function/alternate function definition.",
+      "properties": {
+        "af": {
+          "description": "Alternate function number",
+          "title": "Af",
+          "type": "string"
+        },
+        "signal": {
+          "description": "Signal name for this function",
+          "title": "Signal",
+          "type": "string"
+        },
+        "mux": {
+          "$ref": "#/$defs/MuxInfo",
+          "description": "Mux register configuration"
+        }
+      },
+      "required": [
+        "af",
+        "signal",
+        "mux"
+      ],
+      "title": "PinFunction",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "description": "Root schema for pinmux.yaml.",
+  "properties": {
+    "pins": {
+      "description": "Pin definitions",
+      "items": {
+        "$ref": "#/$defs/PinDefinition"
+      },
+      "title": "Pins",
+      "type": "array"
+    }
+  },
+  "required": [
+    "pins"
+  ],
+  "title": "PinmuxYAML",
+  "type": "object",
+  "$id": "pinmux.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Auto-generated from Pydantic models in modules/yaml/schemas.py. DO NOT EDIT MANUALLY - changes will be overwritten. Modify the Pydantic models instead and regenerate."
+}

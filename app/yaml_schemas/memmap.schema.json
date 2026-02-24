@@ -1,0 +1,55 @@
+{
+  "$defs": {
+    "MemoryRegion": {
+      "description": "Memory region definition.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "start": {
+          "description": "Start address (hex)",
+          "title": "Start",
+          "type": "string"
+        },
+        "size": {
+          "description": "Size (hex)",
+          "title": "Size",
+          "type": "string"
+        },
+        "type": {
+          "description": "Memory type: RAM, ROM, FLASH, etc.",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "start",
+        "size",
+        "type"
+      ],
+      "title": "MemoryRegion",
+      "type": "object"
+    }
+  },
+  "description": "Root schema for memmap.yaml.",
+  "properties": {
+    "regions": {
+      "description": "Memory regions",
+      "items": {
+        "$ref": "#/$defs/MemoryRegion"
+      },
+      "title": "Regions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "regions"
+  ],
+  "title": "MemmapYAML",
+  "type": "object",
+  "$id": "memmap.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Auto-generated from Pydantic models in modules/yaml/schemas.py. DO NOT EDIT MANUALLY - changes will be overwritten. Modify the Pydantic models instead and regenerate."
+}

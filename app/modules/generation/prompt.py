@@ -1898,13 +1898,13 @@ Peripheral drivers that depend on PLL MUST use the clock service API correctly:
    - Enable the peripheral's clock_ref domain
    - If x-ext.clock_refs exists, enable each domain in order
    Example:
-   int SCI_Init(const sci_config_t* config) {
+   int SCI_Init(const sci_config_t* config) {{
        // Enable peripheral clock FIRST
        PLL_EnableClock(CLOCKDOMAIN_VCLK);
 
        // Then configure peripheral registers
        ...
-   }
+   }}
 
 3. Call PLL_GetFrequency() when computing timing parameters:
    - Baud rate calculations

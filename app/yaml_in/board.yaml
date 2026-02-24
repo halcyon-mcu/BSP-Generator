@@ -401,13 +401,18 @@ communication:
       notes: CAN transceiver not populated on board
   lin:
     lin1:
-      rx_pin: 131
-      tx_pin: 132
-      net_rx: LINRX / HERCULES_LIN1_RXD
-      net_tx: LINTX / HERCULES_LIN1_TXD
-      connector: J1 (JTAG)
+      # LIN in SCI/UART mode for USB debug (primary configuration)
+      rx_pin: 38
+      tx_pin: 39
+      net_rx: N2HET1_6 / SCIRX / EPWM5A
+      net_tx: N2HET1_13 / SCITX / EPWM5B
+      connector: J1, J2-4/5 (via XDS110 USB debug)
       transceiver_populated: false
-      notes: LIN transceiver not populated on board
+      notes: |
+        LIN peripheral configured for SCI/UART mode (SCIGCR1[6]=0).
+        Uses same pins as standalone SCI peripheral (38/39).
+        Connected to XDS110 USB debug interface for serial communication.
+        Alternative LIN protocol mode pins: 131 (LINRX), 132 (LINTX) - not used.
   uart:
     sci:
       rx_pin: 38

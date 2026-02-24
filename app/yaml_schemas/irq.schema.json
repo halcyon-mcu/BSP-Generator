@@ -1,0 +1,62 @@
+{
+  "$defs": {
+    "Interrupt": {
+      "description": "Interrupt definition.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "number": {
+          "description": "IRQ number",
+          "minimum": 0,
+          "title": "Number",
+          "type": "integer"
+        },
+        "desc": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Desc"
+        }
+      },
+      "required": [
+        "name",
+        "number"
+      ],
+      "title": "Interrupt",
+      "type": "object"
+    }
+  },
+  "description": "Root schema for irq.yaml.",
+  "properties": {
+    "interrupt_controller": {
+      "description": "Interrupt controller name",
+      "title": "Interrupt Controller",
+      "type": "string"
+    },
+    "irqs": {
+      "description": "Interrupt definitions",
+      "items": {
+        "$ref": "#/$defs/Interrupt"
+      },
+      "title": "Irqs",
+      "type": "array"
+    }
+  },
+  "required": [
+    "interrupt_controller",
+    "irqs"
+  ],
+  "title": "IrqYAML",
+  "type": "object",
+  "$id": "irq.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Auto-generated from Pydantic models in modules/yaml/schemas.py. DO NOT EDIT MANUALLY - changes will be overwritten. Modify the Pydantic models instead and regenerate."
+}

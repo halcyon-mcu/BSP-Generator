@@ -6,7 +6,7 @@ used by the BSP Generator.
 """
 
 from typing import Dict, List, Optional, Any, Union
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 import re
 
 
@@ -142,7 +142,7 @@ class SocYAML(BaseModel):
 class ClockSource(BaseModel):
     """Clock source definition."""
     name: str
-    freq_hz: int = Field(..., gt=0, description="Frequency in Hz")
+    freq_hz: Optional[int] = Field(None, gt=0, description="Frequency in Hz")
     desc: Optional[str] = None
 
 
@@ -222,22 +222,52 @@ class IrqYAML(BaseModel):
 # PINMUX.YAML SCHEMA
 # ==============================================================================
 
+class MuxInfo(BaseModel):
+    """Multiplexer configuration for a pin function."""
+    model_config = ConfigDict(extra='allow', populate_by_name=True)
+
+    register_name: str = Field(..., description="Mux control register name", alias='register')
+    bit: int = Field(..., ge=0, description="Bit position in register")
+
+
+class PinFunction(BaseModel):
+    """Pin function/alternate function definition."""
+    model_config = ConfigDict(extra='allow')
+
+    af: str = Field(..., description="Alternate function number")
+    signal: str = Field(..., description="Signal name for this function")
+    mux: MuxInfo = Field(..., description="Mux register configuration")
+
+
+class BoardInfo(BaseModel):
+    """Board-specific pin information."""
+    model_config = ConfigDict(extra='allow')
+
+    net: Optional[str] = Field(None, description="Net name on board")
+
+
 class PinDefinition(BaseModel):
     """Pin definition in pinmux.yaml."""
-    pin: Union[int, str] = Field(..., description="Pin number or name")
-    signals: List[str] = Field(..., description="Available signal functions")
+    model_config = ConfigDict(extra='allow')
 
-    @field_validator('signals')
+    package_pin: int = Field(..., ge=0, description="Physical package pin number")
+    name: str = Field(..., description="Pin name/primary signal")
+    board: Optional[BoardInfo] = Field(None, description="Board-specific info")
+    functions: List[PinFunction] = Field(..., description="Available alternate functions")
+
+    @field_validator('functions')
     @classmethod
-    def validate_signals_not_empty(cls, v: List) -> List:
-        """Ensure signals list is not empty."""
+    def validate_functions_not_empty(cls, v: List) -> List:
+        """Ensure functions list is not empty."""
         if not v:
-            raise ValueError("signals list cannot be empty")
+            raise ValueError("functions list cannot be empty")
         return v
 
 
 class PinmuxYAML(BaseModel):
     """Root schema for pinmux.yaml."""
+    model_config = ConfigDict(extra='allow')
+
     pins: List[PinDefinition] = Field(..., description="Pin definitions")
 
     @field_validator('pins')
