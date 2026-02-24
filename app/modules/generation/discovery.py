@@ -15,6 +15,7 @@ from .prompt import (
 from ..utils.utils import extract_text_from_bedrock_response
 from ..yaml.yaml_utils import dump_yaml_str, get_soc_peripherals
 from ..utils.file_locking import FileLock
+from ..validation.field_validator import validate_manifest_completeness
 
 logger = logging.getLogger(__name__)
 
@@ -176,12 +177,30 @@ async def run_discovery_pass(
 
                 # Try parsing as-is first
                 try:
-                    return json.loads(json_text)
+                    manifest = json.loads(json_text)
+
+                    # Validate manifest completeness
+                    validation_errors = validate_manifest_completeness(manifest, name)
+                    if validation_errors:
+                        logger.warning(f"Manifest validation warnings for {name}:")
+                        for error in validation_errors:
+                            logger.warning(f"  - {error}")
+
+                    return manifest
                 except json.JSONDecodeError:
                     # Try with cleaning
                     try:
                         cleaned_json = clean_json_string(json_text)
-                        return json.loads(cleaned_json)
+                        manifest = json.loads(cleaned_json)
+
+                        # Validate manifest completeness
+                        validation_errors = validate_manifest_completeness(manifest, name)
+                        if validation_errors:
+                            logger.warning(f"Manifest validation warnings for {name}:")
+                            for error in validation_errors:
+                                logger.warning(f"  - {error}")
+
+                        return manifest
                     except json.JSONDecodeError as json_err:
                         # Log the actual JSON that failed to parse
                         logger.error(f"Manifest JSON Error {name}: {json_err}")
