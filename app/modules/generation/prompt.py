@@ -323,6 +323,54 @@ If required numeric data is missing for any register access:
 
 This STRICTLY includes specific bits in registers. Do not invent these.
 
+REGISTER ACCESS SEMANTICS (MANDATORY):
+--------------------------------------
+The 'access' field in regs.yaml specifies how to use each register. Follow these rules EXACTLY:
+
+| Type | Read Behavior        | Write Behavior           | Usage Rules                                    |
+|------|---------------------|--------------------------|------------------------------------------------|
+| RW   | Get current value   | Set new value            | Normal read/write register                     |
+| RO   | Get status/data     | No effect (or bus error) | NEVER generate write/set functions             |
+| WO   | Undefined value     | Set value/trigger action | NEVER generate read/get functions              |
+| RC   | Get flags & clear   | No effect                | Read ONCE per event, store value, don't re-read |
+| W1C  | Get current flags   | Write 1 to clear bit     | Write 1 to clear, 0 = no change                |
+
+CRITICAL RULES:
+
+1. RC (Read-to-Clear) Registers:
+   - Reading the register automatically clears the bits
+   - MUST read only ONCE per event and store the value
+   - DO NOT re-read or you'll lose flags
+   - Example:
+     ✓ CORRECT:
+       uint32_t status = PERIPHERAL->STATUS_RC_REG;  // Read once
+       if (status & FLAG_BIT) { /* handle */ }
+
+     ✗ INCORRECT:
+       if (PERIPHERAL->STATUS_RC_REG & FLAG_BIT) { /* handle */ }  // Clears on read
+       if (PERIPHERAL->STATUS_RC_REG & OTHER_BIT) { /* handle */ } // Re-read clears again!
+
+2. W1C (Write-1-to-Clear) Registers:
+   - To clear bit N, write (1 << N)
+   - Writing 0 has no effect on that bit
+   - Example:
+     ✓ CORRECT:
+       PERIPHERAL->STATUS_W1C_REG = (1u << 3);  // Clear bit 3
+
+     ✗ INCORRECT:
+       PERIPHERAL->STATUS_W1C_REG &= ~(1u << 3);  // Does nothing (0 = no change)
+
+3. RO (Read-Only) Registers:
+   - NEVER generate Set/Write/Clear functions
+   - Only generate Get/Read functions
+   - Example: Status registers, ID registers, counter values
+
+4. WO (Write-Only) Registers:
+   - NEVER generate Get/Read functions
+   - Only generate Set/Write functions
+   - Reading returns undefined value
+   - Example: Command registers, trigger registers
+
 PERIPHERAL INIT REQUIREMENTS (UPDATED)
 --------------------------------------
 In <periph>_init():
@@ -1693,13 +1741,28 @@ CLOCK DOMAIN ENUM NAMING RULE (MANDATORY):
   * "HCLK"   → CLOCKDOMAIN_HCLK
 
 CLOCK DOMAIN DISCOVERY (MANDATORY):
-- You MUST define a complete clock_domain_t enum.
-- Use ALL entries from x-ext.all_clock_domains injected into this peripheral's soc slice.
-- Naming convention: CLOCKDOMAIN_<UPPERCASE_REF> (replace non-alphanumeric with underscore).
-- Do NOT reduce or filter the list. Add CLOCKDOMAIN_MAX as a sentinel at the end.
-- Also scan all soc.peripherals[*].clock_ref values and include them.
-- Also scan soc.peripherals[*].x-ext.clock_refs arrays if present.
-- A bus clock topology summary may be appended after the SOC YAML. If present, include ALL domain and source names from it as CLOCKDOMAIN_<UPPERCASE_NAME> values.
+Step 1: Collect ALL clock domain names from these sources:
+  a) x-ext.all_clock_domains array (if present in soc slice)
+  b) soc.peripherals[*].clock_ref values (scan all peripherals)
+  c) soc.peripherals[*].x-ext.clock_refs arrays (if present)
+  d) bus.yaml domains[*].name (if bus topology provided)
+  e) bus.yaml sources[*].name (if bus topology provided)
+
+Step 2: Normalize and deduplicate:
+  - Convert each name to: CLOCKDOMAIN_<UPPERCASE_NAME>
+  - Replace non-alphanumeric characters with underscores
+  - Merge duplicates (same normalized name = same enum value)
+  - Examples:
+    * "VCLK" → CLOCKDOMAIN_VCLK
+    * "vclk" → CLOCKDOMAIN_VCLK (merge with above)
+    * "VCLK2" → CLOCKDOMAIN_VCLK2
+
+Step 3: Sort and assign values:
+  - Sort enum names lexicographically (for stability)
+  - Assign consecutive values starting from 0
+  - Add CLOCKDOMAIN_MAX as final sentinel value
+
+CRITICAL: The enum MUST be complete - include ALL discovered domains. Missing domains will cause runtime errors in peripheral drivers.
 
 REQUIRED enum format in the "types" array:
 {{
@@ -1713,6 +1776,69 @@ The PLL module is THE clock service provider for the entire system.
 All peripherals will call PLL_GetFrequency() and PLL_EnableClock() for clock management.
 """
 
+    # IOMM-specific requirements
+    iomm_extra = ""
+    if module_name.upper() == "IOMM":
+        iomm_extra = """
+
+SPECIAL REQUIREMENTS FOR IOMM MODULE:
+--------------------------------------
+The IOMM module provides pin multiplexing services for the entire system.
+
+NON-LINEAR PIN MAPPING (CRITICAL):
+-----------------------------------
+The PINMMR register-to-pin mapping is NON-LINEAR and MUST NOT be computed dynamically.
+
+FORBIDDEN PATTERN (causes incorrect pin configuration):
+```c
+// WRONG - This assumes linear mapping which is INCORRECT
+uint32_t reg_index = pin_number / 4;
+uint32_t bit_offset = (pin_number % 4) * 8;
+```
+
+REQUIRED APPROACH - Pre-computed Lookup Table:
+1. Define a lookup table structure:
+   typedef struct {
+       uint8_t pin_number;
+       volatile uint32_t* pinmmr_reg;
+       uint8_t bit_offset;
+   } pin_mapping_t;
+
+2. Initialize lookup table in IOMM_Init() using pinmux.yaml data:
+   static const pin_mapping_t g_pin_map[] = {
+       {1,  &IOMMREG->PINMMR0, 0},
+       {2,  &IOMMREG->PINMMR0, 8},
+       {5,  &IOMMREG->PINMMR1, 0},
+       // ... complete mapping from pinmux.yaml
+       // Extract from pinmux.yaml: package_pin -> mux.register/bit
+   };
+
+3. Implement O(1) lookup function:
+   static int get_pin_mapping(uint8_t pin, volatile uint32_t** reg, uint8_t* bit) {
+       for (size_t i = 0; i < sizeof(g_pin_map)/sizeof(g_pin_map[0]); i++) {
+           if (g_pin_map[i].pin_number == pin) {
+               *reg = g_pin_map[i].pinmmr_reg;
+               *bit = g_pin_map[i].bit_offset;
+               return 0;  // Success
+           }
+       }
+       return -1;  // Pin not found
+   }
+
+4. Use lookup in IOMM_ConfigurePin() or IOMM_EnablePins():
+   volatile uint32_t* reg;
+   uint8_t bit;
+   if (get_pin_mapping(pin_num, &reg, &bit) == 0) {
+       *reg |= (alternate_function << bit);
+   }
+
+WHY PRE-COMPUTATION IS MANDATORY:
+- Pin-to-register mapping is hardware-specific and non-linear
+- Different chips have different mappings
+- Computing at runtime wastes CPU cycles and increases token usage
+- Pre-computed tables are faster and more maintainable
+"""
+
     return f"""
 You are a Senior Embedded Systems Architect.
 Analyze the hardware description for the "{module_name}" module and define its software interface.
@@ -1722,6 +1848,7 @@ INPUT CONTEXT:
 2. SOC Description (YAML):
 {soc_slice}
 {pll_extra}
+{iomm_extra}
 TASK:
 Define the public interface (functions, types, and structs) this module will expose.
 
@@ -1758,6 +1885,42 @@ Examples:
 - PWM: Uses clock + pins for PWM outputs → MUST include ["IOMM", "PLL"] in dependencies
 - LIN: Uses VCLK + pins → MUST include ["IOMM", "PLL", "VIM"] in dependencies
 - GIO/GPIO: Uses pins for digital I/O → MUST include ["IOMM"] in dependencies
+
+CLOCK SERVICE API USAGE (MANDATORY - READ CAREFULLY):
+------------------------------------------------------
+Peripheral drivers that depend on PLL MUST use the clock service API correctly:
+
+✓ REQUIRED USAGE:
+1. Include the PLL driver header:
+   #include "pll_driver.h"
+
+2. Call PLL_EnableClock() in your init function:
+   - Enable the peripheral's clock_ref domain
+   - If x-ext.clock_refs exists, enable each domain in order
+   Example:
+   int SCI_Init(const sci_config_t* config) {
+       // Enable peripheral clock FIRST
+       PLL_EnableClock(CLOCKDOMAIN_VCLK);
+
+       // Then configure peripheral registers
+       ...
+   }
+
+3. Call PLL_GetFrequency() when computing timing parameters:
+   - Baud rate calculations
+   - Timeout/prescaler calculations
+   - Any frequency-dependent parameter
+   Example:
+   uint32_t vclk_hz = PLL_GetFrequency(CLOCKDOMAIN_VCLK);
+   uint32_t baud_div = (vclk_hz / (16 * baud_rate)) - 1;
+
+✗ FORBIDDEN (causes system conflicts):
+- DO NOT access SYSTEM clock registers directly (CSDIS, CDDIS, CLKCNTL, VCLKASRC, etc.)
+- DO NOT access PLL registers (PLLCTL1/2/3) directly
+- DO NOT configure clocks/dividers in peripheral drivers
+- DO NOT implement your own clock enable/disable logic
+
+EXCEPTION: Only the PLL and SYSTEM modules may access clock hardware registers.
 
 IOMM DEPENDENCY (MANDATORY):
 - Peripherals using external pins MUST include "IOMM" in dependencies
@@ -2069,19 +2232,61 @@ Must have a case for EVERY enum value in clock_domain_t. Handle as follows:
 Must be idempotent. Must NEVER disable clocks.
 
 REQUIRED FUNCTION: PLL_GetFrequency(clock_domain_t domain)
-Must handle EVERY enum value. Calculate DYNAMICALLY from hardware registers:
-1. Read SYSREG->PLLCTL1 and SYSREG->PLLCTL2
-2. Extract: NF = (PLLCTL1 & SYSTEM_PLLCTL1_PLLMUL_MASK) >> SYSTEM_PLLCTL1_PLLMUL_SHIFT (feedback multiplier)
-            NR_raw = (PLLCTL1 & SYSTEM_PLLCTL1_REFCLKDIV_MASK) >> SYSTEM_PLLCTL1_REFCLKDIV_SHIFT
-            actual_NR = NR_raw + 1
-            PLLDIV_raw = (PLLCTL1 & SYSTEM_PLLCTL1_PLLDIV_MASK) >> SYSTEM_PLLCTL1_PLLDIV_SHIFT
-            actual_R = 1u << PLLDIV_raw  (2^PLLDIV)
-            ODPLL_raw = (PLLCTL2 & SYSTEM_PLLCTL2_ODPLL_MASK) >> SYSTEM_PLLCTL2_ODPLL_SHIFT
-            actual_ODPLL = ODPLL_raw + 1
-3. pllclk_hz = (OSCIN_HZ * (NF + 1u)) / (actual_NR * actual_R)  [NF is stored as NF-1 on some RM46 variants - verify from reg header reset value or use NF as-is and let bus.yaml default_config validate]
-   Use the bus.yaml default_config values (from INPUT CONTEXT 5: sources → PLL1 → x-ext → default_config)
-   to verify the formula gives the expected result (e.g., if nr=5, nf=120, r=1, odpll=2 then expect 160MHz).
-4. hclk_hz = pllclk_hz / actual_ODPLL
+Must handle EVERY enum value. Calculate DYNAMICALLY from hardware registers.
+
+PLL FREQUENCY CALCULATION (MANDATORY):
+--------------------------------------
+The RM46 PLLs use this formula:
+
+f_pll = (f_osc × NF) / (NR × R)
+f_hclk = f_pll / ODPLL
+
+Where (from hardware registers):
+- f_osc: Oscillator input frequency (OSCIN_HZ from bus.yaml, typically 16 MHz)
+- NF: Feedback multiplier (from PLLCTL1 register)
+- NR: Pre-divider (from PLLCTL1 register, stored as NR-1)
+- R: Output divider (from PLLCTL1 register, stored as power of 2)
+- ODPLL: Final output divider (from PLLCTL2 register, stored as ODPLL-1)
+
+REGISTER EXTRACTION (Step by step):
+1. Read registers:
+   uint32_t pllctl1 = SYSREG->PLLCTL1;
+   uint32_t pllctl2 = SYSREG->PLLCTL2;
+
+2. Extract bit fields:
+   uint32_t nf_raw = (pllctl1 & SYSTEM_PLLCTL1_PLLMUL_MASK) >> SYSTEM_PLLCTL1_PLLMUL_SHIFT;
+   uint32_t nr_raw = (pllctl1 & SYSTEM_PLLCTL1_REFCLKDIV_MASK) >> SYSTEM_PLLCTL1_REFCLKDIV_SHIFT;
+   uint32_t plldiv_raw = (pllctl1 & SYSTEM_PLLCTL1_PLLDIV_MASK) >> SYSTEM_PLLCTL1_PLLDIV_SHIFT;
+   uint32_t odpll_raw = (pllctl2 & SYSTEM_PLLCTL2_ODPLL_MASK) >> SYSTEM_PLLCTL2_ODPLL_SHIFT;
+
+3. Convert to actual values:
+   uint32_t NF = nf_raw;           // Multiplier value (use as-is)
+   uint32_t NR = nr_raw + 1;       // Pre-divider (register stores NR-1)
+   uint32_t R = 1u << plldiv_raw;  // Output divider (2^PLLDIV)
+   uint32_t ODPLL = odpll_raw + 1; // Final divider (register stores ODPLL-1)
+
+4. Calculate PLL frequency:
+   uint32_t f_pll = (OSCIN_HZ * NF) / (NR * R);
+   uint32_t f_hclk = f_pll / ODPLL;
+
+WORKED EXAMPLE (from bus.yaml typical configuration):
+- OSCIN_HZ = 16,000,000 Hz (16 MHz)
+- NF = 120 (multiplier)
+- NR = 6 (pre-divider, stored as 5 in register)
+- R = 2 (output divider, stored as 1 in register since 2^1=2)
+- ODPLL = 2 (final divider, stored as 1 in register)
+
+Calculation:
+f_pll = (16 MHz × 120) / (6 × 2) = 1,920 MHz / 12 = 160 MHz
+f_hclk = 160 MHz / 2 = 80 MHz
+
+VERIFICATION:
+Use bus.yaml default_config values to verify your formula produces the expected frequency.
+If bus.yaml shows: nr=5, nf=120, r=1, odpll=1, then:
+- Actual values: NR=6 (5+1), NF=120, R=2 (2^1), ODPLL=2 (1+1)
+- Expected result: 160 MHz PLL, 80 MHz HCLK
+
+5. Domain-specific calculations:
 Cases per domain:
 - CLOCKDOMAIN_GCLK / CLOCKDOMAIN_HCLK / CLOCKDOMAIN_PLL1: return hclk_hz
 - CLOCKDOMAIN_VCLK: vclkr = (SYSREG->CLKCNTL & SYSTEM_CLKCNTL_VCLKR_MASK) >> SYSTEM_CLKCNTL_VCLKR_SHIFT; return hclk_hz / (vclkr + 1u)
