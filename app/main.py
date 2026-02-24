@@ -759,6 +759,12 @@ async def main():
     bus_data = load_bus_yaml(Path(args.yamlpath) / "bus.yaml")
     pinmux_data = load_pinmux_yaml(Path(args.yamlpath) / "pinmux.yaml")
 
+    # Validate cross-file references
+    from modules.validation.cross_reference_validator import validate_and_report_cross_references
+    if not validate_and_report_cross_references(soc_data, regs_data, irq_data, bus_data, pinmux_data):
+        print("[error] Cross-reference validation failed - see errors above")
+        return 1
+
     # Setup model and system prompt
     system_prompt = build_system_prompt()
     model_enum = {
