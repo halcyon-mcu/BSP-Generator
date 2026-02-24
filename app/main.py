@@ -1288,6 +1288,29 @@ async def main():
                     final_report.validation_summary.total_modules
                 ) * 100.0
 
+        # Add cross-file validation
+        try:
+            from modules.validation.validation_engine import (
+                extract_all_constants_from_directory,
+                validate_facts_across_files
+            )
+
+            # Extract constants from all generated files
+            all_constants = extract_all_constants_from_directory(out_dir)
+
+            # Perform cross-file validation
+            if all_constants:
+                cross_file_validation = validate_facts_across_files(all_constants, soc_data)
+                final_report.cross_file_validation = {
+                    "passes": cross_file_validation.passes,
+                    "conflicts": [str(c) for c in cross_file_validation.conflicts],
+                    "consistency_score": cross_file_validation.consistency_score,
+                    "errors": cross_file_validation.errors,
+                    "warnings": cross_file_validation.warnings
+                }
+        except Exception as e:
+            progress_manager.log_or_print(f"[warn] Cross-file validation failed: {e}")
+
         # Add dependency graph info if available
         if 'dep_graph' in locals() and 'init_order' in locals():
             final_report.dependency_graph_info = {

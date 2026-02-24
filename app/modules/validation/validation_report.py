@@ -152,9 +152,9 @@ def create_validation_report(
         summary.critical_errors += len(val.critical_errors)
         summary.warnings += len(val.warnings)
 
-    # Calculate success rate
+    # Calculate success rate (as percentage 0-100)
     if summary.total_modules > 0:
-        summary.success_rate = summary.modules_valid / summary.total_modules
+        summary.success_rate = (summary.modules_valid / summary.total_modules) * 100
 
     report.validation_summary = summary
 
@@ -233,7 +233,7 @@ def write_markdown_report(report: ValidationReport, output_path: Path) -> Path:
     lines.append(f"- **Total Modules:** {summary.total_modules}")
     lines.append(f"- **Valid Modules:** {summary.modules_valid} ✅")
     lines.append(f"- **Invalid Modules:** {summary.modules_invalid} ❌")
-    lines.append(f"- **Success Rate:** {summary.success_rate:.1%}")
+    lines.append(f"- **Success Rate:** {summary.success_rate:.1f}%")
     lines.append(f"- **Critical Errors:** {summary.critical_errors}")
     lines.append(f"- **Warnings:** {summary.warnings}")
     lines.append("")
@@ -352,7 +352,7 @@ def print_console_summary(report: ValidationReport) -> None:
     print(f"  Total Modules:    {summary.total_modules}")
     print(f"  Valid Modules:    {GREEN}{summary.modules_valid}{RESET}")
     print(f"  Invalid Modules:  {RED if summary.modules_invalid > 0 else ''}{summary.modules_invalid}{RESET}")
-    print(f"  Success Rate:     {summary.success_rate:.1%}")
+    print(f"  Success Rate:     {summary.success_rate:.1f}%")
 
     if summary.critical_errors > 0:
         print(f"  Critical Errors:  {RED}{summary.critical_errors}{RESET}")
