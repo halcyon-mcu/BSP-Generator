@@ -259,7 +259,7 @@ def _extract_clock_dependencies(soc_data: Dict[str, Any], module_name: str) -> L
     Returns list of dependencies (e.g., ["PLL"]).
     PLL module provides clock services (PLL_EnableClock, PLL_GetFrequency).
     """
-    peripherals = soc_data.get("soc", {}).get("peripherals", [])
+    peripherals = soc_data.get("peripherals", [])
 
     for periph in peripherals:
         if periph.get("name", "").upper() == module_name.upper():
@@ -323,6 +323,40 @@ def _extract_irq_dependencies(soc_data: Dict[str, Any], module_name: str) -> Lis
                 return ["VIM"]
 
     return []
+
+
+# ==============================================================================
+# DEPENDENCY VALIDATION
+# ==============================================================================
+
+def validate_dependencies(graph: DependencyGraph, manifest: Dict[str, Any]) -> List[str]:
+    """
+    Validate that all dependencies reference existing modules.
+
+    Args:
+        graph: Dependency graph to validate
+        manifest: BSP manifest with api_catalog
+
+    Returns:
+        List of error messages (empty if valid)
+    """
+    # Build set of valid module names
+    valid_modules = set(manifest.get("api_catalog", {}).keys())
+
+    # Core system modules that may not be in manifest yet
+    core_modules = {"SYSTEM", "PLL", "VIM", "PCR", "IOMM"}
+    valid_modules.update(core_modules)
+
+    # Check each dependency
+    errors = []
+    for node in graph.nodes.values():
+        for dep in node.dependencies:
+            if dep not in valid_modules:
+                errors.append(
+                    f"{node.name} depends on non-existent module: {dep}"
+                )
+
+    return errors
 
 
 # ==============================================================================

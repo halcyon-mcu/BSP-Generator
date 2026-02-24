@@ -998,6 +998,7 @@ async def main():
         from modules.utils.dependency_resolver import (
             build_dependency_graph,
             generate_init_order,
+            validate_dependencies,
             generate_main_c
         )
 
@@ -1008,6 +1009,14 @@ async def main():
             soc_data,
             selected_modules=pass1_modules
         )
+
+        # Validate dependencies before resolution
+        dep_errors = validate_dependencies(dep_graph, bsp_manifest)
+        if dep_errors:
+            print(f"[error] Invalid dependencies found:")
+            for error in dep_errors:
+                print(f"  - {error}")
+            raise ValueError("Dependency validation failed")
 
         # Generate initialization order
         init_order = generate_init_order(dep_graph)

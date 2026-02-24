@@ -28,13 +28,28 @@ def _now_tag() -> str:
 
 def _safe_relpath(s: str) -> str:
     """
-    Normalize a model-provided path:
+    Normalize a model-provided path with comprehensive security checks:
     - forbid absolute paths
+    - forbid UNC paths
+    - forbid null bytes
     - collapse backslashes to forward slashes
     - forbid parent directory traversal ('..')
+    - enforce maximum path length
     - strip leading './'
     """
     p = str(s).strip()
+
+    # Check for null bytes (security)
+    if '\x00' in p:
+        raise ValueError(f"Path contains null byte: {s!r}")
+
+    # Reject UNC paths (Windows network shares)
+    if p.startswith('\\\\') or p.startswith('//'):
+        raise ValueError(f"Refusing UNC path: {s!r}")
+
+    # Forbid absolute or drive-qualified paths (before normalization)
+    if os.path.isabs(p):
+        raise ValueError(f"Refusing absolute path: {s!r}")
 
     # Normalize slashes
     p = p.replace("\\", "/")
@@ -43,14 +58,14 @@ def _safe_relpath(s: str) -> str:
     if p.startswith("./"):
         p = p[2:]
 
-    # Forbid absolute or drive-qualified paths
-    if os.path.isabs(p):
-        raise ValueError(f"Refusing absolute path from model: {s!r}")
-
     # Forbid parent traversal
     parts = PurePosixPath(p).parts
     if any(seg == ".." for seg in parts):
-        raise ValueError(f"Refusing path with '..' from model: {s!r}")
+        raise ValueError(f"Refusing path with '..': {s!r}")
+
+    # Check maximum path length (Windows limitation)
+    if len(p) > 260:
+        raise ValueError(f"Path too long ({len(p)} chars, max 260): {s!r}")
 
     # You can optionally force a flat layout by only taking the final segment:
     # p = parts[-1] if parts else p

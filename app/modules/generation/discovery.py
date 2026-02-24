@@ -14,6 +14,7 @@ from .prompt import (
 )
 from ..utils.utils import extract_text_from_bedrock_response
 from ..yaml.yaml_utils import dump_yaml_str, get_soc_peripherals
+from ..utils.file_locking import FileLock
 
 logger = logging.getLogger(__name__)
 
@@ -191,9 +192,12 @@ async def run_discovery_pass(
                             debug_dir = output_dir / "_debug"
                             debug_dir.mkdir(parents=True, exist_ok=True)
                             debug_file = debug_dir / f"manifest_{name}_failed.txt"
-                            debug_file.write_text(f"Original response:\n{text}\n\n"
-                                                f"Extracted JSON:\n{json_text}\n\n"
-                                                f"Error: {json_err}", encoding='utf-8')
+
+                            # Use file locking to prevent race conditions
+                            with FileLock(debug_file):
+                                debug_file.write_text(f"Original response:\n{text}\n\n"
+                                                    f"Extracted JSON:\n{json_text}\n\n"
+                                                    f"Error: {json_err}", encoding='utf-8')
                             logger.info(f"Saved problematic response to {debug_file}")
                         except Exception:
                             pass  # Don't fail on debug file write
@@ -468,7 +472,10 @@ async def run_discovery_pass(
                 mod_manifest = res.get("manifest", {})
                 header_name = mod_manifest.get("reg_header_file", f"reg_{mod_name.lower()}.h") if mod_manifest else f"reg_{mod_name.lower()}.h"
                 header_path = include_dir / header_name
-                header_path.write_text(header_content, encoding="utf-8")
+
+                # Use file locking to prevent race conditions
+                with FileLock(header_path):
+                    header_path.write_text(header_content, encoding="utf-8")
 
                 if tracker:
                     tracker.increment_success()
@@ -553,10 +560,13 @@ async def run_discovery_pass(
 
     # 6. Write complete manifest (after ALL modules complete)
     manifest_path = output_dir / "bsp_manifest.json"
-    manifest_path.write_text(
-        json.dumps(manifest, indent=2),
-        encoding="utf-8"
-    )
+
+    # Use file locking to prevent race conditions
+    with FileLock(manifest_path):
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2),
+            encoding="utf-8"
+        )
     if tracker:
         pass  # Tracker already updated during progress
     else:
