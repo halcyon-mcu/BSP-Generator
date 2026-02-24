@@ -48,20 +48,32 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
 
 
 def load_soc_yaml(path: Path) -> Dict[str, Any]:
-    """Load soc.yaml and perform basic schema sanity checks."""
+    """Load soc.yaml and perform schema validation."""
     data = _load_yaml(path)
-    if "soc" not in data or not isinstance(data["soc"], dict):
-        raise ValueError("soc.yaml missing top-level 'soc' key")
-    if "peripherals" not in data["soc"] or not isinstance(data["soc"]["peripherals"], list):
-        raise ValueError("soc.yaml missing 'soc.peripherals' array")
+
+    # Validate with Pydantic schema
+    is_valid, errors = validate_yaml_schema(data, SocYAML)
+    if not is_valid:
+        error_msg = f"soc.yaml validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    logger.debug(f"soc.yaml validation passed: {len(data.get('soc', {}).get('peripherals', []))} peripherals")
     return data
 
 
 def load_regs_yaml(path: Path) -> Dict[str, Any]:
-    """Load regs.yaml."""
+    """Load regs.yaml and perform schema validation."""
     data = _load_yaml(path)
-    if "peripherals" not in data or not isinstance(data["peripherals"], dict):
-        raise ValueError("regs.yaml missing top-level 'peripherals' mapping")
+
+    # Validate with Pydantic schema
+    is_valid, errors = validate_yaml_schema(data, RegsYAML)
+    if not is_valid:
+        error_msg = f"regs.yaml validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    logger.debug(f"regs.yaml validation passed: {len(data.get('peripherals', {}))} peripheral blocks")
     return data
 
 
@@ -84,18 +96,48 @@ def load_memmap_yaml(path: Path) -> Dict[str, Any]:
 
 
 def load_bus_yaml(path: Path) -> Dict[str, Any]:
-    """Load bus.yaml (light validation)."""
-    return _load_yaml(path)
+    """Load bus.yaml and perform schema validation."""
+    data = _load_yaml(path)
+
+    # Validate with Pydantic schema
+    is_valid, errors = validate_yaml_schema(data, BusYAML)
+    if not is_valid:
+        error_msg = f"bus.yaml validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    logger.debug(f"bus.yaml validation passed: {len(data.get('sources', []))} sources, {len(data.get('domains', []))} domains")
+    return data
 
 
 def load_irq_yaml(path: Path) -> Dict[str, Any]:
-    """Load irq.yaml (light validation)."""
-    return _load_yaml(path)
+    """Load irq.yaml and perform schema validation."""
+    data = _load_yaml(path)
+
+    # Validate with Pydantic schema
+    is_valid, errors = validate_yaml_schema(data, IrqYAML)
+    if not is_valid:
+        error_msg = f"irq.yaml validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    logger.debug(f"irq.yaml validation passed: {len(data.get('irqs', []))} interrupts")
+    return data
 
 
 def load_pinmux_yaml(path: Path) -> Dict[str, Any]:
-    """Load pinmux.yaml (light validation)."""
-    return _load_yaml(path)
+    """Load pinmux.yaml and perform schema validation."""
+    data = _load_yaml(path)
+
+    # Validate with Pydantic schema
+    is_valid, errors = validate_yaml_schema(data, PinmuxYAML)
+    if not is_valid:
+        error_msg = f"pinmux.yaml validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    logger.debug(f"pinmux.yaml validation passed: {len(data.get('pins', []))} pins")
+    return data
 
 
 # ---------------------------------------------------------------------------
