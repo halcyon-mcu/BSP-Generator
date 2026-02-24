@@ -759,6 +759,12 @@ async def main():
     bus_data = load_bus_yaml(Path(args.yamlpath) / "bus.yaml")
     pinmux_data = load_pinmux_yaml(Path(args.yamlpath) / "pinmux.yaml")
 
+    # Validate cross-file references
+    from modules.validation.cross_reference_validator import validate_and_report_cross_references
+    if not validate_and_report_cross_references(soc_data, regs_data, irq_data, bus_data, pinmux_data):
+        print("[error] Cross-reference validation failed - see errors above")
+        return 1
+
     # Setup model and system prompt
     system_prompt = build_system_prompt()
     model_enum = {
@@ -998,6 +1004,7 @@ async def main():
         from modules.utils.dependency_resolver import (
             build_dependency_graph,
             generate_init_order,
+            validate_dependencies,
             generate_main_c
         )
 
@@ -1008,6 +1015,14 @@ async def main():
             soc_data,
             selected_modules=pass1_modules
         )
+
+        # Validate dependencies before resolution
+        dep_errors = validate_dependencies(dep_graph, bsp_manifest)
+        if dep_errors:
+            print(f"[error] Invalid dependencies found:")
+            for error in dep_errors:
+                print(f"  - {error}")
+            raise ValueError("Dependency validation failed")
 
         # Generate initialization order
         init_order = generate_init_order(dep_graph)

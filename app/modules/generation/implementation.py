@@ -9,6 +9,7 @@ from .prompt import build_pass2_driver_h_prompt, build_pass2_driver_c_prompt, in
 
 from ..utils.utils import extract_text_from_bedrock_response
 from ..yaml.yaml_utils import dump_yaml_str, find_soc_peripheral
+from ..utils.file_locking import FileLock
 
 logger = logging.getLogger(__name__)
 
@@ -539,7 +540,11 @@ async def run_implementation_pass(
             if type_tag == "h":
                 fname = f"{mod_name.lower()}_driver.h"
                 fpath = inc_dir / fname
-                fpath.write_text(clean_code, encoding="utf-8")
+
+                # Use file locking to prevent race conditions
+                with FileLock(fpath):
+                    fpath.write_text(clean_code, encoding="utf-8")
+
                 written_files.append(fpath)
                 raw_responses.append(raw_response)
                 if tracker:
@@ -547,7 +552,11 @@ async def run_implementation_pass(
             elif type_tag == "c":
                 fname = f"{mod_name.lower()}_driver.c"
                 fpath = src_dir / fname
-                fpath.write_text(clean_code, encoding="utf-8")
+
+                # Use file locking to prevent race conditions
+                with FileLock(fpath):
+                    fpath.write_text(clean_code, encoding="utf-8")
+
                 written_files.append(fpath)
                 raw_responses.append(raw_response)
                 if tracker:

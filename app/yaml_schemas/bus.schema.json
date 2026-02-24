@@ -1,0 +1,123 @@
+{
+  "$defs": {
+    "ClockDomain": {
+      "description": "Clock domain definition.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "divider": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Divider"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "desc": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Desc"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ClockDomain",
+      "type": "object"
+    },
+    "ClockSource": {
+      "description": "Clock source definition.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "freq_hz": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Frequency in Hz",
+          "title": "Freq Hz"
+        },
+        "desc": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Desc"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ClockSource",
+      "type": "object"
+    }
+  },
+  "description": "Root schema for bus.yaml.",
+  "properties": {
+    "sources": {
+      "description": "Clock sources",
+      "items": {
+        "$ref": "#/$defs/ClockSource"
+      },
+      "title": "Sources",
+      "type": "array"
+    },
+    "domains": {
+      "description": "Clock domains",
+      "items": {
+        "$ref": "#/$defs/ClockDomain"
+      },
+      "title": "Domains",
+      "type": "array"
+    }
+  },
+  "required": [
+    "sources",
+    "domains"
+  ],
+  "title": "BusYAML",
+  "type": "object",
+  "$id": "bus.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Auto-generated from Pydantic models in modules/yaml/schemas.py. DO NOT EDIT MANUALLY - changes will be overwritten. Modify the Pydantic models instead and regenerate."
+}
