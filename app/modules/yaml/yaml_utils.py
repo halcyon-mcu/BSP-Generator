@@ -13,8 +13,22 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+import logging
 
 import yaml
+
+from .schemas import (
+    SocYAML,
+    RegsYAML,
+    BusYAML,
+    IrqYAML,
+    PinmuxYAML,
+    MemmapYAML,
+    BoardYAML,
+    validate_yaml_schema
+)
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
