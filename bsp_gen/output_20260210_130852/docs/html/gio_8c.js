@@ -1,0 +1,27 @@
+var gio_8c =
+[
+    [ "gio_clear_int_flags", "group___b_s_p___g_i_o.html#ga52275cb9577dfa6ff6909fe0aa08542c", null ],
+    [ "gio_clear_pins", "group___b_s_p___g_i_o.html#ga278b0b13718c406fe26d73aab031dddd", null ],
+    [ "gio_disable_int", "group___b_s_p___g_i_o.html#gace7dec285988f2e6be87ab6a4cc873b5", null ],
+    [ "gio_disable_irq", "group___b_s_p___g_i_o.html#gaa071c2e13bfcf594ea48f2eb9265ef06", null ],
+    [ "gio_enable_int", "group___b_s_p___g_i_o.html#gad041b6d4bfd016ec65078f536f3aaa2d", null ],
+    [ "gio_enable_irq", "group___b_s_p___g_i_o.html#ga9c3aef1edd08a380e016b2692da4d732", null ],
+    [ "gio_get_int_flags", "group___b_s_p___g_i_o.html#gac86a0c1ed5f25cfd669c03e8497dc234", null ],
+    [ "gio_init", "group___b_s_p___g_i_o.html#ga85de419f80a8b21aae86752289d3f0c8", null ],
+    [ "gio_read_emu1", "group___b_s_p___g_i_o.html#gad3170e1d64274ab5249956b61fdbac8f", null ],
+    [ "gio_read_emu2", "group___b_s_p___g_i_o.html#ga65c0bd75349e44ba705073db1bd7d9ba", null ],
+    [ "gio_read_offset1", "group___b_s_p___g_i_o.html#gaebdb4cd1458428601abd4abb729f67d6", null ],
+    [ "gio_read_offset2", "group___b_s_p___g_i_o.html#ga42226e0cb3f3b5446dfa302ce57e95eb", null ],
+    [ "gio_read_port", "group___b_s_p___g_i_o.html#ga3fb8426f66ea15c951a7db6bc07e3197", null ],
+    [ "gio_register_isr", "group___b_s_p___g_i_o.html#gacc2977d1c53d6252132c6ca1bceb9cbd", null ],
+    [ "gio_set_direction", "group___b_s_p___g_i_o.html#ga7f2afbcb5e588bddce779dd191442b69", null ],
+    [ "gio_set_int_detect", "group___b_s_p___g_i_o.html#gaa22dbcae117f77ce350835f05a5d8ef6", null ],
+    [ "gio_set_int_polarity", "group___b_s_p___g_i_o.html#ga065cbf7431e18aa7aa698390bd5ad59c", null ],
+    [ "gio_set_int_priority", "group___b_s_p___g_i_o.html#gaca910ee01ba279747c454d4aacad69da", null ],
+    [ "gio_set_open_drain", "group___b_s_p___g_i_o.html#ga0a8a625bf2701f9c213e6907b7cf25e9", null ],
+    [ "gio_set_pins", "group___b_s_p___g_i_o.html#ga0d89a9c9a45ecd7ddc107313cdf50938", null ],
+    [ "gio_set_pull_disable", "group___b_s_p___g_i_o.html#ga19d114cc05fa70bd433fd19519b02e46", null ],
+    [ "gio_set_pull_select", "group___b_s_p___g_i_o.html#gac8b2a60767171acfd3cc2d806ccee793", null ],
+    [ "gio_toggle_pins", "group___b_s_p___g_i_o.html#ga60c58187bb1f3817499b73e349b2bcb6", null ],
+    [ "gio_write_port", "group___b_s_p___g_i_o.html#gab08e71163c74e9e242c16cb1dc6ed380", null ]
+];

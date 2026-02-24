@@ -1,0 +1,1525 @@
+{
+  "generated_at": "2026-02-19T12:58:21.719969",
+  "api_catalog": {
+    "PCR": {
+      "module_name": "PCR",
+      "driver_header_file": "pcr_driver.h",
+      "reg_header_file": "reg_pcr.h",
+      "init_function": "PCR_Init",
+      "types": [
+        {
+          "name": "pcr_status_t",
+          "type": "enum",
+          "values": [
+            "PCR_STATUS_OK",
+            "PCR_STATUS_ERROR",
+            "PCR_STATUS_INVALID_PARAM"
+          ],
+          "description": "PCR operation status codes"
+        },
+        {
+          "name": "pcr_peripheral_t",
+          "type": "enum",
+          "values": [
+            "PCR_PERIPHERAL_CAN1",
+            "PCR_PERIPHERAL_CAN2",
+            "PCR_PERIPHERAL_CAN3",
+            "PCR_PERIPHERAL_SPI1",
+            "PCR_PERIPHERAL_SPI2",
+            "PCR_PERIPHERAL_SPI3",
+            "PCR_PERIPHERAL_SPI4",
+            "PCR_PERIPHERAL_SPI5",
+            "PCR_PERIPHERAL_LIN1",
+            "PCR_PERIPHERAL_LIN2",
+            "PCR_PERIPHERAL_SCI1",
+            "PCR_PERIPHERAL_SCI2",
+            "PCR_PERIPHERAL_ADC1",
+            "PCR_PERIPHERAL_ADC2",
+            "PCR_PERIPHERAL_N2HET1",
+            "PCR_PERIPHERAL_N2HET2",
+            "PCR_PERIPHERAL_HTU1",
+            "PCR_PERIPHERAL_HTU2",
+            "PCR_PERIPHERAL_I2C",
+            "PCR_PERIPHERAL_MIBSPI1",
+            "PCR_PERIPHERAL_MIBSPI3",
+            "PCR_PERIPHERAL_MIBSPI5"
+          ],
+          "description": "Enumeration of peripherals controlled by PCR"
+        },
+        {
+          "name": "pcr_power_state_t",
+          "type": "enum",
+          "values": [
+            "PCR_POWER_OFF",
+            "PCR_POWER_ON"
+          ],
+          "description": "Power state for peripheral modules"
+        },
+        {
+          "name": "pcr_reset_state_t",
+          "type": "enum",
+          "values": [
+            "PCR_RESET_ASSERTED",
+            "PCR_RESET_RELEASED"
+          ],
+          "description": "Reset state for peripheral modules"
+        }
+      ],
+      "functions": [
+        {
+          "name": "Init",
+          "prototype": "void PCR_Init(void);",
+          "description": "Initialize the PCR module and configure default power domains"
+        },
+        {
+          "name": "SetPowerState",
+          "prototype": "pcr_status_t PCR_SetPowerState(pcr_peripheral_t peripheral, pcr_power_state_t state);",
+          "description": "Enable or disable power to a specific peripheral module"
+        },
+        {
+          "name": "GetPowerState",
+          "prototype": "pcr_power_state_t PCR_GetPowerState(pcr_peripheral_t peripheral);",
+          "description": "Get the current power state of a peripheral module"
+        },
+        {
+          "name": "SetResetState",
+          "prototype": "pcr_status_t PCR_SetResetState(pcr_peripheral_t peripheral, pcr_reset_state_t state);",
+          "description": "Assert or release reset for a specific peripheral module"
+        },
+        {
+          "name": "GetResetState",
+          "prototype": "pcr_reset_state_t PCR_GetResetState(pcr_peripheral_t peripheral);",
+          "description": "Get the current reset state of a peripheral module"
+        },
+        {
+          "name": "EnablePeripheral",
+          "prototype": "pcr_status_t PCR_EnablePeripheral(pcr_peripheral_t peripheral);",
+          "description": "Enable a peripheral by powering it on and releasing reset"
+        },
+        {
+          "name": "DisablePeripheral",
+          "prototype": "pcr_status_t PCR_DisablePeripheral(pcr_peripheral_t peripheral);",
+          "description": "Disable a peripheral by asserting reset and powering it off"
+        }
+      ],
+      "dependencies": [],
+      "register_typedef": "PCR_REG_MAP_t",
+      "register_typedefs": [
+        "PCR_REG_MAP_t"
+      ]
+    },
+    "PLL": {
+      "module_name": "PLL",
+      "driver_header_file": "pll_driver.h",
+      "reg_header_file": "reg_pll.h",
+      "init_function": "PLL_Init",
+      "types": [
+        {
+          "name": "clock_domain_t",
+          "type": "enum",
+          "values": [
+            "CLOCKDOMAIN_OSCIN",
+            "CLOCKDOMAIN_PLL1",
+            "CLOCKDOMAIN_PLL2",
+            "CLOCKDOMAIN_EXTCLKIN1",
+            "CLOCKDOMAIN_EXTCLKIN2",
+            "CLOCKDOMAIN_LF_LPO",
+            "CLOCKDOMAIN_HF_LPO",
+            "CLOCKDOMAIN_GCLK",
+            "CLOCKDOMAIN_HCLK",
+            "CLOCKDOMAIN_VCLK",
+            "CLOCKDOMAIN_VCLK2",
+            "CLOCKDOMAIN_VCLK3",
+            "CLOCKDOMAIN_VCLK4",
+            "CLOCKDOMAIN_VCLKA1",
+            "CLOCKDOMAIN_VCLKA3",
+            "CLOCKDOMAIN_VCLKA4",
+            "CLOCKDOMAIN_RTICLK",
+            "CLOCKDOMAIN_MAX"
+          ],
+          "description": "Clock domain identifiers for all system clock domains"
+        },
+        {
+          "name": "pll_status_t",
+          "type": "enum",
+          "values": [
+            "PLL_STATUS_OK",
+            "PLL_STATUS_ERROR",
+            "PLL_STATUS_INVALID_PARAM",
+            "PLL_STATUS_NOT_LOCKED",
+            "PLL_STATUS_TIMEOUT"
+          ],
+          "description": "PLL operation status codes"
+        },
+        {
+          "name": "pll_instance_t",
+          "type": "enum",
+          "values": [
+            "PLL_INSTANCE_1",
+            "PLL_INSTANCE_2"
+          ],
+          "description": "PLL instance identifier"
+        },
+        {
+          "name": "pll_config_t",
+          "type": "struct",
+          "members": [
+            {
+              "name": "nr",
+              "type": "uint8_t"
+            },
+            {
+              "name": "nf",
+              "type": "uint8_t"
+            },
+            {
+              "name": "r",
+              "type": "uint8_t"
+            },
+            {
+              "name": "odpll",
+              "type": "uint8_t"
+            },
+            {
+              "name": "enable_spread_spectrum",
+              "type": "bool"
+            }
+          ],
+          "description": "PLL configuration structure with divider and multiplier values"
+        },
+        {
+          "name": "clock_config_t",
+          "type": "struct",
+          "members": [
+            {
+              "name": "domain",
+              "type": "clock_domain_t"
+            },
+            {
+              "name": "divider",
+              "type": "uint8_t"
+            },
+            {
+              "name": "enable",
+              "type": "bool"
+            }
+          ],
+          "description": "Clock domain configuration structure"
+        },
+        {
+          "name": "clock_source_t",
+          "type": "enum",
+          "values": [
+            "CLOCK_SOURCE_OSCIN",
+            "CLOCK_SOURCE_PLL1",
+            "CLOCK_SOURCE_EXTCLKIN1",
+            "CLOCK_SOURCE_LF_LPO",
+            "CLOCK_SOURCE_HF_LPO",
+            "CLOCK_SOURCE_PLL2",
+            "CLOCK_SOURCE_EXTCLKIN2"
+          ],
+          "description": "Available clock sources for domain selection"
+        },
+        {
+          "name": "pll_lock_status_t",
+          "type": "enum",
+          "values": [
+            "PLL_UNLOCKED",
+            "PLL_LOCKED"
+          ],
+          "description": "PLL lock status"
+        }
+      ],
+      "functions": [
+        {
+          "name": "Init",
+          "prototype": "void PLL_Init(void);",
+          "description": "Initialize the PLL module with default configuration from SOC description. Configures PLL1 and PLL2, sets up clock domains, and enables oscillator."
+        },
+        {
+          "name": "ConfigurePLL",
+          "prototype": "pll_status_t PLL_ConfigurePLL(pll_instance_t instance, const pll_config_t* config);",
+          "description": "Configure a PLL instance with custom multiplier and divider values. Formula: PLLCLK = OSCIN * NF / (NR * R). Application use only, typically not called during init."
+        },
+        {
+          "name": "EnablePLL",
+          "prototype": "pll_status_t PLL_EnablePLL(pll_instance_t instance);",
+          "description": "Enable the specified PLL and wait for lock. Returns PLL_STATUS_OK when locked, PLL_STATUS_TIMEOUT on failure."
+        },
+        {
+          "name": "DisablePLL",
+          "prototype": "pll_status_t PLL_DisablePLL(pll_instance_t instance);",
+          "description": "Disable the specified PLL. System must switch to alternate clock source before disabling."
+        },
+        {
+          "name": "GetLockStatus",
+          "prototype": "pll_lock_status_t PLL_GetLockStatus(pll_instance_t instance);",
+          "description": "Check if the specified PLL is locked and stable."
+        },
+        {
+          "name": "GetFrequency",
+          "prototype": "uint32_t PLL_GetFrequency(clock_domain_t domain);",
+          "description": "Get the current frequency in Hz for a specified clock domain. Returns 0 if domain is invalid or disabled. Used by all peripherals to calculate timing parameters."
+        },
+        {
+          "name": "EnableClock",
+          "prototype": "pll_status_t PLL_EnableClock(clock_domain_t domain);",
+          "description": "Enable a clock domain. Configures clock source and enables clock distribution. Used by peripherals during initialization."
+        },
+        {
+          "name": "DisableClock",
+          "prototype": "pll_status_t PLL_DisableClock(clock_domain_t domain);",
+          "description": "Disable a clock domain for power savings. Peripheral must be disabled before calling."
+        },
+        {
+          "name": "SetClockDivider",
+          "prototype": "pll_status_t PLL_SetClockDivider(clock_domain_t domain, uint8_t divider);",
+          "description": "Set the clock divider for a configurable clock domain (VCLK, VCLK2, VCLK3, VCLK4). Divider range 0-15, actual division = divider + 1."
+        },
+        {
+          "name": "GetClockDivider",
+          "prototype": "uint8_t PLL_GetClockDivider(clock_domain_t domain);",
+          "description": "Get the current clock divider setting for a clock domain. Returns 0 if domain has no configurable divider."
+        },
+        {
+          "name": "SelectClockSource",
+          "prototype": "pll_status_t PLL_SelectClockSource(clock_domain_t domain, clock_source_t source);",
+          "description": "Select the clock source for a configurable clock domain. Not all sources are valid for all domains."
+        },
+        {
+          "name": "GetClockSource",
+          "prototype": "clock_source_t PLL_GetClockSource(clock_domain_t domain);",
+          "description": "Get the currently selected clock source for a clock domain."
+        },
+        {
+          "name": "EnableSpreadSpectrum",
+          "prototype": "pll_status_t PLL_EnableSpreadSpectrum(pll_instance_t instance, uint8_t modulation_depth);",
+          "description": "Enable frequency modulation on PLL1 for EMI reduction. Only supported on PLL1, not PLL2."
+        },
+        {
+          "name": "DisableSpreadSpectrum",
+          "prototype": "pll_status_t PLL_DisableSpreadSpectrum(pll_instance_t instance);",
+          "description": "Disable frequency modulation on the specified PLL."
+        },
+        {
+          "name": "WaitForOscillatorValid",
+          "prototype": "pll_status_t PLL_WaitForOscillatorValid(uint32_t timeout_us);",
+          "description": "Wait for the oscillator to stabilize after power-up. Monitors CLKSR0V signal. Timeout in microseconds."
+        },
+        {
+          "name": "GetPLLFrequency",
+          "prototype": "uint32_t PLL_GetPLLFrequency(pll_instance_t instance);",
+          "description": "Calculate and return the output frequency of the specified PLL in Hz based on current NR, NF, R, and ODPLL settings."
+        },
+        {
+          "name": "EnableClockMonitor",
+          "prototype": "pll_status_t PLL_EnableClockMonitor(clock_domain_t domain);",
+          "description": "Enable clock failure detection for the specified domain using HF_LPO as reference."
+        },
+        {
+          "name": "DisableClockMonitor",
+          "prototype": "pll_status_t PLL_DisableClockMonitor(clock_domain_t domain);",
+          "description": "Disable clock failure detection for the specified domain."
+        },
+        {
+          "name": "ClearClockFailureStatus",
+          "prototype": "void PLL_ClearClockFailureStatus(void);",
+          "description": "Clear clock failure status flags in CSVSTAT register."
+        }
+      ],
+      "dependencies": [],
+      "register_typedef": "PLL_REG_MAP_t",
+      "register_typedefs": [
+        "PLL_REG_MAP_t",
+        "PLL_SECONDARY_REG_MAP_t"
+      ]
+    },
+    "VIM": {
+      "module_name": "VIM",
+      "driver_header_file": "vim_driver.h",
+      "reg_header_file": "reg_vim.h",
+      "init_function": "VIM_Init",
+      "types": [
+        {
+          "name": "VIM_Status_t",
+          "type": "enum",
+          "values": [
+            "VIM_STATUS_OK",
+            "VIM_STATUS_ERROR",
+            "VIM_STATUS_INVALID_CHANNEL",
+            "VIM_STATUS_INVALID_PRIORITY"
+          ],
+          "description": "VIM operation status codes"
+        },
+        {
+          "name": "VIM_InterruptType_t",
+          "type": "enum",
+          "values": [
+            "VIM_IRQ",
+            "VIM_FIQ"
+          ],
+          "description": "Interrupt request type: IRQ or FIQ"
+        },
+        {
+          "name": "VIM_ISR_t",
+          "type": "typedef",
+          "definition": "void (*VIM_ISR_t)(void)",
+          "description": "Interrupt service routine function pointer type"
+        },
+        {
+          "name": "VIM_ChannelConfig_t",
+          "type": "struct",
+          "members": [
+            {
+              "name": "channel",
+              "type": "uint8_t"
+            },
+            {
+              "name": "priority",
+              "type": "uint8_t"
+            },
+            {
+              "name": "type",
+              "type": "VIM_InterruptType_t"
+            },
+            {
+              "name": "enable",
+              "type": "bool"
+            },
+            {
+              "name": "wakeup_enable",
+              "type": "bool"
+            },
+            {
+              "name": "isr",
+              "type": "VIM_ISR_t"
+            }
+          ],
+          "description": "Configuration for a single interrupt channel"
+        },
+        {
+          "name": "VIM_Config_t",
+          "type": "struct",
+          "members": [
+            {
+              "name": "enable_parity",
+              "type": "bool"
+            },
+            {
+              "name": "parity_error_handler",
+              "type": "VIM_ISR_t"
+            }
+          ],
+          "description": "VIM module configuration structure"
+        }
+      ],
+      "functions": [
+        {
+          "name": "Init",
+          "prototype": "void VIM_Init(const VIM_Config_t* config);",
+          "description": "Initialize the VIM module with parity control and error handler"
+        },
+        {
+          "name": "ConfigureChannel",
+          "prototype": "VIM_Status_t VIM_ConfigureChannel(const VIM_ChannelConfig_t* channel_config);",
+          "description": "Configure a single interrupt channel with priority, type, and ISR"
+        },
+        {
+          "name": "EnableChannel",
+          "prototype": "VIM_Status_t VIM_EnableChannel(uint8_t channel);",
+          "description": "Enable interrupt request for specified channel"
+        },
+        {
+          "name": "DisableChannel",
+          "prototype": "VIM_Status_t VIM_DisableChannel(uint8_t channel);",
+          "description": "Disable interrupt request for specified channel"
+        },
+        {
+          "name": "EnableWakeup",
+          "prototype": "VIM_Status_t VIM_EnableWakeup(uint8_t channel);",
+          "description": "Enable wakeup capability for specified channel"
+        },
+        {
+          "name": "DisableWakeup",
+          "prototype": "VIM_Status_t VIM_DisableWakeup(uint8_t channel);",
+          "description": "Disable wakeup capability for specified channel"
+        },
+        {
+          "name": "SetInterruptType",
+          "prototype": "VIM_Status_t VIM_SetInterruptType(uint8_t channel, VIM_InterruptType_t type);",
+          "description": "Configure channel as FIQ or IRQ type"
+        },
+        {
+          "name": "RegisterISR",
+          "prototype": "VIM_Status_t VIM_RegisterISR(uint8_t channel, VIM_ISR_t isr);",
+          "description": "Register an interrupt service routine for a channel"
+        },
+        {
+          "name": "GetPendingChannel",
+          "prototype": "uint8_t VIM_GetPendingChannel(VIM_InterruptType_t type);",
+          "description": "Get the highest priority pending interrupt channel number"
+        },
+        {
+          "name": "GetActiveIRQVector",
+          "prototype": "uint32_t VIM_GetActiveIRQVector(void);",
+          "description": "Get the address of the currently active IRQ vector"
+        },
+        {
+          "name": "GetActiveFIQVector",
+          "prototype": "uint32_t VIM_GetActiveFIQVector(void);",
+          "description": "Get the address of the currently active FIQ vector"
+        },
+        {
+          "name": "EnableGlobalInterrupts",
+          "prototype": "void VIM_EnableGlobalInterrupts(void);",
+          "description": "Enable global IRQ and FIQ in CPSR"
+        },
+        {
+          "name": "DisableGlobalInterrupts",
+          "prototype": "void VIM_DisableGlobalInterrupts(void);",
+          "description": "Disable global IRQ and FIQ in CPSR"
+        },
+        {
+          "name": "EnableVectoredMode",
+          "prototype": "void VIM_EnableVectoredMode(void);",
+          "description": "Enable vectored interrupt mode by setting CP15 VE bit"
+        },
+        {
+          "name": "ClearParityError",
+          "prototype": "void VIM_ClearParityError(void);",
+          "description": "Clear parity error flag and restore interrupt vector table"
+        }
+      ],
+      "dependencies": [],
+      "register_typedef": "VIM_REG_MAP_t",
+      "register_typedefs": [
+        "VIM_REG_MAP_t"
+      ]
+    },
+    "IOMM": {
+      "module_name": "IOMM",
+      "driver_header_file": "iomm_driver.h",
+      "reg_header_file": "reg_iomm.h",
+      "init_function": "IOMM_Init",
+      "types": [
+        {
+          "name": "IOMM_Status_t",
+          "type": "enum",
+          "values": [
+            "IOMM_STATUS_OK",
+            "IOMM_STATUS_ERROR",
+            "IOMM_STATUS_LOCKED",
+            "IOMM_STATUS_INVALID_PIN"
+          ],
+          "description": "Return status codes for IOMM operations"
+        },
+        {
+          "name": "IOMM_PinFunction_t",
+          "type": "enum",
+          "values": [
+            "IOMM_PIN_FUNCTION_GPIO",
+            "IOMM_PIN_FUNCTION_PRIMARY",
+            "IOMM_PIN_FUNCTION_SECONDARY",
+            "IOMM_PIN_FUNCTION_TERTIARY"
+          ],
+          "description": "Pin multiplexing function selection"
+        },
+        {
+          "name": "IOMM_PinConfig_t",
+          "type": "struct",
+          "members": [
+            {
+              "name": "pin_number",
+              "type": "uint8_t"
+            },
+            {
+              "name": "function",
+              "type": "IOMM_PinFunction_t"
+            },
+            {
+              "name": "value",
+              "type": "uint32_t"
+            }
+          ],
+          "description": "Pin configuration structure for multiplexing"
+        },
+        {
+          "name": "IOMM_ClockEnableConfig_t",
+          "type": "struct",
+          "members": [
+            {
+              "name": "clock_enable_bits",
+              "type": "uint32_t"
+            },
+            {
+              "name": "register_index",
+              "type": "uint8_t"
+            }
+          ],
+          "description": "Clock enable configuration for ePWM modules"
+        }
+      ],
+      "functions": [
+        {
+          "name": "Init",
+          "prototype": "void IOMM_Init(void);",
+          "description": "Initialize the IOMM module and set default pin configurations"
+        },
+        {
+          "name": "Unlock",
+          "prototype": "IOMM_Status_t IOMM_Unlock(void);",
+          "description": "Unlock the IOMM registers by writing the unlock sequence to KICK registers"
+        },
+        {
+          "name": "Lock",
+          "prototype": "IOMM_Status_t IOMM_Lock(void);",
+          "description": "Lock the IOMM registers by writing any value except unlock sequence"
+        },
+        {
+          "name": "ConfigurePin",
+          "prototype": "IOMM_Status_t IOMM_ConfigurePin(const IOMM_PinConfig_t* config);",
+          "description": "Configure a single pin's multiplexing function"
+        },
+        {
+          "name": "ConfigureMultiplePins",
+          "prototype": "IOMM_Status_t IOMM_ConfigureMultiplePins(const IOMM_PinConfig_t* configs, uint32_t count);",
+          "description": "Configure multiple pins in a single call"
+        },
+        {
+          "name": "SetPinFunction",
+          "prototype": "IOMM_Status_t IOMM_SetPinFunction(uint8_t pin_number, IOMM_PinFunction_t function);",
+          "description": "Set the multiplexing function for a specific pin"
+        },
+        {
+          "name": "GetPinFunction",
+          "prototype": "IOMM_Status_t IOMM_GetPinFunction(uint8_t pin_number, IOMM_PinFunction_t* function);",
+          "description": "Get the current multiplexing function for a specific pin"
+        },
+        {
+          "name": "EnableEPWMClock",
+          "prototype": "IOMM_Status_t IOMM_EnableEPWMClock(const IOMM_ClockEnableConfig_t* config);",
+          "description": "Enable ePWM module clock through PINMMR37-PINMMR38 registers"
+        },
+        {
+          "name": "DisableEPWMClock",
+          "prototype": "IOMM_Status_t IOMM_DisableEPWMClock(uint8_t epwm_module);",
+          "description": "Disable ePWM module clock"
+        },
+        {
+          "name": "WritePinMMR",
+          "prototype": "IOMM_Status_t IOMM_WritePinMMR(uint8_t register_index, uint32_t value);",
+          "description": "Write a value to a specific PINMMR register"
+        },
+        {
+          "name": "ReadPinMMR",
+          "prototype": "IOMM_Status_t IOMM_ReadPinMMR(uint8_t register_index, uint32_t* value);",
+          "description": "Read a value from a specific PINMMR register"
+        },
+        {
+          "name": "SetBits",
+          "prototype": "IOMM_Status_t IOMM_SetBits(uint8_t register_index, uint32_t bit_mask);",
+          "description": "Set specific bits in a PINMMR register"
+        },
+        {
+          "name": "ClearBits",
+          "prototype": "IOMM_Status_t IOMM_ClearBits(uint8_t register_index, uint32_t bit_mask);",
+          "description": "Clear specific bits in a PINMMR register"
+        }
+      ],
+      "dependencies": [],
+      "register_typedef": "IOMM_REG_MAP_t",
+      "register_typedefs": [
+        "IOMM_REG_MAP_t"
+      ]
+    },
+    "LIN": {
+      "module_name": "LIN",
+      "driver_header_file": "lin_driver.h",
+      "reg_header_file": "reg_lin.h",
+      "init_function": "LIN_Init",
+      "types": [
+        {
+          "name": "LIN_Status_t",
+          "type": "enum",
+          "values": [
+            "LIN_STATUS_OK",
+            "LIN_STATUS_ERROR",
+            "LIN_STATUS_BUSY",
+            "LIN_STATUS_TIMEOUT",
+            "LIN_STATUS_INVALID_PARAM"
+          ],
+          "description": "LIN driver return status codes"
+        },
+        {
+          "name": "LIN_Mode_t",
+          "type": "enum",
+          "values": [
+            "LIN_MODE_SCI",
+            "LIN_MODE_LIN_MASTER",
+            "LIN_MODE_LIN_SLAVE"
+          ],
+          "description": "LIN operating mode selection"
+        },
+        {
+          "name": "LIN_Checksum_t",
+          "type": "enum",
+          "values": [
+            "LIN_CHECKSUM_CLASSIC",
+            "LIN_CHECKSUM_ENHANCED"
+          ],
+          "description": "LIN checksum type"
+        },
+        {
+          "name": "LIN_Length_t",
+          "type": "enum",
+          "values": [
+            "LIN_LENGTH_1",
+            "LIN_LENGTH_2",
+            "LIN_LENGTH_3",
+            "LIN_LENGTH_4",
+            "LIN_LENGTH_5",
+            "LIN_LENGTH_6",
+            "LIN_LENGTH_7",
+            "LIN_LENGTH_8"
+          ],
+          "description": "LIN message length in bytes"
+        },
+        {
+          "name": "LIN_IntFlags_t",
+          "type": "enum",
+          "values": [
+            "LIN_INT_BREAK",
+            "LIN_INT_WAKEUP",
+            "LIN_INT_TIMEOUT",
+            "LIN_INT_PARITY_ERR",
+            "LIN_INT_FRAME_ERR",
+            "LIN_INT_OVERRUN",
+            "LIN_INT_BUS_ERR",
+            "LIN_INT_ID",
+            "LIN_INT_RX",
+            "LIN_INT_TX",
+            "LIN_INT_RX_DMA",
+            "LIN_INT_TX_DMA"
+          ],
+          "description": "LIN interrupt flags"
+        },
+        {
+          "name": "LIN_Config_t",
+          "type": "struct",
+          "members": [
+            {
+              "name": "mode",
+              "type": "LIN_Mode_t"
+            },
+            {
+              "name": "baudrate",
+              "type": "uint32_t"
+            },
+            {
+              "name": "enable_multibuffer",
+              "type": "bool"
+            },
+            {
+              "name": "enable_parity",
+              "type": "bool"
+            },
+            {
+              "name": "stop_bits",
+              "type": "uint8_t"
+            },
+            {
+              "name": "checksum_type",
+              "type": "LIN_Checksum_t"
+            },
+            {
+              "name": "break_length",
+              "type": "uint8_t"
+            },
+            {
+              "name": "sync_delimiter",
+              "type": "uint8_t"
+            }
+          ],
+          "description": "LIN peripheral configuration structure"
+        },
+        {
+          "name": "LIN_Frame_t",
+          "type": "struct",
+          "members": [
+            {
+              "name": "id",
+              "type": "uint8_t"
+            },
+            {
+              "name": "length",
+              "type": "LIN_Length_t"
+            },
+            {
+              "name": "data",
+              "type": "uint8_t*"
+            },
+            {
+              "name": "checksum",
+              "type": "uint8_t"
+            }
+          ],
+          "description": "LIN frame structure for master/slave communication"
+        },
+        {
+          "name": "LIN_DMAConfig_t",
+          "type": "struct",
+          "members": [
+            {
+              "name": "enable_rx_dma",
+              "type": "bool"
+            },
+            {
+              "name": "enable_tx_dma",
+              "type": "bool"
+            },
+            {
+              "name": "rx_dma_channel",
+              "type": "uint8_t"
+            },
+            {
+              "name": "tx_dma_channel",
+              "type": "uint8_t"
+            }
+          ],
+          "description": "LIN DMA configuration structure"
+        },
+        {
+          "name": "LIN_Callback_t",
+          "type": "typedef",
+          "definition": "void (*LIN_Callback_t)(uint32_t flags)",
+          "description": "LIN callback function pointer type for interrupt handling"
+        }
+      ],
+      "functions": [
+        {
+          "name": "Init",
+          "prototype": "void LIN_Init(void);",
+          "description": "Initialize the LIN module with default configuration from init sequence"
+        },
+        {
+          "name": "Configure",
+          "prototype": "LIN_Status_t LIN_Configure(const LIN_Config_t* config);",
+          "description": "Configure the LIN module with specified parameters including mode and baudrate"
+        },
+        {
+          "name": "SetBaudrate",
+          "prototype": "LIN_Status_t LIN_SetBaudrate(uint32_t baudrate);",
+          "description": "Set the communication baudrate using BRS and MBRS registers"
+        },
+        {
+          "name": "Enable",
+          "prototype": "void LIN_Enable(void);",
+          "description": "Enable the LIN module for communication"
+        },
+        {
+          "name": "Disable",
+          "prototype": "void LIN_Disable(void);",
+          "description": "Disable the LIN module"
+        },
+        {
+          "name": "SendFrame",
+          "prototype": "LIN_Status_t LIN_SendFrame(const LIN_Frame_t* frame);",
+          "description": "Send a LIN frame (master mode) or response (slave mode)"
+        },
+        {
+          "name": "ReceiveFrame",
+          "prototype": "LIN_Status_t LIN_ReceiveFrame(LIN_Frame_t* frame);",
+          "description": "Receive a LIN frame"
+        },
+        {
+          "name": "SendByte",
+          "prototype": "LIN_Status_t LIN_SendByte(uint8_t data);",
+          "description": "Send a single byte in SCI mode"
+        },
+        {
+          "name": "ReceiveByte",
+          "prototype": "LIN_Status_t LIN_ReceiveByte(uint8_t* data);",
+          "description": "Receive a single byte in SCI mode"
+        },
+        {
+          "name": "SendBreak",
+          "prototype": "void LIN_SendBreak(void);",
+          "description": "Send a LIN break field (master mode)"
+        },
+        {
+          "name": "SendWakeup",
+          "prototype": "void LIN_SendWakeup(void);",
+          "description": "Send a wakeup signal"
+        },
+        {
+          "name": "SetIDMask",
+          "prototype": "void LIN_SetIDMask(uint8_t mask);",
+          "description": "Set the ID mask for filtering received IDs"
+        },
+        {
+          "name": "EnableInterrupt",
+          "prototype": "void LIN_EnableInterrupt(LIN_IntFlags_t flags);",
+          "description": "Enable specified interrupt sources"
+        },
+        {
+          "name": "DisableInterrupt",
+          "prototype": "void LIN_DisableInterrupt(LIN_IntFlags_t flags);",
+          "description": "Disable specified interrupt sources"
+        },
+        {
+          "name": "GetInterruptStatus",
+          "prototype": "uint32_t LIN_GetInterruptStatus(void);",
+          "description": "Get current interrupt status flags"
+        },
+        {
+          "name": "ClearInterruptStatus",
+          "prototype": "void LIN_ClearInterruptStatus(LIN_IntFlags_t flags);",
+          "description": "Clear specified interrupt status flags"
+        },
+        {
+          "name": "RegisterCallback",
+          "prototype": "void LIN_RegisterCallback(LIN_Callback_t callback);",
+          "description": "Register a callback function for interrupt handling"
+        },
+        {
+          "name": "ConfigureDMA",
+          "prototype": "LIN_Status_t LIN_ConfigureDMA(const LIN_DMAConfig_t* dma_config);",
+          "description": "Configure DMA for RX and TX operations"
+        },
+        {
+          "name": "IsTxReady",
+          "prototype": "bool LIN_IsTxReady(void);",
+          "description": "Check if transmitter is ready for new data"
+        },
+        {
+          "name": "IsRxReady",
+          "prototype": "bool LIN_IsRxReady(void);",
+          "description": "Check if receiver has data available"
+        },
+        {
+          "name": "GetError",
+          "prototype": "uint32_t LIN_GetError(void);",
+          "description": "Get current error flags (parity, framing, overrun, bus error)"
+        },
+        {
+          "name": "ClearError",
+          "prototype": "void LIN_ClearError(void);",
+          "description": "Clear all error flags"
+        }
+      ],
+      "dependencies": [
+        "IOMM",
+        "PLL",
+        "VIM"
+      ],
+      "register_typedef": "LIN_REG_MAP_t",
+      "register_typedefs": [
+        "LIN_REG_MAP_t"
+      ]
+    },
+    "GIO": {
+      "module_name": "GIO",
+      "driver_header_file": "gio_driver.h",
+      "reg_header_file": "reg_gio.h",
+      "init_function": "GIO_Init",
+      "types": [
+        {
+          "name": "GIO_Status_t",
+          "type": "enum",
+          "values": [
+            "GIO_STATUS_OK",
+            "GIO_STATUS_ERROR",
+            "GIO_STATUS_INVALID_PIN",
+            "GIO_STATUS_INVALID_PORT"
+          ],
+          "description": "GIO driver status codes"
+        },
+        {
+          "name": "GIO_Direction_t",
+          "type": "enum",
+          "values": [
+            "GIO_DIR_INPUT",
+            "GIO_DIR_OUTPUT"
+          ],
+          "description": "Pin direction configuration"
+        },
+        {
+          "name": "GIO_PullMode_t",
+          "type": "enum",
+          "values": [
+            "GIO_PULL_DISABLE",
+            "GIO_PULL_DOWN",
+            "GIO_PULL_UP"
+          ],
+          "description": "Pin pull up/down configuration"
+        },
+        {
+          "name": "GIO_OutputMode_t",
+          "type": "enum",
+          "values": [
+            "GIO_OUTPUT_PUSHPULL",
+            "GIO_OUTPUT_OPENDRAIN"
+          ],
+          "description": "Pin output mode configuration"
+        },
+        {
+          "name": "GIO_IntEdge_t",
+          "type": "enum",
+          "values": [
+            "GIO_INT_FALLING_EDGE",
+            "GIO_INT_RISING_EDGE",
+            "GIO_INT_BOTH_EDGES"
+          ],
+          "description": "Interrupt edge detection mode"
+        },
+        {
+          "name": "GIO_IntLevel_t",
+          "type": "enum",
+          "values": [
+            "GIO_INT_LOW_LEVEL",
+            "GIO_INT_HIGH_LEVEL"
+          ],
+          "description": "Interrupt level detection mode"
+        },
+        {
+          "name": "GIO_Port_t",
+          "type": "enum",
+          "values": [
+            "GIO_PORT_A",
+            "GIO_PORT_B"
+          ],
+          "description": "GIO port identifiers"
+        },
+        {
+          "name": "GIO_PinConfig_t",
+          "type": "struct",
+          "members": [
+            {
+              "name": "port",
+              "type": "GIO_Port_t"
+            },
+            {
+              "name": "pin",
+              "type": "uint8_t"
+            },
+            {
+              "name": "direction",
+              "type": "GIO_Direction_t"
+            },
+            {
+              "name": "pullMode",
+              "type": "GIO_PullMode_t"
+            },
+            {
+              "name": "outputMode",
+              "type": "GIO_OutputMode_t"
+            }
+          ],
+          "description": "Pin configuration structure"
+        },
+        {
+          "name": "GIO_IntConfig_t",
+          "type": "struct",
+          "members": [
+            {
+              "name": "port",
+              "type": "GIO_Port_t"
+            },
+            {
+              "name": "pin",
+              "type": "uint8_t"
+            },
+            {
+              "name": "edgeMode",
+              "type": "GIO_IntEdge_t"
+            },
+            {
+              "name": "levelMode",
+              "type": "GIO_IntLevel_t"
+            },
+            {
+              "name": "enableLevel",
+              "type": "bool"
+            }
+          ],
+          "description": "Interrupt configuration structure"
+        },
+        {
+          "name": "GIO_IntCallback_t",
+          "type": "typedef",
+          "definition": "void (*GIO_IntCallback_t)(GIO_Port_t port, uint8_t pin)",
+          "description": "Interrupt callback function pointer type"
+        }
+      ],
+      "functions": [
+        {
+          "name": "Init",
+          "prototype": "void GIO_Init(void);",
+          "description": "Initialize the GIO module with default settings"
+        },
+        {
+          "name": "ConfigurePin",
+          "prototype": "GIO_Status_t GIO_ConfigurePin(const GIO_PinConfig_t* config);",
+          "description": "Configure a single GPIO pin"
+        },
+        {
+          "name": "SetPinDirection",
+          "prototype": "GIO_Status_t GIO_SetPinDirection(GIO_Port_t port, uint8_t pin, GIO_Direction_t direction);",
+          "description": "Set the direction of a GPIO pin"
+        },
+        {
+          "name": "WritePin",
+          "prototype": "GIO_Status_t GIO_WritePin(GIO_Port_t port, uint8_t pin, bool value);",
+          "description": "Write a value to a GPIO pin"
+        },
+        {
+          "name": "ReadPin",
+          "prototype": "bool GIO_ReadPin(GIO_Port_t port, uint8_t pin);",
+          "description": "Read the current state of a GPIO pin"
+        },
+        {
+          "name": "TogglePin",
+          "prototype": "GIO_Status_t GIO_TogglePin(GIO_Port_t port, uint8_t pin);",
+          "description": "Toggle the state of a GPIO pin"
+        },
+        {
+          "name": "WritePort",
+          "prototype": "GIO_Status_t GIO_WritePort(GIO_Port_t port, uint32_t value);",
+          "description": "Write a 32-bit value to an entire GPIO port"
+        },
+        {
+          "name": "ReadPort",
+          "prototype": "uint32_t GIO_ReadPort(GIO_Port_t port);",
+          "description": "Read the current state of an entire GPIO port"
+        },
+        {
+          "name": "ConfigureInterrupt",
+          "prototype": "GIO_Status_t GIO_ConfigureInterrupt(const GIO_IntConfig_t* config);",
+          "description": "Configure interrupt settings for a GPIO pin"
+        },
+        {
+          "name": "EnableInterrupt",
+          "prototype": "GIO_Status_t GIO_EnableInterrupt(GIO_Port_t port, uint8_t pin);",
+          "description": "Enable interrupt for a GPIO pin"
+        },
+        {
+          "name": "DisableInterrupt",
+          "prototype": "GIO_Status_t GIO_DisableInterrupt(GIO_Port_t port, uint8_t pin);",
+          "description": "Disable interrupt for a GPIO pin"
+        },
+        {
+          "name": "ClearInterruptFlag",
+          "prototype": "GIO_Status_t GIO_ClearInterruptFlag(GIO_Port_t port, uint8_t pin);",
+          "description": "Clear interrupt flag for a GPIO pin"
+        },
+        {
+          "name": "RegisterCallback",
+          "prototype": "GIO_Status_t GIO_RegisterCallback(GIO_Port_t port, uint8_t pin, GIO_IntCallback_t callback);",
+          "description": "Register an interrupt callback function for a GPIO pin"
+        },
+        {
+          "name": "LowLevelISR",
+          "prototype": "void GIO_LowLevelISR(void);",
+          "description": "Low-level interrupt service routine handler"
+        },
+        {
+          "name": "HighLevelISR",
+          "prototype": "void GIO_HighLevelISR(void);",
+          "description": "High-level interrupt service routine handler"
+        }
+      ],
+      "dependencies": [
+        "IOMM",
+        "VIM"
+      ],
+      "register_typedef": "GIO_REG_MAP_t",
+      "register_typedefs": [
+        "GIO_REG_MAP_t"
+      ]
+    },
+    "SCI": {
+      "module_name": "SCI",
+      "driver_header_file": "sci_driver.h",
+      "reg_header_file": "reg_sci.h",
+      "init_function": "SCI_Init",
+      "types": [
+        {
+          "name": "SCI_Status_t",
+          "type": "enum",
+          "values": [
+            "SCI_STATUS_OK",
+            "SCI_STATUS_ERROR",
+            "SCI_STATUS_BUSY",
+            "SCI_STATUS_TIMEOUT",
+            "SCI_STATUS_INVALID_PARAM"
+          ],
+          "description": "SCI operation status codes"
+        },
+        {
+          "name": "SCI_Parity_t",
+          "type": "enum",
+          "values": [
+            "SCI_PARITY_NONE",
+            "SCI_PARITY_EVEN",
+            "SCI_PARITY_ODD"
+          ],
+          "description": "Parity configuration options"
+        },
+        {
+          "name": "SCI_StopBits_t",
+          "type": "enum",
+          "values": [
+            "SCI_STOPBITS_1",
+            "SCI_STOPBITS_2"
+          ],
+          "description": "Stop bits configuration"
+        },
+        {
+          "name": "SCI_DataBits_t",
+          "type": "enum",
+          "values": [
+            "SCI_DATABITS_7",
+            "SCI_DATABITS_8"
+          ],
+          "description": "Data bits configuration"
+        },
+        {
+          "name": "SCI_Config_t",
+          "type": "struct",
+          "members": [
+            {
+              "name": "baudrate",
+              "type": "uint32_t"
+            },
+            {
+              "name": "parity",
+              "type": "SCI_Parity_t"
+            },
+            {
+              "name": "stopBits",
+              "type": "SCI_StopBits_t"
+            },
+            {
+              "name": "dataBits",
+              "type": "SCI_DataBits_t"
+            },
+            {
+              "name": "enableLoopback",
+              "type": "bool"
+            },
+            {
+              "name": "enableRxDMA",
+              "type": "bool"
+            },
+            {
+              "name": "enableTxDMA",
+              "type": "bool"
+            }
+          ],
+          "description": "SCI configuration structure"
+        },
+        {
+          "name": "SCI_TxCallback_t",
+          "type": "typedef",
+          "definition": "void (*SCI_TxCallback_t)(void)",
+          "description": "Transmit complete callback function pointer"
+        },
+        {
+          "name": "SCI_RxCallback_t",
+          "type": "typedef",
+          "definition": "void (*SCI_RxCallback_t)(uint8_t data)",
+          "description": "Receive complete callback function pointer"
+        },
+        {
+          "name": "SCI_ErrorCallback_t",
+          "type": "typedef",
+          "definition": "void (*SCI_ErrorCallback_t)(uint32_t errorFlags)",
+          "description": "Error callback function pointer"
+        }
+      ],
+      "functions": [
+        {
+          "name": "Init",
+          "prototype": "void SCI_Init(void);",
+          "description": "Initialize the SCI module with default configuration"
+        },
+        {
+          "name": "Configure",
+          "prototype": "SCI_Status_t SCI_Configure(const SCI_Config_t* config);",
+          "description": "Configure SCI with specified parameters including baud rate, parity, stop bits"
+        },
+        {
+          "name": "Enable",
+          "prototype": "void SCI_Enable(void);",
+          "description": "Enable SCI transmit and receive operations"
+        },
+        {
+          "name": "Disable",
+          "prototype": "void SCI_Disable(void);",
+          "description": "Disable SCI transmit and receive operations"
+        },
+        {
+          "name": "SendByte",
+          "prototype": "SCI_Status_t SCI_SendByte(uint8_t data);",
+          "description": "Send a single byte over SCI (blocking)"
+        },
+        {
+          "name": "SendData",
+          "prototype": "SCI_Status_t SCI_SendData(const uint8_t* data, uint32_t length);",
+          "description": "Send multiple bytes over SCI (blocking)"
+        },
+        {
+          "name": "ReceiveByte",
+          "prototype": "SCI_Status_t SCI_ReceiveByte(uint8_t* data);",
+          "description": "Receive a single byte from SCI (blocking)"
+        },
+        {
+          "name": "ReceiveData",
+          "prototype": "SCI_Status_t SCI_ReceiveData(uint8_t* buffer, uint32_t length);",
+          "description": "Receive multiple bytes from SCI (blocking)"
+        },
+        {
+          "name": "IsTxReady",
+          "prototype": "bool SCI_IsTxReady(void);",
+          "description": "Check if transmit buffer is ready to accept data"
+        },
+        {
+          "name": "IsRxReady",
+          "prototype": "bool SCI_IsRxReady(void);",
+          "description": "Check if receive buffer has data available"
+        },
+        {
+          "name": "RegisterTxCallback",
+          "prototype": "void SCI_RegisterTxCallback(SCI_TxCallback_t callback);",
+          "description": "Register callback for transmit complete interrupt"
+        },
+        {
+          "name": "RegisterRxCallback",
+          "prototype": "void SCI_RegisterRxCallback(SCI_RxCallback_t callback);",
+          "description": "Register callback for receive complete interrupt"
+        },
+        {
+          "name": "RegisterErrorCallback",
+          "prototype": "void SCI_RegisterErrorCallback(SCI_ErrorCallback_t callback);",
+          "description": "Register callback for error interrupts"
+        },
+        {
+          "name": "ClearErrors",
+          "prototype": "void SCI_ClearErrors(void);",
+          "description": "Clear all error flags"
+        },
+        {
+          "name": "GetErrorFlags",
+          "prototype": "uint32_t SCI_GetErrorFlags(void);",
+          "description": "Get current error flags status"
+        },
+        {
+          "name": "SetBaudRate",
+          "prototype": "SCI_Status_t SCI_SetBaudRate(uint32_t baudrate);",
+          "description": "Set the baud rate for SCI communication"
+        },
+        {
+          "name": "EnableDMA",
+          "prototype": "void SCI_EnableDMA(bool enableTx, bool enableRx);",
+          "description": "Enable or disable DMA for transmit and receive operations"
+        }
+      ],
+      "dependencies": [
+        "IOMM",
+        "PLL",
+        "VIM"
+      ],
+      "register_typedef": "SCI_REG_MAP_t",
+      "register_typedefs": [
+        "SCI_REG_MAP_t"
+      ]
+    },
+    "SYSTEM": {
+      "module_name": "SYSTEM",
+      "driver_header_file": "system_driver.h",
+      "reg_header_file": "reg_system.h",
+      "init_function": "SYSTEM_Init",
+      "types": [
+        {
+          "name": "SYSTEM_Status_t",
+          "type": "enum",
+          "values": [
+            "SYSTEM_STATUS_OK",
+            "SYSTEM_STATUS_ERROR",
+            "SYSTEM_STATUS_INVALID_PARAM"
+          ],
+          "description": "SYSTEM module status codes"
+        },
+        {
+          "name": "SYSTEM_ClockSource_t",
+          "type": "enum",
+          "values": [
+            "SYSTEM_CLOCK_OSC",
+            "SYSTEM_CLOCK_PLL",
+            "SYSTEM_CLOCK_EXTERNAL",
+            "SYSTEM_CLOCK_LF_LPO"
+          ],
+          "description": "System clock source selection"
+        },
+        {
+          "name": "SYSTEM_ResetSource_t",
+          "type": "enum",
+          "values": [
+            "SYSTEM_RESET_POWER_ON",
+            "SYSTEM_RESET_OSC_FAIL",
+            "SYSTEM_RESET_WATCHDOG",
+            "SYSTEM_RESET_INTERCONNECT",
+            "SYSTEM_RESET_CPU",
+            "SYSTEM_RESET_SOFTWARE",
+            "SYSTEM_RESET_EXTERNAL"
+          ],
+          "description": "System reset source identifiers"
+        },
+        {
+          "name": "SYSTEM_ClockDomain_t",
+          "type": "enum",
+          "values": [
+            "SYSTEM_CLOCK_DOMAIN_GCLK",
+            "SYSTEM_CLOCK_DOMAIN_HCLK",
+            "SYSTEM_CLOCK_DOMAIN_VCLK",
+            "SYSTEM_CLOCK_DOMAIN_VCLK2",
+            "SYSTEM_CLOCK_DOMAIN_VCLK3",
+            "SYSTEM_CLOCK_DOMAIN_VCLKA1",
+            "SYSTEM_CLOCK_DOMAIN_VCLKA2"
+          ],
+          "description": "Clock domain identifiers"
+        },
+        {
+          "name": "SYSTEM_MemoryType_t",
+          "type": "enum",
+          "values": [
+            "SYSTEM_MEMORY_FLASH",
+            "SYSTEM_MEMORY_RAM",
+            "SYSTEM_MEMORY_ECC_RAM",
+            "SYSTEM_MEMORY_PERIPHERAL"
+          ],
+          "description": "Memory self-test types"
+        },
+        {
+          "name": "SYSTEM_ExceptionSource_t",
+          "type": "typedef",
+          "definition": "uint32_t SYSTEM_ExceptionSource_t",
+          "description": "Exception source identifier"
+        },
+        {
+          "name": "SYSTEM_Config_t",
+          "type": "struct",
+          "members": [
+            {
+              "name": "clockSource",
+              "type": "SYSTEM_ClockSource_t"
+            },
+            {
+              "name": "enableClockMonitor",
+              "type": "bool"
+            },
+            {
+              "name": "enableMemoryInit",
+              "type": "bool"
+            },
+            {
+              "name": "enableMemorySelfTest",
+              "type": "bool"
+            }
+          ],
+          "description": "System configuration structure"
+        }
+      ],
+      "functions": [
+        {
+          "name": "Init",
+          "prototype": "void SYSTEM_Init(void);",
+          "description": "Initialize the SYSTEM module - configures clock control, memory initialization, self-test, and exception handling according to initialization sequence"
+        },
+        {
+          "name": "Configure",
+          "prototype": "SYSTEM_Status_t SYSTEM_Configure(const SYSTEM_Config_t* config);",
+          "description": "Configure system-level settings with custom parameters"
+        },
+        {
+          "name": "SetClockSource",
+          "prototype": "SYSTEM_Status_t SYSTEM_SetClockSource(SYSTEM_ClockSource_t source);",
+          "description": "Select the system clock source"
+        },
+        {
+          "name": "GetClockSource",
+          "prototype": "SYSTEM_ClockSource_t SYSTEM_GetClockSource(void);",
+          "description": "Get the current system clock source"
+        },
+        {
+          "name": "GetClockFrequency",
+          "prototype": "uint32_t SYSTEM_GetClockFrequency(SYSTEM_ClockDomain_t domain);",
+          "description": "Get the frequency of a specified clock domain in Hz"
+        },
+        {
+          "name": "EnableClockDomain",
+          "prototype": "void SYSTEM_EnableClockDomain(SYSTEM_ClockDomain_t domain);",
+          "description": "Enable a specific clock domain"
+        },
+        {
+          "name": "DisableClockDomain",
+          "prototype": "void SYSTEM_DisableClockDomain(SYSTEM_ClockDomain_t domain);",
+          "description": "Disable a specific clock domain"
+        },
+        {
+          "name": "GetResetSource",
+          "prototype": "SYSTEM_ResetSource_t SYSTEM_GetResetSource(void);",
+          "description": "Get the source of the most recent system reset"
+        },
+        {
+          "name": "ClearResetSource",
+          "prototype": "void SYSTEM_ClearResetSource(void);",
+          "description": "Clear the reset source status flags"
+        },
+        {
+          "name": "SoftwareReset",
+          "prototype": "void SYSTEM_SoftwareReset(void);",
+          "description": "Trigger a software-initiated system reset"
+        },
+        {
+          "name": "EnableClockMonitor",
+          "prototype": "void SYSTEM_EnableClockMonitor(void);",
+          "description": "Enable clock source monitoring for oscillator failure detection"
+        },
+        {
+          "name": "DisableClockMonitor",
+          "prototype": "void SYSTEM_DisableClockMonitor(void);",
+          "description": "Disable clock source monitoring"
+        },
+        {
+          "name": "GetExceptionStatus",
+          "prototype": "uint32_t SYSTEM_GetExceptionStatus(void);",
+          "description": "Get current system exception status flags"
+        },
+        {
+          "name": "ClearExceptionStatus",
+          "prototype": "void SYSTEM_ClearExceptionStatus(uint32_t flags);",
+          "description": "Clear specified system exception status flags"
+        },
+        {
+          "name": "TriggerMemorySelfTest",
+          "prototype": "SYSTEM_Status_t SYSTEM_TriggerMemorySelfTest(SYSTEM_MemoryType_t memType);",
+          "description": "Trigger memory self-test for specified memory type"
+        },
+        {
+          "name": "GetMemorySelfTestStatus",
+          "prototype": "bool SYSTEM_GetMemorySelfTestStatus(void);",
+          "description": "Get memory self-test completion status - returns true if test is complete"
+        }
+      ],
+      "dependencies": [
+        "PCR"
+      ],
+      "register_typedef": "SYSTEM_REG_MAP_t",
+      "register_typedefs": [
+        "SYSTEM_REG_MAP_t",
+        "SYSTEM2_REG_MAP_t"
+      ]
+    }
+  }
+}

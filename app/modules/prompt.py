@@ -7,6 +7,18 @@ import asyncio
 import boto3
 from botocore.config import Config
 from langchain_aws import BedrockEmbeddings
+from dotenv import load_dotenv
+from pathlib import Path
+
+# Load environment variables from .env file (for backward compatibility)
+env_path = Path(__file__).parent.parent.parent / ".env"
+load_dotenv(env_path)
+
+# Map .env keys to AWS environment variable names (if .env is used)
+if os.getenv("AWS_ACCESS_KEY"):
+    os.environ["AWS_ACCESS_KEY_ID"] = os.getenv("AWS_ACCESS_KEY")
+if os.getenv("AWS_SECRET_KEY"):
+    os.environ["AWS_SECRET_ACCESS_KEY"] = os.getenv("AWS_SECRET_KEY")
 
 # Configure boto3 client with increased timeout
 config = Config(
@@ -15,7 +27,10 @@ config = Config(
     retries={'max_attempts': 3}
 )
 
-client = boto3.client(
+# Create boto3 session (uses AWS CLI credentials by default)
+# Priority: Environment variables > ~/.aws/credentials > IAM role
+session = boto3.Session()
+client = session.client(
     service_name="bedrock-runtime",
     region_name="us-east-2",
     config=config,

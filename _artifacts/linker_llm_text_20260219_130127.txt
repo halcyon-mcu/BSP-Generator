@@ -1,0 +1,105 @@
+===== FACTS MIRROR =====
+TCM_Flash.origin = 0x00000000
+TCM_Flash.length = 0x00140000
+TCM_RAM.origin = 0x08000000
+TCM_RAM.length = 0x00030000
+===== END FACTS MIRROR =====
+
+===== FILE: linker.cmd =====
+/**
+ * @file linker.cmd
+ * @brief TI ARM CGT linker command file for RM46 (Cortex-R4)
+ *
+ * This linker script defines memory regions and section placement for the
+ * TI Hercules RM46 microcontroller using the TI ARM compiler toolchain.
+ *
+ * Memory layout:
+ * - FLASH: Code and read-only data
+ * - RAM: Initialized data, BSS, heap, and stack
+ *
+ * Linker symbols defined:
+ * - start_of_data_in_flash: Load address of .data section in FLASH
+ * - start_of_data, end_of_data: Run address bounds of .data in RAM
+ * - start_of_bss, end_of_bss: Address bounds of .bss in RAM
+ * - end_of_stack: Top of stack (used by startup code)
+ */
+
+/* Entry point for the application */
+--entry_point=Reset_Handler
+
+/* Memory regions from MEMMAP.yaml */
+MEMORY
+{
+    /* [prov] MEMMAP.yaml:memory[TCM_Flash] */
+    FLASH (RX)  : origin = 0x00000000, length = 0x00140000
+    
+    /* [prov] MEMMAP.yaml:memory[TCM_RAM] */
+    RAM   (RWX) : origin = 0x08000000, length = 0x00030000
+}
+
+/* Absolute symbol for top of stack */
+/* [prov] MEMMAP.yaml:memory[TCM_RAM].origin + .length */
+end_of_stack = 0x08000000 + 0x00030000;
+
+/* Section placement */
+SECTIONS
+{
+    /* Interrupt vector table at start of FLASH */
+    .intvecs :
+    {
+        . = ALIGN(4);
+    } > FLASH
+
+    /* Code section in FLASH */
+    .text :
+    {
+        . = ALIGN(4);
+    } > FLASH
+
+    /* Read-only constants in FLASH */
+    .const :
+    {
+        . = ALIGN(4);
+    } > FLASH
+
+    /* C initialization tables (TI-managed section) */
+    .cinit :
+    {
+        . = ALIGN(4);
+    } > FLASH
+
+    /* C++ constructor tables */
+    .pinit :
+    {
+        . = ALIGN(4);
+    } > FLASH
+
+    /* Initialized data: loaded in FLASH, run in RAM */
+    .data :
+    {
+        . = ALIGN(4);
+    } load = FLASH, run = RAM,
+      LOAD_START(start_of_data_in_flash),
+      RUN_START(start_of_data),
+      RUN_END(end_of_data)
+
+    /* Zero-initialized data in RAM */
+    .bss :
+    {
+        . = ALIGN(4);
+    } > RAM,
+      RUN_START(start_of_bss),
+      RUN_END(end_of_bss)
+
+    /* Stack section in RAM (size controlled by --stack_size) */
+    .stack :
+    {
+        __stack_start = .;
+    } > RAM
+
+    /* Heap section in RAM (size controlled by --heap_size) */
+    .sysmem :
+    {
+        __sysmem_start = .;
+    } > RAM
+}

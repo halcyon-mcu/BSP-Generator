@@ -1,0 +1,103 @@
+{
+  "directory": "C:\\Users\\dj\\capstone350_GA_BSP\\BSP-Generator\\bsp_gen\\output_20260210_130852",
+  "timestamp": "2026-02-10T13:16:40.263265",
+  "files_found": {
+    "Startup Code": {
+      "expected": [
+        "start.s",
+        "entry.c"
+      ],
+      "found": [
+        "start.s (2,504 bytes)",
+        "entry.c (2,109 bytes)"
+      ],
+      "missing": []
+    },
+    "System Init": {
+      "expected": [
+        "system.h",
+        "system.c"
+      ],
+      "found": [
+        "system.h (1,078 bytes)",
+        "system.c (2,550 bytes)"
+      ],
+      "missing": []
+    },
+    "Linker Script": {
+      "expected": [
+        "linker.cmd"
+      ],
+      "found": [
+        "linker.cmd (1,687 bytes)"
+      ],
+      "missing": []
+    },
+    "Peripheral Drivers": {
+      "expected": [
+        "clock.h",
+        "clock.c",
+        "gio.h",
+        "gio.c",
+        "sci.h",
+        "sci.c",
+        "vim.h",
+        "vim.c"
+      ],
+      "found": [
+        "clock.h (4,900 bytes)",
+        "clock.c (13,253 bytes)",
+        "gio.h (9,169 bytes)",
+        "gio.c (8,978 bytes)",
+        "sci.h (9,062 bytes)",
+        "sci.c (16,302 bytes)",
+        "vim.h (3,182 bytes)",
+        "vim.c (8,284 bytes)"
+      ],
+      "missing": []
+    },
+    "Documentation": {
+      "expected": [
+        "docs/html/index.html"
+      ],
+      "found": [
+        "docs/html/index.html (3,706 bytes)"
+      ],
+      "missing": []
+    },
+    "Build Files": {
+      "expected": [
+        "Makefile",
+        "PROVENANCE.txt",
+        "README.txt"
+      ],
+      "found": [],
+      "missing": [
+        "Makefile",
+        "PROVENANCE.txt",
+        "README.txt"
+      ]
+    }
+  },
+  "validation_checks": {
+    "Core Files Present": true,
+    "Peripherals Generated": true,
+    "Documentation Generated": true,
+    "Artifacts Preserved": true,
+    "C Files Not Empty": true,
+    "Header Guards Present": true
+  },
+  "summary": {
+    "files_found": 14,
+    "files_expected": 17,
+    "checks_passed": 6,
+    "checks_total": 6,
+    "overall_status": "PASS"
+  },
+  "peripherals": [
+    "clock",
+    "gio",
+    "sci",
+    "vim"
+  ]
+}

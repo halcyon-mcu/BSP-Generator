@@ -1,0 +1,96 @@
+{
+  "timestamp": "20260219_130200",
+  "bsp_output_dir": "output_20260219_125808",
+  "validation_summary": {
+    "total_modules": 6,
+    "modules_valid": 6,
+    "modules_invalid": 0,
+    "critical_errors": 0,
+    "warnings": 6,
+    "success_rate": 100.0
+  },
+  "peripheral_validations": {
+    "PCR": {
+      "module_name": "PCR",
+      "facts_mirror_valid": true,
+      "constants_validated": 0,
+      "mismatches": 0,
+      "tests_generated": false,
+      "critical_errors": [],
+      "warnings": [
+        "No FACTS MIRROR found in preamble"
+      ]
+    },
+    "GIO": {
+      "module_name": "GIO",
+      "facts_mirror_valid": true,
+      "constants_validated": 0,
+      "mismatches": 0,
+      "tests_generated": false,
+      "critical_errors": [],
+      "warnings": [
+        "No FACTS MIRROR found in preamble"
+      ]
+    },
+    "SCI": {
+      "module_name": "SCI",
+      "facts_mirror_valid": true,
+      "constants_validated": 0,
+      "mismatches": 0,
+      "tests_generated": false,
+      "critical_errors": [],
+      "warnings": [
+        "No FACTS MIRROR found in preamble"
+      ]
+    },
+    "LIN": {
+      "module_name": "LIN",
+      "facts_mirror_valid": true,
+      "constants_validated": 0,
+      "mismatches": 0,
+      "tests_generated": false,
+      "critical_errors": [],
+      "warnings": [
+        "No FACTS MIRROR found in preamble"
+      ]
+    },
+    "IOMM": {
+      "module_name": "IOMM",
+      "facts_mirror_valid": true,
+      "constants_validated": 0,
+      "mismatches": 0,
+      "tests_generated": false,
+      "critical_errors": [],
+      "warnings": [
+        "No FACTS MIRROR found in preamble"
+      ]
+    },
+    "PLL": {
+      "module_name": "PLL",
+      "facts_mirror_valid": true,
+      "constants_validated": 0,
+      "mismatches": 0,
+      "tests_generated": false,
+      "critical_errors": [],
+      "warnings": [
+        "No FACTS MIRROR found in preamble"
+      ]
+    }
+  },
+  "cross_file_validation": null,
+  "dependency_graph": {
+    "total_nodes": 8,
+    "has_cycles": false,
+    "init_order": [
+      "SYSTEM",
+      "PLL",
+      "VIM",
+      "PCR",
+      "IOMM",
+      "LIN",
+      "GIO",
+      "SCI"
+    ],
+    "cycle_nodes": []
+  }
+}

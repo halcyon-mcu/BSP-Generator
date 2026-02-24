@@ -1,0 +1,572 @@
+/**
+ * @file sci.c
+ * @brief RM46 SCI driver implementation
+ */
+
+#include <stdint.h>
+#include "sci.h"
+#include "clock.h"
+
+/* ===== Register access macro ===== */
+#define REG32(addr) (*(volatile uint32_t *)(addr))
+
+/* ===== Base address and register offsets (from FACTS MIRROR) ===== */
+#define SCI_BASE                 (0xFFF7E400u)
+#define SCIGCR0_OFFSET           (0x00u)
+#define SCIGCR1_OFFSET           (0x04u)
+#define SCIGCR2_OFFSET           (0x08u)
+#define SCISETINT_OFFSET         (0x0Cu)
+#define SCICLEARINT_OFFSET       (0x10u)
+#define SCISETINTLVL_OFFSET      (0x14u)
+#define SCICLEARINTLVL_OFFSET    (0x18u)
+#define SCIFLR_OFFSET            (0x1Cu)
+#define SCIINTVECT0_OFFSET       (0x20u)
+#define SCIINTVECT1_OFFSET       (0x24u)
+#define SCIFORMAT_OFFSET         (0x28u)
+#define BRS_OFFSET               (0x2Cu)
+#define SCIED_OFFSET             (0x30u)
+#define SCIRD_OFFSET             (0x34u)
+#define SCITD_OFFSET             (0x38u)
+#define SCIPIO0_OFFSET           (0x3Cu)
+#define IODFTCTRL_OFFSET         (0x90u)
+
+/* ===== Register addresses ===== */
+#define SCIGCR0       REG32(SCI_BASE + SCIGCR0_OFFSET)
+#define SCIGCR1       REG32(SCI_BASE + SCIGCR1_OFFSET)
+#define SCIGCR2       REG32(SCI_BASE + SCIGCR2_OFFSET)
+#define SCISETINT     REG32(SCI_BASE + SCISETINT_OFFSET)
+#define SCICLEARINT   REG32(SCI_BASE + SCICLEARINT_OFFSET)
+#define SCISETINTLVL  REG32(SCI_BASE + SCISETINTLVL_OFFSET)
+#define SCICLEARINTLVL REG32(SCI_BASE + SCICLEARINTLVL_OFFSET)
+#define SCIFLR        REG32(SCI_BASE + SCIFLR_OFFSET)
+#define SCIINTVECT0   REG32(SCI_BASE + SCIINTVECT0_OFFSET)
+#define SCIINTVECT1   REG32(SCI_BASE + SCIINTVECT1_OFFSET)
+#define SCIFORMAT     REG32(SCI_BASE + SCIFORMAT_OFFSET)
+#define BRS           REG32(SCI_BASE + BRS_OFFSET)
+#define SCIED         REG32(SCI_BASE + SCIED_OFFSET)
+#define SCIRD         REG32(SCI_BASE + SCIRD_OFFSET)
+#define SCITD         REG32(SCI_BASE + SCITD_OFFSET)
+#define SCIPIO0       REG32(SCI_BASE + SCIPIO0_OFFSET)
+#define IODFTCTRL     REG32(SCI_BASE + IODFTCTRL_OFFSET)
+
+/* ===== Bit positions and masks ===== */
+#define SCIGCR0_RESET_BIT        (0u)
+#define SCIGCR1_TXENA_BIT        (25u)
+#define SCIGCR1_RXENA_BIT        (24u)
+#define SCIGCR1_CONT_BIT         (17u)
+#define SCIGCR1_LOOP_BACK_BIT    (16u)
+#define SCIGCR1_SWnRST_BIT       (7u)
+#define SCIGCR1_LIN_MODE_BIT     (6u)
+#define SCIGCR1_CLOCK_BIT        (5u)
+#define SCIGCR1_STOP_BIT         (4u)
+#define SCIGCR1_PARITY_BIT       (3u)
+#define SCIGCR1_PARITY_ENA_BIT   (2u)
+#define SCIGCR1_TIMING_MODE_BIT  (1u)
+#define SCIGCR1_COMM_MODE_BIT    (0u)
+
+#define SCIGCR2_POWERDOWN_BIT    (0u)
+
+#define SCISETINT_SET_RX_INT_BIT (9u)
+#define SCISETINT_SET_TX_INT_BIT (8u)
+
+#define SCICLEARINT_CLR_RX_INT_BIT (9u)
+#define SCICLEARINT_CLR_TX_INT_BIT (8u)
+
+#define SCISETINTLVL_SET_RX_INT_LVL_BIT (9u)
+#define SCISETINTLVL_SET_TX_INT_LVL_BIT (8u)
+
+#define SCICLEARINTLVL_CLR_RX_INT_LVL_BIT (9u)
+#define SCICLEARINTLVL_CLR_TX_INT_LVL_BIT (8u)
+
+#define SCIFLR_FE_BIT            (26u)
+#define SCIFLR_OE_BIT            (25u)
+#define SCIFLR_PE_BIT            (24u)
+#define SCIFLR_TX_EMPTY_BIT      (11u)
+#define SCIFLR_RXRDY_BIT         (9u)
+#define SCIFLR_TXRDY_BIT         (8u)
+#define SCIFLR_BUSY_BIT          (3u)
+
+#define SCIFORMAT_LENGTH_MSB     (18u)
+#define SCIFORMAT_LENGTH_LSB     (16u)
+#define SCIFORMAT_CHAR_MSB       (2u)
+#define SCIFORMAT_CHAR_LSB       (0u)
+
+#define BRS_U_MSB                (30u)
+#define BRS_U_LSB                (28u)
+#define BRS_M_MSB                (27u)
+#define BRS_M_LSB                (24u)
+#define BRS_PRESCALER_P_MSB      (23u)
+#define BRS_PRESCALER_P_LSB      (0u)
+
+#define SCIRD_RD_MSB             (7u)
+#define SCIRD_RD_LSB             (0u)
+#define SCITD_TD_MSB             (7u)
+#define SCITD_TD_LSB             (0u)
+
+#define SCIPIO0_TX_FUNC_BIT      (2u)
+#define SCIPIO0_RX_FUNC_BIT      (1u)
+
+#define IODFTCTRL_LPB_ENA_BIT    (1u)
+#define IODFTCTRL_RXP_ENA_BIT    (0u)
+#define IODFTCTRL_IODFTENA_MSB   (11u)
+#define IODFTCTRL_IODFTENA_LSB   (8u)
+#define IODFTCTRL_TX_SHIFT_MSB   (18u)
+#define IODFTCTRL_TX_SHIFT_LSB   (16u)
+
+/* ===== Init sequence constants (from FACTS MIRROR) ===== */
+#define SCIGCR0_SET_BITS_INIT_0    (0x00000001u)
+#define SCIGCR1_CLEAR_BITS_INIT_1  (0x00000080u)
+#define SCIPIO0_SET_BITS_INIT_2    (0x00000006u)
+#define SCIGCR1_SET_BITS_INIT_3    (0x01000000u)
+#define SCIGCR1_SET_BITS_INIT_4    (0x00020000u)
+#define SCIGCR1_SET_BITS_INIT_5    (0x03000000u)
+#define SCIGCR1_SET_BITS_INIT_6    (0x00000080u)
+
+/* ===== Interrupt IDs (from FACTS MIRROR) ===== */
+#define IRQ_SCI_LVL0             (64u)
+#define IRQ_SCI_LVL1             (74u)
+#define IRQ_LIN_LVL0             (13u)
+#define IRQ_LIN_LVL1             (27u)
+
+/* ===== Timeout constant (arbitrary but bounded) ===== */
+#define SCI_TIMEOUT_CYCLES       (1000000u)
+
+/* ===== External VIM API ===== */
+extern int vim_register_isr(uint32_t channel_id, void (*isr)(void));
+extern int vim_enable_channel(uint32_t channel_id);
+extern int vim_disable_channel(uint32_t channel_id);
+
+/* ===== Internal wait helper ===== */
+/**
+ * @brief Poll a status bit with timeout.
+ *
+ * @param[in] reg_addr Address of register to poll.
+ * @param[in] bit_mask Bitmask of the bit to check.
+ * @param[in] expected Expected state: 1 = wait for set, 0 = wait for clear.
+ * @return 0 if condition met, -1 on timeout.
+ */
+static int sci_wait_for_bit(volatile uint32_t *reg_addr, uint32_t bit_mask, uint32_t expected)
+{
+    uint32_t timeout = SCI_TIMEOUT_CYCLES;
+    uint32_t val;
+
+    while (timeout > 0u) {
+        val = *reg_addr;
+        if (expected) {
+            if ((val & bit_mask) != 0u) {
+                return 0;
+            }
+        } else {
+            if ((val & bit_mask) == 0u) {
+                return 0;
+            }
+        }
+        timeout--;
+    }
+    return -1;
+}
+
+/* ===== Public API implementation ===== */
+
+void sci_init(void)
+{
+    /* Enable VCLK clock for SCI */
+    (void)clock_enable(CLOCKREF_VCLK);
+
+    /* Apply x-ext.init sequence from soc.yaml */
+
+    /* [prov] regs.yaml:SCI.SCIGCR0 - init step 0: set_bits 0x00000001 */
+    SCIGCR0 |= SCIGCR0_SET_BITS_INIT_0;
+
+    /* [prov] regs.yaml:SCI.SCIGCR1 - init step 1: clear_bits 0x00000080 */
+    SCIGCR1 &= ~SCIGCR1_CLEAR_BITS_INIT_1;
+
+    /* [prov] regs.yaml:SCI.SCIPIO0 - init step 2: set_bits 0x00000006 */
+    SCIPIO0 |= SCIPIO0_SET_BITS_INIT_2;
+
+    /* [prov] regs.yaml:SCI.SCIGCR1 - init step 3: set_bits 0x01000000 */
+    SCIGCR1 |= SCIGCR1_SET_BITS_INIT_3;
+
+    /* [prov] regs.yaml:SCI.SCIGCR1 - init step 4: set_bits 0x00020000 */
+    SCIGCR1 |= SCIGCR1_SET_BITS_INIT_4;
+
+    /* [prov] regs.yaml:SCI.SCIGCR1 - init step 5: set_bits 0x03000000 */
+    SCIGCR1 |= SCIGCR1_SET_BITS_INIT_5;
+
+    /* [prov] regs.yaml:SCI.SCIGCR1 - init step 6: set_bits 0x00000080 */
+    SCIGCR1 |= SCIGCR1_SET_BITS_INIT_6;
+}
+
+int sci_configure(const sci_config_t *cfg)
+{
+    uint32_t vclk_hz;
+    uint32_t prescaler_p;
+    uint32_t format_val;
+    uint32_t gcr1_val;
+
+    if (cfg == (const sci_config_t *)0) {
+        return -1;
+    }
+
+    /* Get VCLK frequency for baud rate calculation */
+    vclk_hz = clock_get_hz(CLOCKREF_VCLK);
+
+    /* Compute prescaler: P = (VCLK / (16 * baud_rate)) - 1 */
+    /* For simplicity, we use U=0, M=0 (no fractional divider) */
+    if (cfg->baud_rate == 0u) {
+        return -1;
+    }
+    prescaler_p = (vclk_hz / (16u * cfg->baud_rate));
+    if (prescaler_p > 0u) {
+        prescaler_p--;
+    }
+
+    /* [prov] regs.yaml:SCI.BRS - write baud rate prescaler */
+    BRS = prescaler_p & 0x00FFFFFFu;
+
+    /* Configure format register */
+    format_val = 0u;
+    if ((cfg->data_bits >= 1u) && (cfg->data_bits <= 8u)) {
+        /* CHAR field: data_bits - 1 */
+        format_val |= ((cfg->data_bits - 1u) << SCIFORMAT_CHAR_LSB);
+    } else {
+        return -1;
+    }
+    /* LENGTH field: same as CHAR for SCI mode */
+    format_val |= ((cfg->data_bits - 1u) << SCIFORMAT_LENGTH_LSB);
+
+    /* [prov] regs.yaml:SCI.SCIFORMAT - write frame format */
+    SCIFORMAT = format_val;
+
+    /* Configure SCIGCR1: stop bits, parity, loopback */
+    /* [prov] regs.yaml:SCI.SCIGCR1 - read-modify-write */
+    gcr1_val = SCIGCR1;
+
+    /* STOP bit */
+    if (cfg->stop_bits != 0u) {
+        gcr1_val |= (1u << SCIGCR1_STOP_BIT);
+    } else {
+        gcr1_val &= ~(1u << SCIGCR1_STOP_BIT);
+    }
+
+    /* Parity */
+    if (cfg->parity == SCI_PARITY_NONE) {
+        gcr1_val &= ~(1u << SCIGCR1_PARITY_ENA_BIT);
+    } else {
+        gcr1_val |= (1u << SCIGCR1_PARITY_ENA_BIT);
+        if (cfg->parity == SCI_PARITY_ODD) {
+            gcr1_val |= (1u << SCIGCR1_PARITY_BIT);
+        } else {
+            gcr1_val &= ~(1u << SCIGCR1_PARITY_BIT);
+        }
+    }
+
+    /* Loopback */
+    if (cfg->loopback != 0u) {
+        gcr1_val |= (1u << SCIGCR1_LOOP_BACK_BIT);
+    } else {
+        gcr1_val &= ~(1u << SCIGCR1_LOOP_BACK_BIT);
+    }
+
+    SCIGCR1 = gcr1_val;
+
+    return 0;
+}
+
+int sci_transmit_byte(uint8_t data)
+{
+    int ret;
+
+    /* [prov] regs.yaml:SCI.SCIFLR - wait for TXRDY */
+    ret = sci_wait_for_bit(&SCIFLR, (1u << SCIFLR_TXRDY_BIT), 1u);
+    if (ret != 0) {
+        return -1;
+    }
+
+    /* [prov] regs.yaml:SCI.SCITD - write data */
+    SCITD = (uint32_t)data;
+
+    /* [prov] regs.yaml:SCI.SCIFLR - wait for TX_EMPTY */
+    ret = sci_wait_for_bit(&SCIFLR, (1u << SCIFLR_TX_EMPTY_BIT), 1u);
+    if (ret != 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+int sci_receive_byte(uint8_t *data)
+{
+    uint32_t flags;
+    int ret;
+
+    if (data == (uint8_t *)0) {
+        return -1;
+    }
+
+    /* [prov] regs.yaml:SCI.SCIFLR - wait for RXRDY */
+    ret = sci_wait_for_bit(&SCIFLR, (1u << SCIFLR_RXRDY_BIT), 1u);
+    if (ret != 0) {
+        return -1;
+    }
+
+    /* [prov] regs.yaml:SCI.SCIFLR - check for errors */
+    flags = SCIFLR;
+    if ((flags & ((1u << SCIFLR_FE_BIT) | (1u << SCIFLR_OE_BIT) | (1u << SCIFLR_PE_BIT))) != 0u) {
+        /* Clear error flags (RWC) */
+        SCIFLR = ((1u << SCIFLR_FE_BIT) | (1u << SCIFLR_OE_BIT) | (1u << SCIFLR_PE_BIT));
+        return -1;
+    }
+
+    /* [prov] regs.yaml:SCI.SCIRD - read data */
+    *data = (uint8_t)(SCIRD & 0xFFu);
+
+    /* [prov] regs.yaml:SCI.SCIFLR - clear RXRDY (RWC) */
+    SCIFLR = (1u << SCIFLR_RXRDY_BIT);
+
+    return 0;
+}
+
+uint32_t sci_transmit(const uint8_t *buf, uint32_t len)
+{
+    uint32_t i;
+    int ret;
+
+    if (buf == (const uint8_t *)0) {
+        return 0u;
+    }
+
+    for (i = 0u; i < len; i++) {
+        ret = sci_transmit_byte(buf[i]);
+        if (ret != 0) {
+            break;
+        }
+    }
+    return i;
+}
+
+uint32_t sci_receive(uint8_t *buf, uint32_t len)
+{
+    uint32_t i;
+    int ret;
+
+    if (buf == (uint8_t *)0) {
+        return 0u;
+    }
+
+    for (i = 0u; i < len; i++) {
+        ret = sci_receive_byte(&buf[i]);
+        if (ret != 0) {
+            break;
+        }
+    }
+    return i;
+}
+
+int sci_tx_ready(void)
+{
+    /* [prov] regs.yaml:SCI.SCIFLR - read TXRDY */
+    uint32_t flags = SCIFLR;
+    return ((flags & (1u << SCIFLR_TXRDY_BIT)) != 0u) ? 1 : 0;
+}
+
+int sci_rx_ready(void)
+{
+    /* [prov] regs.yaml:SCI.SCIFLR - read RXRDY */
+    uint32_t flags = SCIFLR;
+    return ((flags & (1u << SCIFLR_RXRDY_BIT)) != 0u) ? 1 : 0;
+}
+
+int sci_tx_empty(void)
+{
+    /* [prov] regs.yaml:SCI.SCIFLR - read TX_EMPTY */
+    uint32_t flags = SCIFLR;
+    return ((flags & (1u << SCIFLR_TX_EMPTY_BIT)) != 0u) ? 1 : 0;
+}
+
+uint32_t sci_get_flags(void)
+{
+    /* [prov] regs.yaml:SCI.SCIFLR - read all flags */
+    return SCIFLR;
+}
+
+void sci_clear_flags(uint32_t mask)
+{
+    /* [prov] regs.yaml:SCI.SCIFLR - write to clear (RWC) */
+    SCIFLR = mask;
+}
+
+void sci_loopback_enable(void)
+{
+    /* [prov] regs.yaml:SCI.SCIGCR1 - set LOOP_BACK bit */
+    SCIGCR1 |= (1u << SCIGCR1_LOOP_BACK_BIT);
+
+    /* [prov] regs.yaml:SCI.IODFTCTRL - set LPB_ENA bit */
+    IODFTCTRL |= (1u << IODFTCTRL_LPB_ENA_BIT);
+}
+
+void sci_loopback_disable(void)
+{
+    /* [prov] regs.yaml:SCI.SCIGCR1 - clear LOOP_BACK bit */
+    SCIGCR1 &= ~(1u << SCIGCR1_LOOP_BACK_BIT);
+
+    /* [prov] regs.yaml:SCI.IODFTCTRL - clear LPB_ENA bit */
+    IODFTCTRL &= ~(1u << IODFTCTRL_LPB_ENA_BIT);
+}
+
+int sci_self_test_loopback(void)
+{
+    uint8_t test_pattern[8];
+    uint8_t received[8];
+    uint32_t i;
+    uint32_t sent;
+    uint32_t recv;
+
+    /* Prepare test pattern */
+    test_pattern[0] = 0xAAu;
+    test_pattern[1] = 0x55u;
+    test_pattern[2] = 0xF0u;
+    test_pattern[3] = 0x0Fu;
+    test_pattern[4] = 0xC3u;
+    test_pattern[5] = 0x3Cu;
+    test_pattern[6] = 0x99u;
+    test_pattern[7] = 0x66u;
+
+    /* Enable loopback */
+    sci_loopback_enable();
+
+    /* Transmit test pattern */
+    sent = sci_transmit(test_pattern, 8u);
+    if (sent != 8u) {
+        sci_loopback_disable();
+        return -1;
+    }
+
+    /* Receive echoed data */
+    recv = sci_receive(received, 8u);
+    if (recv != 8u) {
+        sci_loopback_disable();
+        return -1;
+    }
+
+    /* Verify match */
+    for (i = 0u; i < 8u; i++) {
+        if (received[i] != test_pattern[i]) {
+            sci_loopback_disable();
+            return -1;
+        }
+    }
+
+    /* Disable loopback */
+    sci_loopback_disable();
+
+    return 0;
+}
+
+int sci_register_isr_level0(sci_isr_t isr)
+{
+    /* [prov] irq.yaml:SCI_LVL0 - register with VIM */
+    return vim_register_isr(IRQ_SCI_LVL0, (void (*)(void))isr);
+}
+
+int sci_register_isr_level1(sci_isr_t isr)
+{
+    /* [prov] irq.yaml:SCI_LVL1 - register with VIM */
+    return vim_register_isr(IRQ_SCI_LVL1, (void (*)(void))isr);
+}
+
+int sci_enable_rx_interrupt(void)
+{
+    int ret;
+
+    /* [prov] regs.yaml:SCI.SCISETINT - set RX interrupt */
+    SCISETINT = (1u << SCISETINT_SET_RX_INT_BIT);
+
+    /* [prov] irq.yaml:SCI_LVL0 - enable VIM channel */
+    ret = vim_enable_channel(IRQ_SCI_LVL0);
+    return ret;
+}
+
+int sci_disable_rx_interrupt(void)
+{
+    int ret;
+
+    /* [prov] regs.yaml:SCI.SCICLEARINT - clear RX interrupt */
+    SCICLEARINT = (1u << SCICLEARINT_CLR_RX_INT_BIT);
+
+    /* [prov] irq.yaml:SCI_LVL0 - disable VIM channel */
+    ret = vim_disable_channel(IRQ_SCI_LVL0);
+    return ret;
+}
+
+int sci_enable_tx_interrupt(void)
+{
+    int ret;
+
+    /* [prov] regs.yaml:SCI.SCISETINT - set TX interrupt */
+    SCISETINT = (1u << SCISETINT_SET_TX_INT_BIT);
+
+    /* [prov] irq.yaml:SCI_LVL0 - enable VIM channel */
+    ret = vim_enable_channel(IRQ_SCI_LVL0);
+    return ret;
+}
+
+int sci_disable_tx_interrupt(void)
+{
+    int ret;
+
+    /* [prov] regs.yaml:SCI.SCICLEARINT - clear TX interrupt */
+    SCICLEARINT = (1u << SCICLEARINT_CLR_TX_INT_BIT);
+
+    /* [prov] irq.yaml:SCI_LVL0 - disable VIM channel */
+    ret = vim_disable_channel(IRQ_SCI_LVL0);
+    return ret;
+}
+
+void sci_set_rx_interrupt_level1(void)
+{
+    /* [prov] regs.yaml:SCI.SCISETINTLVL - set RX interrupt level to 1 */
+    SCISETINTLVL = (1u << SCISETINTLVL_SET_RX_INT_LVL_BIT);
+}
+
+void sci_set_tx_interrupt_level1(void)
+{
+    /* [prov] regs.yaml:SCI.SCISETINTLVL - set TX interrupt level to 1 */
+    SCISETINTLVL = (1u << SCISETINTLVL_SET_TX_INT_LVL_BIT);
+}
+
+int sci_enable_rx_interrupt_level1(void)
+{
+    int ret;
+
+    /* [prov] regs.yaml:SCI.SCISETINT - set RX interrupt */
+    SCISETINT = (1u << SCISETINT_SET_RX_INT_BIT);
+
+    /* [prov] irq.yaml:SCI_LVL1 - enable VIM channel */
+    ret = vim_enable_channel(IRQ_SCI_LVL1);
+    return ret;
+}
+
+int sci_enable_tx_interrupt_level1(void)
+{
+    int ret;
+
+    /* [prov] regs.yaml:SCI.SCISETINT - set TX interrupt */
+    SCISETINT = (1u << SCISETINT_SET_TX_INT_BIT);
+
+    /* [prov] irq.yaml:SCI_LVL1 - enable VIM channel */
+    ret = vim_enable_channel(IRQ_SCI_LVL1);
+    return ret;
+}
+
+uint32_t sci_get_intvect0(void)
+{
+    /* [prov] regs.yaml:SCI.SCIINTVECT0 - read INTVECT0 field (bits 4:0) */
+    return (SCIINTVECT0 & 0x1Fu);
+}
+
+uint32_t sci_get_intvect1(void)
+{
+    /* [prov] regs.yaml:SCI.SCIINTVECT1 - read INTVECT1 field (bits 4:0) */
+    return (SCIINTVECT1 & 0x1Fu);
+}

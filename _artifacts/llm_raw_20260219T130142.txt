@@ -1,0 +1,189 @@
+===== FACTS MIRROR =====
+SYSTEM_BASE = 0xFFFFFF00
+PCR_BASE = 0xFFFFE000
+CLKCNTL_OFFSET = 0xD0
+MINITGCR_OFFSET = 0x5C
+MSINENA_OFFSET = 0x60
+MSTCGSTAT_OFFSET = 0x68
+PLLCTL1_OFFSET = 0x70
+CSDISCLR_OFFSET = 0x38
+CSVSTAT_OFFSET = 0x54
+GHVSRC_OFFSET = 0x48
+SYSESR_OFFSET = 0xE4
+SYSECR_OFFSET = 0xE0
+DEVID_OFFSET = 0xF0
+CLKCNTL_SET_VALUE = 0x00000100
+CLKCNTL_WRITE_VALUE = 0x00010000
+MINITGCR_SET_VALUE = 0x0000000A
+MSINENA_WRITE_VALUE = 0xFFFFFFFF
+MSTCGSTAT_WRITE_VALUE = 0x00000100
+MINITGCR_CLEAR_VALUE = 0x00000005
+PLLCTL1_WRITE_VALUE = 0x00000000
+CSDISCLR_SET_VALUE = 0x00000002
+CSVSTAT_WRITE_VALUE = 0x00000000
+GHVSRC_WRITE_VALUE = 0x00000001
+SOFT_RESET_VALUE = 0x8000
+===== END FACTS MIRROR =====
+
+===== FILE: include/system.h =====
+/**
+ * @file system.h
+ * @brief System initialization and control for TI RM46 Hercules MCU
+ */
+
+#ifndef SYSTEM_H
+#define SYSTEM_H
+
+#include <stdint.h>
+
+/**
+ * @defgroup BSP_SYSTEM System Module
+ * @brief System initialization, reset control, and device identification
+ * @{
+ */
+
+/**
+ * @brief Initialize the system hardware
+ * @ingroup BSP_SYSTEM
+ *
+ * Performs chip bring-up in the following order:
+ * 1. Applies system register initialization operations (memory init, peripheral power, etc.)
+ * 2. Calls PLL_Init() to configure PLL and activate clock tree
+ * 3. Enables additional base clocks if configured
+ *
+ * This function must be called once during startup before main().
+ * It is automatically invoked by Reset_Handler_C in entry.c.
+ *
+ * @note This function does NOT configure PLL multipliers/dividers.
+ *       Use PLL_Configure* APIs in application code (main.c) for clock customization.
+ * @warning Must be called before any peripheral initialization.
+ */
+void system_init(void);
+
+/**
+ * @brief Read the system reset cause
+ * @ingroup BSP_SYSTEM
+ *
+ * Returns the reset status flags from SYS->SYSESR register.
+ * Bit definitions:
+ * - Bit 15: Power-On Reset
+ * - Bit 14: Oscillator Fail/PLL Slip Reset
+ * - Bit 13: Watchdog Reset
+ * - Bit 5: CPU Reset
+ * - Bit 4: Software Reset
+ * - Bit 3: External Reset
+ *
+ * @return Reset cause flags (raw SYSESR register value)
+ */
+uint32_t system_get_reset_cause(void);
+
+/**
+ * @brief Trigger a software reset
+ * @ingroup BSP_SYSTEM
+ *
+ * Writes to SYS->SYSECR to initiate a system-wide software reset.
+ * This function does not return.
+ *
+ * @warning This will reset the entire microcontroller.
+ */
+void system_soft_reset(void);
+
+/**
+ * @brief Read the device identification register
+ * @ingroup BSP_SYSTEM
+ *
+ * Returns the DEVID register containing device type, version, and features.
+ *
+ * @return Device ID (raw DEVID register value)
+ */
+uint32_t system_get_device_id(void);
+
+/**
+ * @brief Clear system status flags
+ * @ingroup BSP_SYSTEM
+ *
+ * Clears all reset status flags in SYS->SYSESR by writing them back.
+ * This is a write-1-to-clear register.
+ */
+void system_clear_status_flags(void);
+
+/** @} */
+
+#endif /* SYSTEM_H */
+
+===== FILE: source/system.c =====
+/**
+ * @file system.c
+ * @brief System initialization and control implementation
+ */
+
+#include <stdint.h>
+#include "system.h"
+#include "reg_system.h"
+#include "pll_driver.h"
+
+/* [prov] regs.yaml:SYSTEM base_address */
+static SYSTEM_REG_MAP_t * const SYS = (SYSTEM_REG_MAP_t *)0xFFFFFF00u;
+
+void system_init(void)
+{
+    /* Apply system register initialization operations */
+
+    /* [prov] soc.yaml:SYSTEM.x-ext.init[0] - CLKCNTL set_bits 0x00000100 */
+    SYS->CLKCNTL |= 0x00000100u;
+
+    /* [prov] soc.yaml:SYSTEM.x-ext.init[1] - CLKCNTL write 0x00010000 */
+    SYS->CLKCNTL = 0x00010000u;
+
+    /* [prov] soc.yaml:SYSTEM.x-ext.init[2] - MINITGCR set_bits 0x0000000A */
+    SYS->MINITGCR |= 0x0000000Au;
+
+    /* [prov] soc.yaml:SYSTEM.x-ext.init[3] - MSINENA write 0xFFFFFFFF */
+    SYS->MSINENA = 0xFFFFFFFFu;
+
+    /* [prov] soc.yaml:SYSTEM.x-ext.init[4] - MSTCGSTAT write 0x00000100 */
+    SYS->MSTCGSTAT = 0x00000100u;
+
+    /* [prov] soc.yaml:SYSTEM.x-ext.init[5] - MINITGCR clear_bits 0x00000005 */
+    SYS->MINITGCR &= ~0x00000005u;
+
+    /* Skipped: PLLCTL1 is owned by pll_driver.c */
+
+    /* Skipped: CSDISCLR is owned by pll_driver.c */
+
+    /* [prov] soc.yaml:SYSTEM.x-ext.init[7] - CSVSTAT write 0x00000000 */
+    SYS->CSVSTAT = 0x00000000u;
+
+    /* Skipped: GHVSRC is owned by pll_driver.c */
+
+    /* Initialize PLL and activate complete clock tree */
+    /* This is MANDATORY - configures PLL and enables core clock domains */
+    PLL_Init();
+
+    /* Clock configuration (PLL/dividers/mux) is application-owned; 
+     * see PLL_Configure* APIs in pll_driver.h (do not call here). */
+}
+
+uint32_t system_get_reset_cause(void)
+{
+    /* [prov] regs.yaml:SYSTEM.SYSESR */
+    return SYS->SYSESR;
+}
+
+void system_soft_reset(void)
+{
+    /* [prov] regs.yaml:SYSTEM.SYSECR - bit 15:14 = 0b10 triggers reset */
+    SYS->SYSECR = 0x8000u;
+}
+
+uint32_t system_get_device_id(void)
+{
+    /* [prov] regs.yaml:SYSTEM.DEVID */
+    return SYS->DEVID;
+}
+
+void system_clear_status_flags(void)
+{
+    /* [prov] regs.yaml:SYSTEM.SYSESR - write-1-to-clear */
+    SYS->SYSESR = SYS->SYSESR;
+}

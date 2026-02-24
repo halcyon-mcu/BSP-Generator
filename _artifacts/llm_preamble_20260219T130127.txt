@@ -1,0 +1,6 @@
+===== FACTS MIRROR =====
+TCM_Flash.origin = 0x00000000
+TCM_Flash.length = 0x00140000
+TCM_RAM.origin = 0x08000000
+TCM_RAM.length = 0x00030000
+===== END FACTS MIRROR =====

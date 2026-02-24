@@ -1,0 +1,70 @@
+===================================================================
+BSP Generator - Generation Log
+Started: 2026-02-19 12:58:08
+===================================================================
+
+[12:58:10] [INFO] [info] Loaded token history from .token_history.json
+[12:58:19] [INFO] [info] Manifest will include 8 modules (5 core + 3 peripheral)
+[12:58:19] [INFO] [info] Will implement 6 drivers (PLL/IOMM/PCR + 3 peripherals)
+[12:58:21] [INFO] 
+[info] Starting Pass 1: Architecture Discovery...
+-------------------------------------------------------------------
+PASS 1: DISCOVERY
+Started: 12:58:21
+-------------------------------------------------------------------
+
+[13:00:01] [COMPLETE] Pass 1: Discovery finished in 100.1s
+
+[13:00:02] [INFO] 
+[info] Pass 1 Complete.
+[13:00:02] [INFO] 
+[info] Starting Pass 2: Implementation for 6 peripheral drivers...
+-------------------------------------------------------------------
+PASS 2: IMPLEMENTATION
+Started: 13:00:02
+-------------------------------------------------------------------
+
+[13:01:16] [COMPLETE] Pass 2: Implementation finished in 73.3s
+
+[13:01:17] [INFO] 
+[info] Pass 2 Complete.
+[13:01:17] [INFO] [debug] Added task: start_asm
+[13:01:17] [INFO] [debug] Added task: entry_c
+[13:01:17] [INFO] [debug] Added task: system_init
+[13:01:17] [INFO] [debug] Added task: linker
+[13:01:17] [INFO] [debug] Added task: vim_driver
+-------------------------------------------------------------------
+PASS 3: PLATFORM
+Started: 13:01:17
+-------------------------------------------------------------------
+[13:01:17] [INFO] [info] Invoking SONNET_4_5 for start_asm …
+[13:01:17] [INFO] [info] Invoking SONNET_4_5 for linker …
+[13:01:17] [INFO] [info] Invoking SONNET_4_5 for system_init …
+[13:01:17] [INFO] [info] Invoking SONNET_4_5 for entry_c …
+[13:01:17] [INFO] [info] Invoking SONNET_4_5 for vim_driver …
+[13:01:25] [INFO] [ok] start_asm: C:\Users\dovyd\Documents\GitHub\BSP-Generator\app\output_20260219_125808\source\start.s
+[13:01:26] [INFO] [ok] entry_c: C:\Users\dovyd\Documents\GitHub\BSP-Generator\app\output_20260219_125808\source\entry.c
+[13:01:27] [INFO] [ok] linker: C:\Users\dovyd\Documents\GitHub\BSP-Generator\app\output_20260219_125808\linker.cmd
+[13:01:42] [INFO] [ok] system_init: C:\Users\dovyd\Documents\GitHub\BSP-Generator\app\output_20260219_125808\include\system.h
+[13:01:42] [INFO] [ok] system_init: C:\Users\dovyd\Documents\GitHub\BSP-Generator\app\output_20260219_125808\source\system.c
+[13:01:59] [INFO] [ok] vim_driver: C:\Users\dovyd\Documents\GitHub\BSP-Generator\app\output_20260219_125808\include\vim.h
+[13:01:59] [INFO] [ok] vim_driver: C:\Users\dovyd\Documents\GitHub\BSP-Generator\app\output_20260219_125808\source\vim.c
+
+[13:01:59] [COMPLETE] Pass 3: Platform finished in 42.0s
+
+[13:02:00] [INFO] 
+[info] Creating documentation with Doxygen
+[13:02:00] [INFO] [ok] Documentation generated in output_20260219_125808\docs\html.
+[13:02:00] [INFO] [info] Docs index located at C:\Users\dovyd\Documents\GitHub\BSP-Generator\app\output_20260219_125808\docs\html\index.html.
+[13:02:00] [INFO] 
+[info] Generating final validation report...
+[13:02:00] [INFO] [ok] Validation report: validation_report.json
+[13:02:00] [INFO] [ok] Validation report: validation_report.md
+
+===================================================================
+GENERATION COMPLETE
+Finished: 2026-02-19 13:02:01
+Total Duration: 3m 52s
+Total Tokens: 0
+Total Cost: $0.00
+===================================================================

@@ -1,0 +1,5 @@
+1. focus on the back half of the code generation process where i'm given tested 
+   generated files (.c/.h) and then generate tests from that generated code
+   to validate that every peripheral is doing what's expected. then another step
+   could be to generate a process flow of how to flash onto the board to do the 
+   final level of validation that the AI-generated and tested code works as expected

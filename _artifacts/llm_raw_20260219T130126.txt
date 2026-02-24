@@ -1,0 +1,80 @@
+===== FACTS MIRROR =====
+(no hardware register facts required for entry.c)
+===== END FACTS MIRROR =====
+
+===== FILE: source/entry.c =====
+/**
+ * @file entry.c
+ * @brief C-level reset handler for TI RM46 (Cortex-R4).
+ *
+ * This module provides the Reset_Handler_C() function, which is called by the
+ * startup assembly after the CPU and stack are initialized. It performs:
+ * - Initialization of the .data section (copy from flash to RAM)
+ * - Zeroing of the .bss section
+ * - System initialization (clocks, peripherals)
+ * - Jump to main()
+ *
+ * @ingroup BSP_SYSTEM
+ */
+
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+/*
+ * Linker-defined symbols marking section boundaries.
+ * These are defined in the linker script and are treated as addresses.
+ */
+extern uint32_t start_of_data;
+extern uint32_t end_of_data;
+extern uint32_t start_of_data_in_flash;
+extern uint32_t start_of_bss;
+extern uint32_t end_of_bss;
+
+/* User-defined system initialization routine (BSP system init) */
+extern void system_init(void);
+
+/* User application entry point */
+extern int main(void);
+
+/**
+ * @brief C-level reset handler.
+ *
+ * This function is called from the assembly startup code after the stack pointer
+ * is initialized. It performs the following steps:
+ * 1. Copy the .data section from flash to RAM.
+ * 2. Zero-initialize the .bss section in RAM.
+ * 3. Call system_init() to configure clocks and peripherals.
+ * 4. Call main() to start the user application.
+ * 5. If main() returns, enter an infinite loop to prevent undefined behavior.
+ *
+ * @ingroup BSP_SYSTEM
+ *
+ * @note This function never returns.
+ * @warning Do not call this function directly; it is invoked by the startup code.
+ */
+void Reset_Handler_C(void)
+{
+    size_t data_size;
+    size_t bss_size;
+
+    /* Step 1: Initialize .data section by copying from flash to RAM */
+    data_size = (size_t)(&end_of_data - &start_of_data) * sizeof(uint32_t);
+    memcpy(&start_of_data, &start_of_data_in_flash, data_size);
+
+    /* Step 2: Zero-initialize the .bss section */
+    bss_size = (size_t)(&end_of_bss - &start_of_bss) * sizeof(uint32_t);
+    memset(&start_of_bss, 0, bss_size);
+
+    /* Step 3: Initialize the system (clocks, peripherals, etc.) */
+    system_init();
+
+    /* Step 4: Jump to user application entry point */
+    main();
+
+    /* Step 5: If main() returns, loop forever to avoid undefined behavior */
+    for (;;)
+    {
+        /* Intentionally empty */
+    }
+}

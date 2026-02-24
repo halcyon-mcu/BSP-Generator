@@ -1,0 +1,17 @@
+var searchData=
+[
+  ['vclk2_5fdivider_0',['vclk2_divider',['../structclock__config__t.html#ad99e94e1f25d7188dd3b7f0da92a1880',1,'clock_config_t']]],
+  ['vclk3_5fdivider_1',['vclk3_divider',['../structclock__config__t.html#a33e5a43b6bbb84449f35ea2f5bd9c2d8',1,'clock_config_t']]],
+  ['vclk4_5fdivider_2',['vclk4_divider',['../structclock__config__t.html#aee24ce4573288e28d8c12c5dd3abbb7a',1,'clock_config_t']]],
+  ['vclk_5fdivider_3',['vclk_divider',['../structclock__config__t.html#a368cad5cdbbece3577afe4c92739cec1',1,'clock_config_t']]],
+  ['vectored_20interrupt_20manager_20vim_4',['Vectored Interrupt Manager (VIM)',['../group___b_s_p___v_i_m.html',1,'']]],
+  ['vim_5',['Vectored Interrupt Manager (VIM)',['../group___b_s_p___v_i_m.html',1,'']]],
+  ['vim_2ec_6',['vim.c',['../vim_8c.html',1,'']]],
+  ['vim_2eh_7',['vim.h',['../vim_8h.html',1,'']]],
+  ['vim_5fdisable_5fchannel_8',['vim_disable_channel',['../group___b_s_p___v_i_m.html#gac8fc585f4549094f45929e09baac0dea',1,'vim_disable_channel(uint32_t channel_id):&#160;vim.c'],['../group___b_s_p___v_i_m.html#gac8fc585f4549094f45929e09baac0dea',1,'vim_disable_channel(uint32_t channel_id):&#160;vim.c']]],
+  ['vim_5fenable_5fchannel_9',['vim_enable_channel',['../group___b_s_p___v_i_m.html#ga5876b263049b56103eec70da37b9145e',1,'vim_enable_channel(uint32_t channel_id):&#160;vim.c'],['../group___b_s_p___v_i_m.html#ga5876b263049b56103eec70da37b9145e',1,'vim_enable_channel(uint32_t channel_id):&#160;vim.c']]],
+  ['vim_5finit_10',['vim_init',['../group___b_s_p___v_i_m.html#gaf5ec1c6e16d96f76be805870bc1e08e8',1,'vim_init(void):&#160;vim.c'],['../group___b_s_p___v_i_m.html#gaf5ec1c6e16d96f76be805870bc1e08e8',1,'vim_init(void):&#160;vim.c']]],
+  ['vim_5fisr_5ft_11',['vim_isr_t',['../group___b_s_p___v_i_m.html#ga4840628bf2b4d271025db5dbfe87b65f',1,'vim.h']]],
+  ['vim_5fregister_5fisr_12',['vim_register_isr',['../group___b_s_p___v_i_m.html#ga1b7b019e9b0eba9e8032b124bef1baa6',1,'vim_register_isr(uint32_t channel_id, vim_isr_t isr):&#160;vim.c'],['../group___b_s_p___v_i_m.html#ga1b7b019e9b0eba9e8032b124bef1baa6',1,'vim_register_isr(uint32_t channel_id, vim_isr_t isr):&#160;vim.c']]],
+  ['vim_5fset_5ffiq_13',['vim_set_fiq',['../group___b_s_p___v_i_m.html#ga740cb12491fa067e69a468092eb6becb',1,'vim_set_fiq(uint32_t channel_id, int enable_fiq):&#160;vim.c'],['../group___b_s_p___v_i_m.html#ga740cb12491fa067e69a468092eb6becb',1,'vim_set_fiq(uint32_t channel_id, int enable_fiq):&#160;vim.c']]]
+];

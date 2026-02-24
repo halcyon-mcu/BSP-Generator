@@ -27,11 +27,14 @@
 
 ---
 
-### **I Want to Validate the Generated Code** (Testing & verification)
+### **I Want to Understand Testing & Validation** (Testing & verification)
 
-1. **`VALIDATION_TESTING.md`** ← How to test the BSP
-2. **`QUICKSTART_VALIDATION.md`** ← Quick validation tests
-3. **`GENERATED_OUTPUT_GUIDE.md`** ← Function-by-function reference
+1. **`TEST_QUICK_ANSWER.md`** ← Direct answer: "Tests on YAML or code?" (2 min)
+2. **`TEST_FLOW_VISUAL.md`** ← Visual explanation of test pipeline (5 min)
+3. **`TEST_ARCHITECTURE.md`** ← Detailed testing architecture (20 min)
+4. **`VALIDATION_TESTING.md`** ← How to generate & run tests (30 min)
+5. **`QUICKSTART_VALIDATION.md`** ← Quick validation tests
+6. **`GENERATED_OUTPUT_GUIDE.md`** ← Function-by-function reference
 
 ---
 
@@ -60,10 +63,13 @@
 
 ### Validation & Testing
 
-| File                         | Purpose                  | Read Time |
-| ---------------------------- | ------------------------ | --------- |
-| **VALIDATION_TESTING.md**    | How to validate BSP code | 15 min    |
-| **QUICKSTART_VALIDATION.md** | Quick validation tests   | 5 min     |
+| File                         | Purpose                             | Read Time |
+| ---------------------------- | ----------------------------------- | --------- |
+| **TEST_QUICK_ANSWER.md**     | Direct answer to YAML vs code tests | 2 min     |
+| **TEST_FLOW_VISUAL.md**      | Visual test pipeline explanation    | 5 min     |
+| **TEST_ARCHITECTURE.md**     | Detailed test architecture & design | 20 min    |
+| **VALIDATION_TESTING.md**    | How to generate & run validation    | 30 min    |
+| **QUICKSTART_VALIDATION.md** | Quick validation tests              | 5 min     |
 
 ---
 

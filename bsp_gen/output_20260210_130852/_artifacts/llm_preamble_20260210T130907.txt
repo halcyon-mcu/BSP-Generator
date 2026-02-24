@@ -1,0 +1,4 @@
+===== FACTS MIRROR =====
+; No numeric facts required for minimal startup assembly.
+; Vector table layout and instruction sequences are architecture-defined.
+===== END FACTS MIRROR =====

@@ -1,0 +1,71 @@
+===== FACTS MIRROR =====
+(no numeric facts required for assembly startup)
+===== END FACTS MIRROR =====
+
+===== FILE: source/start.s =====
+;******************************************************************************
+; @file    start.s
+; @brief   TI ARM CGT assembly startup for RM46 (Cortex-R4)
+;
+; Defines the interrupt vector table and Reset_Handler entry point.
+; Uses TI assembler syntax (.sect, .long, .ref, etc.)
+;******************************************************************************
+
+;------------------------------------------------------------------------------
+; External symbols
+;------------------------------------------------------------------------------
+    .ref    Reset_Handler_C     ; C entry point defined in entry.c
+    .ref    end_of_stack        ; Top of stack, defined in linker.cmd
+
+;------------------------------------------------------------------------------
+; Global symbols
+;------------------------------------------------------------------------------
+    .global Reset_Handler
+
+;------------------------------------------------------------------------------
+; Interrupt Vector Table
+; Section: .intvecs
+; Must be placed at the reset vector address by the linker.
+;------------------------------------------------------------------------------
+    .sect   ".intvecs"
+    .align  4
+
+    .long   end_of_stack        ; 0x00: Initial stack pointer
+    .long   Reset_Handler       ; 0x04: Reset vector
+    .long   Reset_Handler       ; 0x08: Undefined instruction
+    .long   Reset_Handler       ; 0x0C: Supervisor call (SVC)
+    .long   Reset_Handler       ; 0x10: Prefetch abort
+    .long   Reset_Handler       ; 0x14: Data abort
+    .long   0                   ; 0x18: Reserved
+    .long   Reset_Handler       ; 0x1C: IRQ
+    .long   Reset_Handler       ; 0x20: FIQ
+
+;------------------------------------------------------------------------------
+; Reset Handler
+; Section: .text
+; Loads stack pointer from linker symbol and branches to C entry point.
+;------------------------------------------------------------------------------
+    .sect   ".text"
+    .align  4
+
+Reset_Handler:
+    ; Load initial stack pointer from linker-defined symbol
+    LDR     SP, stack_addr
+
+    ; Branch with link to C runtime entry
+    BL      Reset_Handler_C
+
+    ; If Reset_Handler_C ever returns, loop forever
+Reset_Loop:
+    B       Reset_Loop
+
+;------------------------------------------------------------------------------
+; Literal pool for stack address
+;------------------------------------------------------------------------------
+    .align  4
+stack_addr:
+    .long   end_of_stack
+
+;******************************************************************************
+; End of start.s
+;******************************************************************************
