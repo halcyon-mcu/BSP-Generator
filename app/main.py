@@ -1382,40 +1382,52 @@ async def main():
 
 async def _generate_documentation(out_dir: Path, progress_manager=None):
     """Generate Doxygen documentation (optional, skipped if doxygen not available)"""
-    if progress_manager:
-        progress_manager.log_or_print(f"\n[info] Creating documentation with Doxygen")
-    else:
-        print(f"\n[info] Creating documentation with Doxygen")
+    log = progress_manager.log_or_print if progress_manager else print
+
+    log(f"\n[info] Creating documentation with Doxygen")
+
     docs_dir = out_dir / "docs"
     docs_dir.mkdir(parents=True, exist_ok=True)
-    
-    try:
-        doxy_path = write_doxyfile(docs_dir)
-        run_doxygen(out_dir, doxy_path)
-        if progress_manager:
-            progress_manager.log_or_print(f"[ok] Documentation generated in {docs_dir / 'html'}.")
-        else:
-            print(f"[ok] Documentation generated in {docs_dir / 'html'}.")
 
-        if (docs_dir / "html" / "index.html").exists():
-            abs_path = os.path.abspath(docs_dir / "html" / "index.html")
-            if progress_manager:
-                progress_manager.log_or_print(f"[info] Docs index located at {abs_path}.")
-            else:
-                print(f"[info] Docs index located at {abs_path}.")
+    try:
+        # Write Doxyfile to docs directory
+        doxy_path = write_doxyfile(docs_dir)
+        log(f"[info] Doxyfile created at {doxy_path}")
+
+        # Run doxygen from BSP root
+        run_doxygen(out_dir, doxy_path)
+
+        # Verify output was created
+        html_dir = docs_dir / "html"
+        index_file = html_dir / "index.html"
+
+        if not index_file.exists():
+            log(f"[warn] Doxygen completed but index.html not found at {index_file}")
+            return
+
+        # Count generated HTML files for sanity check
+        html_files = list(html_dir.glob("*.html"))
+        log(f"[ok] Documentation generated: {len(html_files)} HTML files in {html_dir}")
+
+        # Success metric: Should see 50+ HTML files for a complete BSP
+        if len(html_files) < 10:
+            log(f"[warn] Only {len(html_files)} HTML files generated - documentation may be incomplete")
+
+        abs_path = index_file.resolve()
+        log(f"[info] Open documentation at: file:///{abs_path}")
+
     except FileNotFoundError as e:
-        msg = f"[warn] Doxygen not found in system PATH. Install doxygen to generate documentation."
-        if progress_manager:
-            progress_manager.log_or_print(msg)
+        if "doxygen" in str(e).lower():
+            log(f"[warn] Doxygen not found in system PATH. Install doxygen to generate documentation.")
         else:
-            print(msg)
+            log(f"[warn] Documentation generation failed: {e}")
+    except RuntimeError as e:
+        # Specific doxygen or validation errors
+        log(f"[warn] Doxygen generation failed: {e}")
+        log(f"[info] Documentation skipped. BSP code generation was successful.")
     except Exception as e:
-        msg = f"[warn] Doxygen generation failed (documentation skipped)."
-        if progress_manager:
-            progress_manager.log_or_print(msg)
-        else:
-            print(msg)
-        print(f"       Details: {e}")
+        log(f"[warn] Unexpected error during documentation generation: {e}")
+        log(f"[info] Documentation skipped. BSP code generation was successful.")
 
 
 if __name__ == "__main__":
