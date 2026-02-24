@@ -35,11 +35,20 @@ class TestSafeRelpath:
 
     def test_absolute_path_rejected(self):
         """Test that absolute paths are rejected."""
-        with pytest.raises(ValueError, match="absolute path"):
-            _safe_relpath("/etc/passwd")
+        import sys
 
-        with pytest.raises(ValueError, match="absolute path"):
-            _safe_relpath("C:\\Windows\\System32\\config\\SAM")
+        # Test platform-specific absolute paths
+        if sys.platform == 'win32':
+            # On Windows, /etc/passwd is NOT absolute, but C:\ paths are
+            with pytest.raises(ValueError, match="absolute path"):
+                _safe_relpath("C:\\Windows\\System32\\config\\SAM")
+
+            with pytest.raises(ValueError, match="absolute path"):
+                _safe_relpath("C:/Windows/System32/config/SAM")
+        else:
+            # On Unix, /etc/passwd IS absolute
+            with pytest.raises(ValueError, match="absolute path"):
+                _safe_relpath("/etc/passwd")
 
     def test_unc_path_rejected(self):
         """Test that UNC paths are rejected."""
@@ -76,7 +85,8 @@ class TestSafeRelpath:
     def test_max_length_boundary(self):
         """Test that paths at exactly 260 chars are accepted."""
         # 260 character path (Windows limit)
-        boundary_path = "a/" * 129 + "b"  # Exactly 260 chars
+        # Each "a/" is 2 chars, 130 * 2 = 260
+        boundary_path = "a/" * 130  # Exactly 260 chars
         result = _safe_relpath(boundary_path)
         assert len(result) == 260
 
