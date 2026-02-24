@@ -185,7 +185,7 @@ def build_pinmux_slice(pinmux_data: Dict[str, Any], module_name: str) -> str:
     # Map module names to signal patterns
     signal_patterns = {
         "SCI": ["SCIRX", "SCITX"],
-        "LIN": ["LINRX", "LINTX", "LINTX", "LIN2RX", "LIN2TX"],
+        "LIN": ["LINRX", "LINTX", "LINTX", "LIN2RX", "LIN2TX", "SCIRX", "SCITX"],  # LIN can use SCI pins
         "GIO": ["GIOA", "GIOB"],
         "SPI": ["MIBSPI", "SPI"],
         "I2C": ["I2C_SCL", "I2C_SDA"],
@@ -196,6 +196,31 @@ def build_pinmux_slice(pinmux_data: Dict[str, Any], module_name: str) -> str:
     }
 
     module_upper = module_name.upper()
+
+    # Special case: IOMM needs ALL pins with mux data (for pin-to-PINMMR lookup table)
+    if module_upper == "IOMM":
+        pins = pinmux_data.get("pins", [])
+        # Filter to only pins that have mux information
+        relevant_pins = []
+        for pin in pins:
+            functions = pin.get("functions", [])
+            for func in functions:
+                mux = func.get("mux")
+                if mux and mux.get("register") and mux.get("bit") is not None:
+                    relevant_pins.append(pin)
+                    break  # Don't add same pin twice
+
+        if not relevant_pins:
+            return ""
+
+        # Build complete pinmux data for IOMM
+        slice_data = {
+            "$id": pinmux_data.get("$id", "pinmux.schema.yaml"),
+            "package": pinmux_data.get("package", ""),
+            "pins": relevant_pins
+        }
+        return dump_yaml_str(slice_data)
+
     patterns = signal_patterns.get(module_upper, [])
 
     if not patterns:
@@ -343,7 +368,7 @@ async def run_implementation_pass(
 
         return ("error", f"Max retries exceeded for {mod_name} header", "")
 
-    async def _generate_source(mod_name: str, mod_data: Dict, reg_content: str, soc_slice: str, bus_slice: str, pinmux_slice: str):
+    async def _generate_source(mod_name: str, mod_data: Dict, reg_content: str, soc_slice: str, bus_slice: str, pinmux_slice: str, instance_pin_config: dict = None, dependency_manifests: dict = None):
         """Generate driver source with retry logic"""
         from ..regeneration.retry_policy import RetryPolicy, FailureReason
         from ..regeneration.truncation_detector import detect_simple_truncation
@@ -359,7 +384,7 @@ async def run_implementation_pass(
                     print(f"  [retry] Pass2 source {mod_name} - Attempt {attempt + 1} (tokens: {current_tokens})")
 
             try:
-                prompt = build_pass2_driver_c_prompt(mod_name, json.dumps(mod_data, indent=2), reg_content, soc_slice, bus_slice, pinmux_slice, manifest=manifest)
+                prompt = build_pass2_driver_c_prompt(mod_name, json.dumps(mod_data, indent=2), reg_content, soc_slice, bus_slice, pinmux_slice, manifest=manifest, instance_pin_config=instance_pin_config, dependency_manifests=dependency_manifests)
                 resp = await invoke_model(model, current_tokens, [{"role": "user", "content": prompt}])
                 text = extract_text_from_bedrock_response(resp)
 
@@ -440,9 +465,30 @@ async def run_implementation_pass(
         # 4. Get Pinmux Info (for Pin Configuration)
         pinmux_slice = build_pinmux_slice(pinmux_data, mod_name)
 
+        # 4a. Extract per-instance pin configurations
+        instance_pin_config = None
+        try:
+            from .pin_config_builder import extract_peripheral_instances
+            instance_pin_config = extract_peripheral_instances(
+                board_data=soc_data,
+                pinmux_data=pinmux_data,
+                peripheral=mod_name
+            )
+        except Exception as e:
+            if tracker:
+                tracker.add_message(f"Warning: Could not extract pin config for {mod_name}: {e}", level="warning")
+            # Continue with None - graceful degradation
+
+        # 4b. Collect dependency manifests
+        dependency_manifests = {}
+        if mod_data and 'dependencies' in mod_data:
+            for dep_name in mod_data['dependencies']:
+                if dep_name in api_catalog:
+                    dependency_manifests[dep_name] = api_catalog[dep_name]
+
         # 5. Launch Parallel Gens
         t_h = asyncio.create_task(_generate_header(mod_name, mod_data, reg_content))
-        t_c = asyncio.create_task(_generate_source(mod_name, mod_data, reg_content, soc_slice, bus_slice, pinmux_slice))
+        t_c = asyncio.create_task(_generate_source(mod_name, mod_data, reg_content, soc_slice, bus_slice, pinmux_slice, instance_pin_config, dependency_manifests))
         
         results = await asyncio.gather(t_h, t_c)
         

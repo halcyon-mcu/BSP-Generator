@@ -1934,15 +1934,116 @@ If user needs to configure frequency-dependent features:
 - Provide function that takes desired value (e.g., SetBaudRate(uint32_t baud))
 - Implementation queries actual clock and calculates register values
 
+DOCUMENTATION REQUIREMENTS (MANDATORY):
+========================================
+All header files MUST use Doxygen-style comments matching this format:
+
+FILE-LEVEL (Required at top, after #ifndef):
+```c
+/**
+ * @file {module_name.lower()}_driver.h
+ * @brief Public API for {module_name} peripheral driver
+ * @details Complete public interface for the {module_name} module including
+ *          types, enumerations, structures, and function prototypes.
+ */
+```
+
+ENUM/STRUCT DOCUMENTATION (Required for each type):
+```c
+/**
+ * @brief [One-line description]
+ * @details [Optional detailed description]
+ */
+typedef enum {{
+    VALUE1,  /**< Description of VALUE1 */
+    VALUE2,  /**< Description of VALUE2 */
+}} type_name_t;
+```
+
+FUNCTION PROTOTYPES (Required for each function):
+```c
+/**
+ * @brief [One-line summary]
+ *
+ * @param[in] param1 Description of param1
+ * @param[out] param2 Description of output param2
+ * @return Return value description
+ * @retval SPECIFIC_VALUE When this specific value is returned
+ */
+return_type Function_Name(type1 param1, type2 param2);
+```
+
+TRAILING COMMENTS: Use /**< description */ for enum values, struct members, defines
+
 OUTPUT:
 Return ONLY the C code content.
 """
 
-def build_pass2_driver_c_prompt(module_name: str, manifest_json: str, reg_header_content: str, soc_slice: str = "", bus_slice: str = "", pinmux_yaml: str = "", manifest: dict = None) -> str:
+def build_pass2_driver_c_prompt(module_name: str, manifest_json: str, reg_header_content: str, soc_slice: str = "", bus_slice: str = "", pinmux_yaml: str = "", manifest: dict = None, instance_pin_config: dict = None, dependency_manifests: dict = None) -> str:
     """
     Constructs the prompt for "Pass 2B" - Driver Implementation Generation.
     Uses the Registry Manifest + Register Header + Hardware Info + Bus Info + Pin Mux Info (optional).
+
+    Args:
+        instance_pin_config: Optional dict mapping instance names to pin configurations.
+                             Format: {"dcan1": [{"package_pin": 90, "signal": "DCAN1RX", ...}], ...}
+        dependency_manifests: Optional dict mapping dependency names to their manifests.
+                             Format: {"IOMM": {...manifest...}, "PLL": {...manifest...}}
     """
+
+    def format_instance_pin_data(instance_config):
+        """Format instance pin configuration data for LLM prompt."""
+        if not instance_config:
+            return ""
+
+        from modules.generation.pin_config_builder import format_instance_data_for_llm, PinMapping
+
+        # Convert dict format to PinMapping objects if needed
+        formatted_config = {}
+        for instance_name, pins in instance_config.items():
+            formatted_pins = []
+            for pin in pins:
+                if isinstance(pin, PinMapping):
+                    formatted_pins.append(pin)
+                else:
+                    # Convert dict to PinMapping
+                    formatted_pins.append(PinMapping(
+                        package_pin=pin.get('package_pin'),
+                        signal=pin.get('signal'),
+                        register=pin.get('register'),
+                        bit=pin.get('bit'),
+                        af_number=pin.get('af_number'),
+                        data_source=pin.get('data_source', 'unknown')
+                    ))
+            formatted_config[instance_name] = formatted_pins
+
+        return format_instance_data_for_llm(formatted_config)
+
+    def format_dependency_manifests(dep_manifests):
+        """Format dependency manifests for LLM prompt."""
+        if not dep_manifests:
+            return "No dependencies."
+
+        import json
+        lines = []
+        for dep_name, dep_manifest in dep_manifests.items():
+            lines.append(f"\n### {dep_name} Module ###")
+            lines.append(f"Functions exported by {dep_name}:")
+            for func in dep_manifest.get('functions', []):
+                lines.append(f"  - {func.get('prototype', func.get('name', 'UNKNOWN'))}")
+                if func.get('description'):
+                    lines.append(f"    Description: {func['description']}")
+
+            # Include relevant types
+            types = dep_manifest.get('types', [])
+            if types:
+                lines.append(f"\nTypes defined by {dep_name}:")
+                for type_def in types:
+                    if type_def.get('type') == 'enum':
+                        lines.append(f"  - enum {type_def.get('name')}: {', '.join(type_def.get('values', []))}")
+
+        return '\n'.join(lines)
+
     # PLL-specific implementation requirements
     pll_section = ""
     if module_name.upper() == "PLL":
@@ -2174,6 +2275,54 @@ INPUT CONTEXT:
 {bus_slice}
 6. Pin Multiplexing Data (YAML):
 {pinmux_yaml if pinmux_yaml else "Not provided - peripheral does not use external pins"}
+7. Dependency Module APIs (Available Functions):
+{format_dependency_manifests(dependency_manifests)}
+
+MANDATORY PRE-FLIGHT CHECKS:
+============================
+Before writing ANY code, verify:
+
+1. Does INPUT CONTEXT 2 (Manifest) list "IOMM" in dependencies?
+   YES → You MUST generate XXX_EnablePins() functions (see CRITICAL section below)
+   NO → Skip pin configuration
+
+2. Check INPUT CONTEXT 7 (Dependency Module APIs) for IOMM functions:
+   - List available functions (IOMM_Unlock, IOMM_Lock, IOMM_ConfigurePin, etc.)
+   - Use ONLY these exact names - no hardcoding, no guessing
+
+CRITICAL: IOMM PIN ENABLE FUNCTION GENERATION
+==============================================
+If "IOMM" appears in dependencies, you MUST:
+
+1. Add: #include "iomm_driver.h" at the top of the .c file
+
+2. Generate EnablePins function(s):
+   - Multi-instance: One function per instance (DCAN1_EnablePins, DCAN2_EnablePins)
+   - Single-instance: One function (SCI_EnablePins, GIO_EnablePins)
+
+3. Implementation pattern:
+   ```c
+   void XXX_EnablePins(void) {{
+       IOMM_Status_t status;  /* Variables at top - C89 */
+
+       status = IOMM_Unlock();  /* Use exact name from INPUT CONTEXT 7 */
+       if (status != IOMM_STATUS_OK) {{
+           return;
+       }}
+
+       IOMM_ConfigurePin(...);  /* Configure pins for this instance */
+       IOMM_Lock();
+   }}
+   ```
+
+4. Add to manifest "functions" array:
+   ```json
+   {{
+       "name": "XXX_EnablePins",
+       "prototype": "void XXX_EnablePins(void);",
+       "brief": "Configure IOMM pins for XXX instance"
+   }}
+   ```
 
 TASK:
 Generate the C source file (`{module_name.lower()}_driver.c`) implementing the driver.
@@ -2242,66 +2391,250 @@ CLOCK SERVICE INTEGRATION (MANDATORY):
    - Calls to PLL_EnableClock() in init function
    - Calls to PLL_GetFrequency() for baud/timing calculations
 
-IOMM PIN MULTIPLEXING INTEGRATION (MANDATORY FOR I/O PERIPHERALS):
--------------------------------------------------------------------
-**CRITICAL:** If the manifest (INPUT CONTEXT 2) lists "IOMM" in dependencies, the peripheral uses external pins that require multiplexing.
+DYNAMIC PIN ENABLE FUNCTION GENERATION (MANDATORY FOR I/O PERIPHERALS):
+------------------------------------------------------------------------
+**CRITICAL:** If the manifest (INPUT CONTEXT 2) lists "IOMM" in dependencies, you MUST generate pin enable functions.
 
-**IMPORTANT:** Peripheral drivers MUST NOT directly access IOMM/PINMMR registers. Instead, they must use the IOMM driver API.
+{format_instance_pin_data(instance_pin_config) if instance_pin_config else "No instance pin configuration provided. If IOMM is in dependencies, document pin requirements in comments."}
 
-1. INCLUDE REQUIREMENT:
-   - Add `#include "iomm_driver.h"` to the .c file
+1. DYNAMIC DEPENDENCY RESOLUTION:
+   **NEVER hardcode IOMM function names.** Instead:
+   - Check INPUT CONTEXT 2 (Manifest) for IOMM in the dependencies array
+   - Look at INPUT CONTEXT 7 (Dependency Module APIs) to see IOMM's exported functions
+   - Find functions with keywords: "unlock", "lock", "configure", "set_pin" in name or description
+   - Use the ACTUAL function names and prototypes from INPUT CONTEXT 7
+   - Example: If IOMM exports "IOMM_Unlock()" → use that exact name
+   - Example: If IOMM exports "IOMM_ConfigurePin(IOMM_Pin_t pin, uint32_t function)" → use that signature
 
-2. PIN CONFIGURATION APPROACH:
-   **DO NOT directly configure pins in the peripheral Init() function.**
+2. PER-INSTANCE FUNCTION GENERATION:
+   Generate ONE function per instance (DO NOT combine instances):
 
-   Instead, document required pins in a comment and assume they are pre-configured:
+   **For multi-instance peripherals** (e.g., DCAN1, DCAN2, LIN1, LIN2):
    ```c
-   void {module_name.upper()}_Init(void) {{
-       // STEP 1: Enable peripheral clock (MANDATORY - must be first)
-       PLL_EnableClock(CLOCKDOMAIN_<CLOCK_REF>);
+   void {{INSTANCE_NAME}}_EnablePins(void) {{
+       /* Variables at top (C89) */
+       status_type status;
 
-       /* Pin Configuration Requirements (must be done before calling this function):
-        * The following pins must be configured via IOMM_ConfigurePin() or main.c:
-        * - <SIGNAL_NAME>: PINMMRx bit y (e.g., SCIRX: PINMMR7 bit 17)
-        * - <SIGNAL_NAME>: PINMMRx bit y (e.g., SCITX: PINMMR8 bit 1)
-        *
-        * Example configuration in main.c:
-        *   IOMM_Unlock();
-        *   // Set PINMMR7 bit 17 for SCIRX
-        *   // Set PINMMR8 bit 1 for SCITX
-        *   IOMM_Lock();
-        */
+       /* Discover unlock function from IOMM dependency manifest */
+       status = <iomm_unlock_function>();
+       if (status != SUCCESS) {{
+           return;
+       }}
 
-       // STEP 2: Configure peripheral registers
-       ...
+       /* Configure ONLY pins for THIS INSTANCE */
+       <iomm_configure_function>(register_num, bit_pos);
+
+       /* Lock using function from manifest */
+       <iomm_lock_function>();
    }}
    ```
 
-3. EXTRACTING PIN REQUIREMENTS FROM PINMUX.YAML (INPUT CONTEXT 6):
-   - Find your peripheral's signal names in pinmux.yaml
-   - Look for entries where functions[].signal matches your peripheral (e.g., "SCIRX", "SCITX", "LINRX", "LINTX")
-   - The mux.register and mux.bit tell you which PINMMR register and bit control each signal
-   - Document these requirements in comments as shown above
-   - Example from pinmux.yaml:
-     ```yaml
-     - package_pin: 39
-       functions:
-         - {{ af: "1", signal: "SCIRX", mux: {{ register: "PINMMR7", bit: 17 }} }}
-     ```
-     This means: SCIRX requires PINMMR7 bit 17 to be set
+   **For single-instance peripherals** (e.g., SCI, LIN, GIO):
+   ```c
+   void {{MODULE_NAME}}_EnablePins(void) {{
+       IOMM_Status_t status;
 
-4. MULTIPLE INSTANCES:
-   - If your peripheral has multiple instances (e.g., LIN1, LIN2, SCI1, SCI2):
-     * Check INPUT CONTEXT 4 (soc.yaml) for the instance number
-     * Search pinmux.yaml for signals with instance suffixes
-     * Document only the pins for YOUR specific instance
-   - If instance information is unavailable, document the default/first pin set found
+       /* Unlock IOMM registers */
+       status = IOMM_Unlock();
+       if (status != IOMM_STATUS_OK) {{
+           return;
+       }}
 
-5. WHY THIS APPROACH:
-   - Pin multiplexing is typically done once at system startup in main.c or board init
-   - Multiple peripherals may share IOMM configuration responsibility
-   - The IOMM driver provides proper lock/unlock management
-   - Peripheral drivers should focus on peripheral-specific configuration only
+       /* Configure pin 39 for SCITX (AF1 = 0x02) */
+       IOMM_ConfigurePin(39, 0x02U);
+
+       /* Configure pin 38 for SCIRX (AF1 = 0x02) */
+       IOMM_ConfigurePin(38, 0x02U);
+
+       /* Lock IOMM registers */
+       IOMM_Lock();
+   }}
+   ```
+
+3. CRITICAL: INSTANCE SEPARATION
+   ❌ WRONG - Mixing instances:
+   ```c
+   void CAN_EnablePins(void) {{
+       // Configures ALL CAN pins (DCAN1 + DCAN2) - BAD!
+       configure_pin(90);  // DCAN1RX
+       configure_pin(89);  // DCAN1TX
+       configure_pin(129); // DCAN2RX - conflicts with DCAN1!
+       configure_pin(128); // DCAN2TX
+   }}
+   ```
+
+   ✅ CORRECT - Separate functions:
+   ```c
+   void DCAN1_EnablePins(void) {{
+       // Only DCAN1 pins
+       configure_pin(90);  // DCAN1RX
+       configure_pin(89);  // DCAN1TX
+   }}
+
+   void DCAN2_EnablePins(void) {{
+       // Only DCAN2 pins
+       configure_pin(129); // DCAN2RX
+       configure_pin(128); // DCAN2TX
+   }}
+   ```
+
+4. REGISTER NUMBER EXTRACTION:
+   From register names like "PINMMR15", extract the number (15) for the configure function:
+   ```c
+   /* Pin configuration: PINMMR15 bit 8 */
+   iomm_configure_pin(15, 8);  /* Register 15, bit 8 */
+   ```
+
+4a. ALTERNATE FUNCTION (AF) VALUE CONVERSION:
+   **CRITICAL:** The AF number must be converted to a raw bit pattern value.
+
+   AF-to-Value Mapping (RM46/TMS570 Standard):
+   - AF0 → 0x01 (0b00000001)
+   - AF1 → 0x02 (0b00000010)
+   - AF2 → 0x04 (0b00000100)
+   - AF3 → 0x08 (0b00001000)
+   - AF4 → 0x10 (0b00010000)
+
+   **DO NOT use symbolic constants like IOMM_FUNCTION_AF1 - they do not exist!**
+
+   Example correct usage:
+   ```c
+   /* Configure SCITX pin - Package pin 39, PINMMR8 bit 1, AF1 */
+   IOMM_ConfigurePin(39, 0x02U);  /* AF1 = 0x02 */
+
+   /* Configure SCIRX pin - Package pin 38, PINMMR7 bit 17, AF1 */
+   IOMM_ConfigurePin(38, 0x02U);  /* AF1 = 0x02 */
+   ```
+
+   Example WRONG usage (will not compile):
+   ```c
+   IOMM_ConfigurePin(39, IOMM_FUNCTION_AF1);  /* ❌ WRONG - constant doesn't exist */
+   ```
+
+4b. CRITICAL: IOMM PIN-TO-PINMMR MAPPING (NON-LINEAR HARDWARE MAPPING):
+   **CRITICAL BUG FIX:** The RM46 hardware uses NON-LINEAR pin-to-PINMMR register mapping.
+
+   **FORBIDDEN PATTERN (causes incorrect pin configuration):**
+   ```c
+   /* ❌ WRONG - Linear calculation doesn't match hardware */
+   uint32_t reg_index = pin_number / 4;  /* INCORRECT */
+   uint32_t bit_offset = (pin_number % 4) * 8;
+   ```
+
+   **WHY THIS FAILS:**
+   - Package pin numbers do NOT map linearly to PINMMR register indices
+   - Example: Pin 38 → PINMMR7 bit 17 (NOT PINMMR9 from pin/4)
+   - Example: Pin 39 → PINMMR8 bit 1 (NOT PINMMR9 from pin/4)
+   - Each device has unique pin-to-PINMMR mapping defined in pinmux.yaml
+
+   **REQUIRED PATTERN - Pin Lookup Table from pinmux.yaml:**
+   When generating iomm_driver.c, you MUST:
+
+   1. Extract pin mappings from INPUT CONTEXT (if pinmux.yaml data provided)
+   2. Generate static lookup table with actual hardware mappings:
+
+   ```c
+   /* Auto-generated from pinmux.yaml - Device-specific pin-to-PINMMR mapping */
+   typedef struct {{
+       uint8_t package_pin;      /* Physical pin number on chip package */
+       uint8_t pinmmr_reg;       /* PINMMR register index (0-29) */
+       uint8_t bit_position;     /* Bit position within register (0-31) */
+   }} IOMM_PinMapping_t;
+
+   static const IOMM_PinMapping_t g_pin_mapping[] = {{
+       {{ .package_pin = 38, .pinmmr_reg = 7, .bit_position = 17 }},  /* SCIRX */
+       {{ .package_pin = 39, .pinmmr_reg = 8, .bit_position = 1 }},   /* SCITX */
+       {{ .package_pin = 89, .pinmmr_reg = 11, .bit_position = 8 }},  /* DCAN1TX */
+       {{ .package_pin = 90, .pinmmr_reg = 11, .bit_position = 16 }}, /* DCAN1RX */
+       /* ... all pins from pinmux.yaml with mux data ... */
+   }};
+   #define PIN_MAPPING_COUNT (sizeof(g_pin_mapping) / sizeof(g_pin_mapping[0]))
+   ```
+
+   3. Implement IOMM_ConfigurePin() using lookup:
+
+   ```c
+   IOMM_Status_t IOMM_ConfigurePin(uint32_t package_pin, uint32_t function)
+   {{
+       uint32_t i;
+       const IOMM_PinMapping_t* mapping;
+       volatile uint32_t* pinmmr_reg;
+       uint32_t reg_value;
+
+       /* Find pin in lookup table */
+       mapping = NULL;
+       for (i = 0; i < PIN_MAPPING_COUNT; i++) {{
+           if (g_pin_mapping[i].package_pin == package_pin) {{
+               mapping = &g_pin_mapping[i];
+               break;
+           }}
+       }}
+
+       if (mapping == NULL) {{
+           return IOMM_STATUS_INVALID_PIN;
+       }}
+
+       /* Calculate PINMMR register address */
+       pinmmr_reg = &iommREG->PINMMR0 + mapping->pinmmr_reg;
+
+       /* Read-modify-write with proper bit masking */
+       reg_value = *pinmmr_reg;
+       reg_value &= ~(0xFFU << mapping->bit_position);  /* Clear 8-bit field */
+       reg_value |= (function & 0xFFU) << mapping->bit_position;  /* Set new value */
+       *pinmmr_reg = reg_value;
+
+       return IOMM_STATUS_OK;
+   }}
+   ```
+
+   4. If pinmux.yaml data is NOT available in context:
+      - Add TODO comment explaining the limitation
+      - Use a simplified implementation that documents the issue
+      - Return IOMM_STATUS_NOT_IMPLEMENTED or IOMM_STATUS_INVALID_PIN
+
+   **DATA SOURCE:** Lookup table entries come from pinmux.yaml structure:
+   ```yaml
+   - package_pin: 38
+     functions:
+       - af: "1"
+         signal: "SCIRX"
+         mux:
+           register: "PINMMR7"   # → pinmmr_reg = 7
+           bit: 17               # → bit_position = 17
+   ```
+
+   **VALIDATION:** Generated IOMM driver will be tested against hardware.
+   Incorrect pin-to-register mapping causes pins to remain in default state (non-functional).
+
+5. MANIFEST INTEGRATION:
+   Add each generated function to the manifest (in the implementation):
+   ```json
+   {{
+       "name": "{{INSTANCE_NAME}}_EnablePins",
+       "brief": "Configure pins for {{INSTANCE_NAME}} instance",
+       "params": [],
+       "return_type": "void"
+   }}
+   ```
+
+6. C89 COMPLIANCE:
+   - Declare ALL variables at function top
+   - No mid-block declarations
+   - Use /* */ comments, not //
+
+7. ERROR HANDLING:
+   - Check return status of unlock operation
+   - On error, lock and return immediately (silent failure)
+   - Use the status enum type from IOMM module
+
+**VALIDATION CHECKLIST:**
+- [ ] Used manifest to discover IOMM function names (no hardcoding)
+- [ ] Generated separate function for each instance
+- [ ] Did NOT mix pins from different instances
+- [ ] Extracted register numbers from "PINMMRx" format
+- [ ] Added functions to manifest
+- [ ] C89 compliant (variables at top)
+- [ ] Proper error handling
 
 FUNCTION IMPLEMENTATION REQUIREMENTS:
 - Implement EVERY function listed in the Manifest "functions" section
@@ -2333,6 +2666,54 @@ FUNCTION IMPLEMENTATION REQUIREMENTS:
 4. **Constants:**
    - If you need a constant value that's not an enum, use `#define` or literal values
    - Do NOT create enum values to represent constants
+
+SOURCE FILE DOCUMENTATION (MANDATORY):
+======================================
+Implementation files MUST include Doxygen comments.
+
+FILE-LEVEL (Required at top):
+```c
+/**
+ * @file {module_name.lower()}_driver.c
+ * @brief {module_name} peripheral driver implementation
+ * @details Complete implementation including initialization, configuration,
+ *          and operational functions.
+ */
+```
+
+FUNCTION DOCUMENTATION:
+Public API functions (from manifest):
+```c
+/**
+ * @brief [Brief description from manifest]
+ *
+ * [Detailed implementation notes, register access sequence, timing]
+ *
+ * @param param Description
+ * @return status_t Status code
+ * @retval STATUS_OK Success
+ * @retval STATUS_ERROR Failure description
+ */
+void Module_Function(param_type param) {{ ... }}
+```
+
+Static/internal functions:
+```c
+/**
+ * @brief [Purpose of helper function]
+ * @internal
+ */
+static return_type helper_func(type param) {{ ... }}
+```
+
+VALIDATION CHECKLIST - VERIFY BEFORE COMPLETION:
+================================================
+If IOMM is in dependencies, your code MUST have:
+- [ ] #include "iomm_driver.h" at top
+- [ ] XXX_EnablePins() function(s) implemented
+- [ ] EnablePins calls IOMM_Unlock(), IOMM_ConfigurePin/ConfigurePins(), IOMM_Lock()
+- [ ] EnablePins function(s) added to manifest
+- [ ] No hardcoded function names (all from manifest)
 
 Wrap output in a C code block.
 

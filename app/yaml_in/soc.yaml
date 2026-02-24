@@ -546,22 +546,96 @@ soc:
     regs_ref: LIN
     clock_ref: VCLK
     x-ext:
-      init:
-        - { reg: "SCIGCR0", op: set_bits, value: "0x1" }
-        - { reg: "SCIGCR1", op: clear_bits, value: "0x0" }
-        - { reg: "SCIGCR1", op: write, value: "0x00000000" }
-        - { reg: "SCIPIO0", op: write, value: "0x3" }
-        - { reg: "SCIGCR1", op: write, value: "0x00000000" }
-        - { reg: "SCIGCR1", op: write, value: "0x00000000" }
-        - { reg: "SCIGCR1", op: set_bits, value: "0x1" }
-        - { reg: "BRS", op: write, value: "0x00000000" }
-        - { reg: "MBRS", op: set_bits, value: "0x00000000" }
-        - { reg: "SCIGCR1", op: write, value: "0x1" }
-        - { reg: "SCIGCR1", op: write, value: "0x00000000" }
-        - { reg: "SCIGCR1", op: set_bits, value: "0x1" }
-        - { reg: "SCIGCR1", op: set_bits, value: "0x1" }
-        - { reg: "LINMASK", op: write, value: "0x00000000" }
-        - { reg: "SCIGCR1", op: set_bits, value: "0x1" }
+      init_sequence:
+        - step: 1
+          description: "Enable peripheral clock"
+          action: clock_enable
+          clock_domain: VCLK
+
+        - step: 2
+          description: "Reset module"
+          registers:
+            - { name: SCIGCR0, value: 0x00000000, comment: "Put in reset" }
+            - { name: SCIGCR0, value: 0x00000001, comment: "Release from reset" }
+
+        - step: 3
+          description: "Clear all interrupts"
+          registers:
+            - { name: SCICLEARINT, value: 0xFFFFFFFF }
+            - { name: SCICLEARINTLVL, value: 0xFFFFFFFF }
+
+        - step: 4
+          description: "Configure SCIPIO registers (pin electrical properties)"
+          critical: true
+          note: "MANDATORY for LIN/SCI TX/RX functionality"
+          registers:
+            - name: SCIPIO0
+              value: 0x00000006
+              comment: "TX (bit 2) and RX (bit 1) in SCI functional mode"
+              bitfields:
+                - { bit: 2, value: 1, description: "TX pin function = SCI mode" }
+                - { bit: 1, value: 1, description: "RX pin function = SCI mode" }
+
+            - name: SCIPIO1
+              value: 0x00000000
+              comment: "Pin directions (handled by SCI module)"
+              bitfields:
+                - { bit: 2, value: 0, description: "TX direction" }
+                - { bit: 1, value: 0, description: "RX direction" }
+
+            - name: SCIPIO3
+              value: 0x00000000
+              comment: "Pin output default values"
+
+            - name: SCIPIO6
+              value: 0x00000000
+              comment: "Open drain disable (use push-pull)"
+              bitfields:
+                - { bit: 2, value: 0, description: "TX push-pull mode" }
+                - { bit: 1, value: 0, description: "RX push-pull mode" }
+
+            - name: SCIPIO7
+              value: 0x00000000
+              comment: "Pull resistors disabled"
+              bitfields:
+                - { bit: 2, value: 0, description: "TX pulls disabled" }
+                - { bit: 1, value: 0, description: "RX pulls disabled" }
+
+            - name: SCIPIO8
+              value: 0x00000006
+              comment: "Pull-up select (if enabled by SCIPIO7)"
+              bitfields:
+                - { bit: 2, value: 1, description: "TX pull-up select" }
+                - { bit: 1, value: 1, description: "RX pull-up select" }
+
+        - step: 5
+          description: "Configure communication parameters"
+          registers:
+            - name: SCIGCR1
+              value: 0x03000022
+              comment: "SCI mode, TX/RX enable, internal clock, async timing"
+              bitfields:
+                - { bit: 25, value: 1, description: "Enable transmitter" }
+                - { bit: 24, value: 1, description: "Enable receiver" }
+                - { bit: 6, value: 0, description: "SCI mode (not LIN)" }
+                - { bit: 5, value: 1, description: "Internal clock" }
+                - { bit: 1, value: 1, description: "Asynchronous timing" }
+
+        - step: 6
+          description: "Set data format"
+          registers:
+            - name: SCIFORMAT
+              value: 0x00000007
+              comment: "8-bit data (8-1=7)"
+
+        - step: 7
+          description: "Enable module"
+          registers:
+            - name: SCIGCR1
+              operation: or_mask
+              value: 0x00000080
+              comment: "Set SWnRST bit (bit 7) to enable"
+
       dma_refs:
       -
         channel: RX_DMA
@@ -776,18 +850,95 @@ soc:
     regs_ref: SCI
     clock_ref: VCLK
     x-ext:
-      init:
-        - { reg: "SCIGCR0", op: set_bits, value: "1" }
-        - { reg: "SCIGCR1", op: set_bits, value: "0" }
-        - { reg: "SCIGCR1", op: write, value: "0x00000000" }
-        - { reg: "SCIPIO0", op: write, value: "0x00000000" }
-        - { reg: "BRS", op: write, value: "0x00000000" }
-        - { reg: "SCIGCR1", op: write, value: "1" }
-        - { reg: "SCIGCR1", op: set_bits, value: "1" }
-        - { reg: "SCIGCR1", op: set_bits, value: "1" }
-        - { reg: "SCIGCR1", op: set_bits, value: "1" }
-        - { reg: "SCIGCR1", op: set_bits, value: "1" }
-        - { reg: "SCIGCR1", op: set_bits, value: "1" }
+      init_sequence:
+        - step: 1
+          description: "Enable peripheral clock"
+          action: clock_enable
+          clock_domain: VCLK
+
+        - step: 2
+          description: "Reset module"
+          registers:
+            - { name: SCIGCR0, value: 0x00000000, comment: "Put in reset" }
+            - { name: SCIGCR0, value: 0x00000001, comment: "Release from reset" }
+
+        - step: 3
+          description: "Clear all interrupts"
+          registers:
+            - { name: SCICLEARINT, value: 0xFFFFFFFF }
+            - { name: SCICLEARINTLVL, value: 0xFFFFFFFF }
+
+        - step: 4
+          description: "Configure SCIPIO registers (pin electrical properties)"
+          critical: true
+          note: "MANDATORY for SCI TX/RX functionality"
+          registers:
+            - name: SCIPIO0
+              value: 0x00000006
+              comment: "TX (bit 2) and RX (bit 1) in SCI functional mode"
+              bitfields:
+                - { bit: 2, value: 1, description: "TX pin function = SCI mode" }
+                - { bit: 1, value: 1, description: "RX pin function = SCI mode" }
+
+            - name: SCIPIO1
+              value: 0x00000000
+              comment: "Pin directions (handled by SCI module)"
+              bitfields:
+                - { bit: 2, value: 0, description: "TX direction" }
+                - { bit: 1, value: 0, description: "RX direction" }
+
+            - name: SCIPIO3
+              value: 0x00000000
+              comment: "Pin output default values"
+
+            - name: SCIPIO6
+              value: 0x00000000
+              comment: "Open drain disable (use push-pull)"
+              bitfields:
+                - { bit: 2, value: 0, description: "TX push-pull mode" }
+                - { bit: 1, value: 0, description: "RX push-pull mode" }
+
+            - name: SCIPIO7
+              value: 0x00000000
+              comment: "Pull resistors disabled"
+              bitfields:
+                - { bit: 2, value: 0, description: "TX pulls disabled" }
+                - { bit: 1, value: 0, description: "RX pulls disabled" }
+
+            - name: SCIPIO8
+              value: 0x00000006
+              comment: "Pull-up select (if enabled by SCIPIO7)"
+              bitfields:
+                - { bit: 2, value: 1, description: "TX pull-up select" }
+                - { bit: 1, value: 1, description: "RX pull-up select" }
+
+        - step: 5
+          description: "Configure communication parameters"
+          registers:
+            - name: SCIGCR1
+              value: 0x03000022
+              comment: "TX/RX enable, internal clock, async timing"
+              bitfields:
+                - { bit: 25, value: 1, description: "Enable transmitter" }
+                - { bit: 24, value: 1, description: "Enable receiver" }
+                - { bit: 5, value: 1, description: "Internal clock" }
+                - { bit: 1, value: 1, description: "Asynchronous timing" }
+
+        - step: 6
+          description: "Set data format"
+          registers:
+            - name: SCIFORMAT
+              value: 0x00000007
+              comment: "8-bit data (8-1=7)"
+
+        - step: 7
+          description: "Enable module"
+          registers:
+            - name: SCIGCR1
+              operation: or_mask
+              value: 0x00000080
+              comment: "Set SWnRST bit (bit 7) to enable"
+
       dma_refs:
       -
         channel: SCI_RX_DMA

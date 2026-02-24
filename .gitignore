@@ -21,6 +21,7 @@ app/board/
 app/drivers/
 app/examples/
 app/yaml_out/
+app/Windows_SCI_Working/
 
 # Claude Code artifacts
 .claude/

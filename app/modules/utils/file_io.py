@@ -124,6 +124,11 @@ def split_and_write_files(raw_text: str, out_dir: Path) -> tuple[List[Path], str
             raise RuntimeError(f"Refusing to write outside out_dir: {target}")
 
         target.parent.mkdir(parents=True, exist_ok=True)
+
+        # Ensure content ends with a single newline to avoid compiler warnings
+        if content and not content.endswith('\n'):
+            content += '\n'
+
         target.write_text(content, encoding="utf-8")
         written.append(target)
 
@@ -143,14 +148,27 @@ def write_doxyfile(out_root: Path, project_name: str = "RM46 BSP (Generated)") -
             PROJECT_NAME           = "{project_name}"
             OUTPUT_DIRECTORY       = docs
 
-            # Where the generated BSP lives (relative to this Doxyfile)
-            INPUT                  = .
+            # Only include the actual BSP driver files (relative to Doxyfile location)
+            # This prevents build artifacts and intermediate files from cluttering the docs
+            INPUT                  = ../include \\
+                                     ../source \\
+                                     ../main.c
             FILE_PATTERNS          = *.h *.c *.dox
-            RECURSIVE              = YES
+            RECURSIVE              = NO
 
-            # Keep it simple for now
+            # Exclude patterns (in case any subdirectories exist)
+            EXCLUDE_PATTERNS       = */docs/* */_artifacts/*
+
+            # Documentation extraction settings
+            EXTRACT_ALL            = YES
+            EXTRACT_STATIC         = YES
+
+            # Output settings
             GENERATE_HTML          = YES
             GENERATE_LATEX         = NO
+            GENERATE_TREEVIEW      = YES
+
+            # Warning settings
             QUIET                  = NO
             WARN_IF_UNDOCUMENTED   = YES
             WARN_IF_DOC_ERROR      = YES

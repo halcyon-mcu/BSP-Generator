@@ -43,11 +43,13 @@ sources:
       encoding: "linear - 1"
       note: "Actual divider = ODPLL (0 reserved)"
     default_config:
-      nr: 5
-      nf: 120
-      r: 1
-      odpll: 2
-      expected_output_hz: 160000000
+      nr: 5       # Reference divider (actual divider = 6)
+      nf: 164     # Feedback multiplier (was 120)
+      r: 0        # Post divider 2^0 = 1 (was 1 → 2^1 = 2)
+      odpll: 2    # Output divider = 2
+      expected_output_hz: 440000000  # PLLCLK = 16MHz × 165 / 6 = 440MHz
+      # HCLK = 440MHz / 2 = 220MHz
+      # VCLK = 220MHz / 2 = 110MHz (matches HALCOGEN)
 - name: PLL2
   type: pll
   parent: OSCIN

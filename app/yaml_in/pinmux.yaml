@@ -245,17 +245,6 @@ pins:
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR7", bit: 12 } }
 
   - package_pin: 39
-    name: "N2HET1[06]"
-    board:
-      net: "N2HET1[6]/SCIRX"
-    functions:
-      - { af: "0", signal: "N2HET1[06]", mux: { register: "PINMMR7", bit: 16 } }
-      - { af: "1", signal: "SCIRX", mux: { register: "PINMMR7", bit: 17 } }
-      - { af: "2", signal: "EPWM5A", mux: { register: "PINMMR7", bit: 18 } }
-      - { af: "3", signal: "RESERVED", mux: { register: "PINMMR7", bit: 19 } }
-      - { af: "4", signal: "RESERVED", mux: { register: "PINMMR7", bit: 20 } }
-
-  - package_pin: 4
     name: "N2HET1[13]"
     board:
       net: "N2HET1[13]/SCITX"
@@ -265,6 +254,17 @@ pins:
       - { af: "2", signal: "EPWM5B", mux: { register: "PINMMR8", bit: 2 } }
       - { af: "3", signal: "RESERVED", mux: { register: "PINMMR8", bit: 3 } }
       - { af: "4", signal: "RESERVED", mux: { register: "PINMMR8", bit: 4 } }
+
+  - package_pin: 4
+    name: "MIBSPI3NCS[2]"
+    board:
+      net: "MIBSPI3NCS[2]/I2C_SDA"
+    functions:
+      - { af: "0", signal: "MIBSPI3NCS[2]", mux: { register: "PINMMR0", bit: 24 } }
+      - { af: "1", signal: "I2C_SDA", mux: { register: "PINMMR0", bit: 25 } }
+      - { af: "2", signal: "N2HET1[27]", mux: { register: "PINMMR0", bit: 26 } }
+      - { af: "3", signal: "nTZ2", mux: { register: "PINMMR0", bit: 27 } }
+      - { af: "4", signal: "RESERVED", mux: { register: "PINMMR0", bit: 28 } }
 
   - package_pin: 40
     name: "MIBSPI1NCS[2]"
@@ -411,15 +411,15 @@ pins:
       - { af: "4", signal: "ECAP6", mux: { register: "PINMMR13", bit: 28 } }
 
   - package_pin: 38
-    name: "N2HET1[08]"
+    name: "N2HET1[06]"
     board:
-      net: "N2HET1[08]"
+      net: "N2HET1[06]/SCIRX"
     functions:
-      - { af: "0", signal: "N2HET1[08]", mux: { register: "PINMMR14", bit: 0 } }
-      - { af: "1", signal: "MIBSPI1SIMO[1]", mux: { register: "PINMMR14", bit: 1 } }
-      - { af: "2", signal: "MII_TXD[3]", mux: { register: "PINMMR14", bit: 2 } }
-      - { af: "3", signal: "USB1.OVERCURRENT", mux: { register: "PINMMR14", bit: 3 } }
-      - { af: "4", signal: "RESERVED", mux: { register: "PINMMR14", bit: 4 } }
+      - { af: "0", signal: "N2HET1[06]", mux: { register: "PINMMR7", bit: 16 } }
+      - { af: "1", signal: "SCIRX", mux: { register: "PINMMR7", bit: 17 } }
+      - { af: "2", signal: "EPWM5A", mux: { register: "PINMMR7", bit: 18 } }
+      - { af: "3", signal: "RESERVED", mux: { register: "PINMMR7", bit: 19 } }
+      - { af: "4", signal: "RESERVED", mux: { register: "PINMMR7", bit: 20 } }
 
   - package_pin: 127
     name: "N2HET1[28]"

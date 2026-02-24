@@ -20,6 +20,10 @@ from typing import Dict, List, Optional, Set, Any
 
 logger = logging.getLogger(__name__)
 
+# Core system modules that must always be initialized directly (not commented out)
+# These are essential infrastructure modules that peripheral drivers depend on
+CORE_SYSTEM_MODULES = {'SYSTEM', 'PLL', 'IOMM', 'VIM', 'PCR'}
+
 
 # ==============================================================================
 # DATA STRUCTURES
@@ -438,6 +442,46 @@ def _find_cycle(graph: DependencyGraph, suspected_nodes: List[str]) -> Optional[
 # MAIN.C GENERATION
 # ==============================================================================
 
+def find_enable_pins_functions(manifest: dict, module_name: str) -> list:
+    """
+    Discover EnablePins functions for a module from manifest.
+
+    This function queries the manifest to find any pin enable functions
+    that have been generated for a given module. These functions configure
+    IOMM pin multiplexing for the peripheral.
+
+    Args:
+        manifest: The BSP manifest containing api_catalog
+        module_name: Name of the module to query (e.g., "SCI", "GIO")
+
+    Returns:
+        List of dicts with keys: name, prototype, brief
+        Returns empty list if no EnablePins functions found or manifest is None
+    """
+    if not manifest:
+        return []
+
+    api_catalog = manifest.get('api_catalog', {})
+    module_manifest = api_catalog.get(module_name, {})
+    functions = module_manifest.get('functions', [])
+
+    enable_pins_funcs = []
+
+    for func in functions:
+        func_name = func.get('name', '')
+        func_proto = func.get('prototype', '')
+
+        # Check if this is an EnablePins function
+        if 'EnablePins' in func_name or 'EnablePins' in func_proto:
+            enable_pins_funcs.append({
+                'name': func_name,
+                'prototype': func_proto,
+                'brief': func.get('brief', func.get('description', ''))
+            })
+
+    return enable_pins_funcs
+
+
 def generate_main_c(
     init_order: InitOrder,
     graph: DependencyGraph,
@@ -539,11 +583,38 @@ def generate_main_c(
         else:
             lines.append(f"    /* Initialize {module_name} (no dependencies) */")
 
-        # Call init function
         init_func = node.init_function
         if not init_func.endswith("()"):
             init_func += "()"
-        lines.append(f"    {init_func};")
+
+        # Check if this is a core system module or peripheral
+        if module_name.upper() in CORE_SYSTEM_MODULES:
+            # Core system - always call directly
+            lines.append(f"    {init_func};")
+        else:
+            # Peripheral - add EnablePins comment prompts if available
+            enable_pins_funcs = find_enable_pins_functions(manifest, module_name)
+
+            if enable_pins_funcs:
+                lines.append("")
+                lines.append(f"    /* TODO: Configure pins for {module_name} before use */")
+                lines.append(f"    /* Uncomment the appropriate EnablePins function(s): */")
+
+                for func in enable_pins_funcs:
+                    func_name = func.get('name', '')
+                    func_brief = func.get('brief', '')
+
+                    lines.append(f"    /* - {func_name}(); */")
+                    if func_brief:
+                        lines.append(f"    /*     {func_brief} */")
+
+                lines.append(f"    /* Then uncomment the init function: */")
+                lines.append(f"    /* {init_func}; */")
+            else:
+                # No EnablePins functions - just comment out init
+                lines.append(f"    /* TODO: Uncomment to enable {module_name} */")
+                lines.append(f"    /* {init_func}; */")
+
         lines.append("")
 
     lines.append("    /* ===== Application Code ===== */")

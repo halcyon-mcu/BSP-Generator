@@ -93,7 +93,10 @@ async def run_discovery_pass(
         enable_validation: Whether to run validation on generated files
         allowed_modules: If provided, only process modules with names in this list
     """
-    
+
+    # Track cumulative token usage for Pass 1 (across all API calls)
+    pass1_total_tokens = 0
+
     # 1. Setup Output
     include_dir = output_dir / "include"
     include_dir.mkdir(parents=True, exist_ok=True)
@@ -129,10 +132,11 @@ async def run_discovery_pass(
         if tracker:
             tracker.set_total_tasks(len(peripherals) * 2)  # manifest + header per module
 
-    async def _process_module_manifest(name: str, soc_slice: str) -> Optional[Dict[str, Any]]:
-        """Fetch JSON Manifest with retry logic"""
+    async def _process_module_manifest(name: str, soc_slice: str) -> Optional[tuple]:
+        """Fetch JSON Manifest with retry logic. Returns (manifest_dict, actual_tokens_used)"""
         from ..regeneration.retry_policy import RetryPolicy, FailureReason
         from ..regeneration.truncation_detector import detect_simple_truncation
+        from ..utils.utils import extract_usage_from_bedrock_response
 
         retry_policy = RetryPolicy(max_retries=2)  # Manifests are small, fewer retries
         current_tokens = 4096
@@ -148,6 +152,10 @@ async def run_discovery_pass(
                 prompt = build_manifest_prompt(name, soc_slice)
                 resp = await invoke_model(model, current_tokens, [{"role": "user", "content": prompt}])
                 text = extract_text_from_bedrock_response(resp)
+
+                # Extract actual token usage from API response
+                usage = extract_usage_from_bedrock_response(resp)
+                actual_tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
 
                 # Check for truncation
                 truncation_reason = detect_simple_truncation(text)
@@ -169,18 +177,18 @@ async def run_discovery_pass(
                     # JSON not found - might be truncation
                     logger.warning(f"Could not find JSON braces in manifest response for {name}")
                     logger.debug(f"Response preview: {text[:200]}")
-                    return None
+                    return (None, actual_tokens)
 
                 json_text = clean_text[start:end+1]
 
                 # Try parsing as-is first
                 try:
-                    return json.loads(json_text)
+                    return (json.loads(json_text), actual_tokens)
                 except json.JSONDecodeError:
                     # Try with cleaning
                     try:
                         cleaned_json = clean_json_string(json_text)
-                        return json.loads(cleaned_json)
+                        return (json.loads(cleaned_json), actual_tokens)
                     except json.JSONDecodeError as json_err:
                         # Log the actual JSON that failed to parse
                         logger.error(f"Manifest JSON Error {name}: {json_err}")
@@ -206,7 +214,7 @@ async def run_discovery_pass(
                         )
                         if should_retry:
                             continue
-                        return None
+                        return (None, 0)
 
             except json.JSONDecodeError as e:
                 # This shouldn't be reached now, but keep it as fallback
@@ -218,7 +226,7 @@ async def run_discovery_pass(
                 )
                 if should_retry:
                     continue
-                return None
+                return (None, 0)
 
             except Exception as e:
                 logger.error(f"Manifest Error {name}: {e}")
@@ -229,14 +237,15 @@ async def run_discovery_pass(
                 )
                 if should_retry:
                     continue
-                return None
+                return (None, 0)
 
-        return None  # Max retries exceeded
+        return (None, 0)  # Max retries exceeded
 
     async def _process_module_header(name: str, soc_slice: str, regs_slice: str) -> Optional[tuple]:
-        """Fetch C Header Content with retry logic. Returns (extracted_code, raw_response)"""
+        """Fetch C Header Content with retry logic. Returns (extracted_code, raw_response, actual_tokens_used)"""
         from ..regeneration.retry_policy import RetryPolicy, FailureReason
         from ..regeneration.truncation_detector import detect_simple_truncation
+        from ..utils.utils import extract_usage_from_bedrock_response
 
         # Get adaptive token allocation
         initial_tokens = max_tokens
@@ -257,6 +266,10 @@ async def run_discovery_pass(
                 prompt = build_reg_header_prompt(name, soc_slice, regs_slice)
                 resp = await invoke_model(model, current_tokens, [{"role": "user", "content": prompt}])
                 text = extract_text_from_bedrock_response(resp)
+
+                # Extract actual token usage from API response
+                usage = extract_usage_from_bedrock_response(resp)
+                actual_tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
 
                 # Check for truncation before parsing
                 truncation_reason = detect_simple_truncation(text)
@@ -281,10 +294,8 @@ async def run_discovery_pass(
                     end_block = code_text.find("```")
                     if end_block != -1:
                         extracted = code_text[:end_block].strip()
-                        # Record success with module count for Pass 1
-                        if token_allocator:
-                            token_allocator.record_success(f"pass1_{name}_header", current_tokens, num_modules=len(peripherals))
-                        return (extracted, text)
+                        # Return extracted code, raw text, and actual tokens used
+                        return (extracted, text, actual_tokens)
 
                 # 2. Try generic markdown
                 start_block = text.find("```")
@@ -293,21 +304,17 @@ async def run_discovery_pass(
                     end_block = code_text.find("```")
                     if end_block != -1:
                         extracted = code_text[:end_block].strip()
-                        if token_allocator:
-                            token_allocator.record_success(f"pass1_{name}_header", current_tokens, num_modules=len(peripherals))
-                        return (extracted, text)
+                        return (extracted, text, actual_tokens)
 
                 # 3. Fallback: If it looks like a header, return full text
                 if "#ifndef" in text or "typedef" in text:
                     extracted = text.replace("```c", "").replace("```", "").strip()
-                    if token_allocator:
-                        token_allocator.record_success(f"pass1_{name}_header", current_tokens, num_modules=len(peripherals))
-                    return (extracted, text)
+                    return (extracted, text, actual_tokens)
 
                 # Could not parse
                 logger.warning(f"Could not parse C code from response for {name}")
                 error_code = "// [WARN] Could not parse C code from AI response.\n/*\n" + text + "\n*/"
-                return (error_code, text)
+                return (error_code, text, actual_tokens)
 
             except Exception as e:
                 logger.error(f"Header Error {name}: {e}")
@@ -321,11 +328,11 @@ async def run_discovery_pass(
                     continue
                 else:
                     error_msg = f"// Error generating header for {name}: {e}"
-                    return (error_msg, error_msg)
+                    return (error_msg, error_msg, 0)
 
         # Max retries exceeded
         error_msg = f"// Max retries exceeded for {name}"
-        return (error_msg, error_msg)
+        return (error_msg, error_msg, 0)
 
     async def _process_module_full(periph: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         name = periph.get("name", "UNKNOWN")
@@ -427,20 +434,27 @@ async def run_discovery_pass(
         man_task = asyncio.create_task(_process_module_manifest(name, soc_slice))
         head_task = asyncio.create_task(_process_module_header(name, soc_slice, regs_slice))
 
-        man_res, head_res_tuple = await asyncio.gather(man_task, head_task)
+        man_res_tuple, head_res_tuple = await asyncio.gather(man_task, head_task)
 
-        # Unpack header result (extracted_code, raw_response)
-        if head_res_tuple:
-            head_content, head_raw = head_res_tuple
+        # Unpack manifest result (manifest_dict, tokens_used)
+        if man_res_tuple:
+            man_res, man_tokens = man_res_tuple
         else:
-            head_content, head_raw = None, None
+            man_res, man_tokens = None, 0
+
+        # Unpack header result (extracted_code, raw_response, tokens_used)
+        if head_res_tuple:
+            head_content, head_raw, head_tokens = head_res_tuple
+        else:
+            head_content, head_raw, head_tokens = None, None, 0
 
         if man_res:
             return {
                 "manifest": man_res,
                 "reg_header_content": head_content,
                 "reg_header_raw": head_raw,  # Store raw response for validation
-                "module_name": name
+                "module_name": name,
+                "tokens_used": man_tokens + head_tokens  # Sum of both API calls
             }
         return None
 
@@ -460,6 +474,10 @@ async def run_discovery_pass(
 
         if res:
             mod_name = res.get("module_name", "Unknown")
+
+            # Accumulate token usage from this module
+            tokens_used = res.get("tokens_used", 0)
+            pass1_total_tokens += tokens_used
 
             # Write register header immediately (if exists)
             header_content = res.get("reg_header_content")
@@ -579,5 +597,11 @@ async def run_discovery_pass(
     if enable_validation and validation_results:
         failed_count = sum(1 for _, vr in validation_results if not vr.is_valid)
         logger.info(f"Pass 1 Validation: {len(validation_results)} modules checked, {failed_count} failed")
+
+    # Record Pass 1 token usage ONCE at the end (cumulative for all modules)
+    if token_allocator and pass1_total_tokens > 0:
+        num_modules = len(peripherals)
+        token_allocator.record_success("pass1_discovery", pass1_total_tokens, num_modules=num_modules)
+        logger.info(f"Pass 1 Token Usage: {pass1_total_tokens:,} tokens for {num_modules} modules")
 
     return manifest
