@@ -262,3 +262,151 @@ def validate_driver_implementation(
         warnings=warnings,
         has_todos=has_todos
     )
+
+
+def validate_dependency_identifiers(module_name: str, source_code: str,
+                                   dependency_manifests: Dict) -> List[str]:
+    """
+    Validate that generated code uses only declared dependency identifiers.
+
+    Checks for:
+    - Undefined enum constants (e.g., IOMM_PIN_FUNCTION_1 instead of IOMM_PIN_FUNC_ALT1)
+    - Fabricated function names not in the manifest
+    - Common pattern mismatches
+
+    Args:
+        module_name: Name of the module being validated
+        source_code: Generated C source code
+        dependency_manifests: Dict of dependency module manifests
+
+    Returns:
+        List of error strings describing validation failures. Empty list = success.
+    """
+    errors = []
+
+    if not dependency_manifests:
+        # No dependencies to validate
+        return errors
+
+    for dep_name, dep_manifest in dependency_manifests.items():
+        # Build set of valid identifiers from manifest
+        valid_identifiers = set()
+
+        # Add all enum values
+        for type_def in dep_manifest.get('types', []):
+            if type_def.get('type') == 'enum':
+                enum_values = type_def.get('values', [])
+                valid_identifiers.update(enum_values)
+
+        # Add function names (both short and full module-prefixed names)
+        for func in dep_manifest.get('functions', []):
+            func_name = func.get('name', '')
+            if func_name:
+                # Add both "Unlock" and "IOMM_Unlock" style names
+                valid_identifiers.add(func_name)
+                if '_' not in func_name:
+                    full_name = f"{dep_name}_{func_name}"
+                    valid_identifiers.add(full_name)
+
+        # IOMM-specific validation
+        if dep_name.upper() == 'IOMM':
+            # Check for fabricated IOMM_PIN_FUNCTION_\d pattern
+            bad_pattern = re.compile(r'\bIOMM_PIN_FUNCTION_\d+\b')
+            matches = bad_pattern.findall(source_code)
+            if matches:
+                valid_names = [v for v in valid_identifiers if 'PIN_FUNC' in v]
+                errors.append(
+                    f"{module_name}: Uses undefined IOMM enum values: {set(matches)}. "
+                    f"Should use one of: {valid_names}"
+                )
+
+            # Check for other common IOMM fabrication patterns
+            # Pattern: IOMM_PIN_FUNCTION_GPIO, IOMM_PIN_FUNCTION_ALT1, etc.
+            bad_pattern2 = re.compile(r'\bIOMM_PIN_FUNCTION_(GPIO|ALT\d+)\b')
+            matches2 = bad_pattern2.findall(source_code)
+            if matches2:
+                # matches2 will be just the suffix (GPIO, ALT1, etc.)
+                full_matches = [f"IOMM_PIN_FUNCTION_{m}" for m in matches2]
+                valid_names = [v for v in valid_identifiers if 'PIN_FUNC' in v]
+                errors.append(
+                    f"{module_name}: Uses undefined IOMM enum values: {set(full_matches)}. "
+                    f"Should use one of: {valid_names}"
+                )
+
+            # Check for undefined bit field constants like IOMM_PINMMR29_8
+            bad_bit_pattern = re.compile(r'\bIOMM_PINMMR\d+_\d+\b')
+            bit_matches = bad_bit_pattern.findall(source_code)
+            if bit_matches:
+                errors.append(
+                    f"{module_name}: Uses undefined IOMM register bit constants: {set(bit_matches)}. "
+                    f"These constants are not defined in reg_iomm.h. Use direct bit shifts instead."
+                )
+
+        # PLL-specific validation (extensibility example)
+        if dep_name.upper() == 'PLL':
+            # Check for fabricated clock domain names
+            bad_clock_pattern = re.compile(r'\bCLOCKDOMAIN_[A-Z0-9_]+\b')
+            clock_matches = bad_clock_pattern.findall(source_code)
+            if clock_matches:
+                # Check if any are invalid
+                invalid_domains = [m for m in clock_matches if m not in valid_identifiers]
+                if invalid_domains:
+                    valid_domains = [v for v in valid_identifiers if v.startswith('CLOCKDOMAIN_')]
+                    errors.append(
+                        f"{module_name}: Uses undefined PLL clock domains: {set(invalid_domains)}. "
+                        f"Valid domains: {valid_domains}"
+                    )
+
+    return errors
+
+
+def validate_void_function_assignments(module_name: str, source_code: str,
+                                       dependency_manifests: Dict) -> List[str]:
+    """
+    Validate that void-returning functions are not assigned to variables.
+
+    Args:
+        module_name: Name of the module being validated
+        source_code: Generated C source code
+        dependency_manifests: Dict of dependency module manifests
+
+    Returns:
+        List of error strings for void function assignments. Empty list = success.
+    """
+    errors = []
+
+    if not dependency_manifests:
+        return errors
+
+    # Build map of function_name -> return_type
+    void_functions = {}
+    for dep_name, dep_manifest in dependency_manifests.items():
+        for func in dep_manifest.get('functions', []):
+            func_name = func.get('name', '')
+            prototype = func.get('prototype', '')
+
+            # Parse return type from prototype
+            if prototype:
+                # Extract return type (everything before function name)
+                # Example: "void IOMM_Unlock(void);"
+                parts = prototype.split('(')[0].strip().split()
+                if len(parts) >= 2:
+                    return_type = ' '.join(parts[:-1])
+                    if return_type == 'void':
+                        # Add both short and full names
+                        void_functions[func_name] = return_type
+                        if '_' not in func_name:
+                            full_name = f"{dep_name}_{func_name}"
+                            void_functions[full_name] = return_type
+
+    # Check for assignments of void functions
+    for func_name in void_functions:
+        # Pattern: "variable = FunctionName(...);"
+        pattern = rf'\w+\s*=\s*{re.escape(func_name)}\s*\('
+        if re.search(pattern, source_code):
+            errors.append(
+                f"{module_name}: Assigns return value of void function {func_name}(). "
+                f"This function returns void and should not be assigned."
+            )
+
+    return errors

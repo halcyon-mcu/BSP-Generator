@@ -43,13 +43,13 @@ sources:
       encoding: "linear - 1"
       note: "Actual divider = ODPLL (0 reserved)"
     default_config:
-      nr: 5       # Reference divider (actual divider = 6)
-      nf: 164     # Feedback multiplier (was 120)
-      r: 0        # Post divider 2^0 = 1 (was 1 → 2^1 = 2)
-      odpll: 2    # Output divider = 2
-      expected_output_hz: 440000000  # PLLCLK = 16MHz × 165 / 6 = 440MHz
-      # HCLK = 440MHz / 2 = 220MHz
-      # VCLK = 220MHz / 2 = 110MHz (matches HALCOGEN)
+      nr: 5       # Reference divider (actual divider = 6) - HALCOGEN value
+      nf: 119     # Feedback multiplier - HALCOGEN uses 120 (NF register field)
+      r: 0        # Post divider 2^0 = 1 - HALCOGEN value
+      odpll: 2    # Output divider = 2 - HALCOGEN value
+      expected_output_hz: 160000000  # PLLCLK = 16MHz × 120 / 6 / 2 = 160MHz
+      # GCLK/HCLK = 160MHz (CPU and system clock)
+      # VCLK = 160MHz / 2 = 80MHz (peripheral clock)
 - name: PLL2
   type: pll
   parent: OSCIN
@@ -127,7 +127,7 @@ x-ext:
   clock_domain_details:
     GCLK:
       description: CPU clock
-      frequency_hz: 220000000
+      frequency_hz: 160000000
       x-source:
         pdf: RM46_datasheet.pdf
         pages:
@@ -136,7 +136,7 @@ x-ext:
         confidence: high
     HCLK:
       description: System clock
-      frequency_hz: 220000000
+      frequency_hz: 160000000
       x-source:
         pdf: RM46_datasheet.pdf
         pages:
@@ -145,7 +145,7 @@ x-ext:
         confidence: high
     VCLK:
       description: Primary peripheral clock
-      frequency_hz: 110000000
+      frequency_hz: 80000000
       x-source:
         pdf: RM46_datasheet.pdf
         pages:
@@ -154,7 +154,7 @@ x-ext:
         confidence: high
     VCLK2:
       description: Secondary peripheral clock for N2HET
-      frequency_hz: 110000000
+      frequency_hz: 80000000
       x-source:
         pdf: RM46_datasheet.pdf
         pages:
@@ -163,7 +163,7 @@ x-ext:
         confidence: high
     VCLK3:
       description: Secondary peripheral clock for Ethernet/USB
-      frequency_hz: 110000000
+      frequency_hz: 80000000
       x-source:
         pdf: RM46_datasheet.pdf
         pages:
@@ -172,7 +172,7 @@ x-ext:
         confidence: high
     VCLK4:
       description: Secondary peripheral clock for ePWM/eQEP/eCAP
-      frequency_hz: 110000000
+      frequency_hz: 80000000
       x-source:
         pdf: RM46_datasheet.pdf
         pages:
@@ -181,7 +181,7 @@ x-ext:
         confidence: high
     RTICLK:
       description: RTI timer clock
-      frequency_hz: 110000000
+      frequency_hz: 80000000
       x-source:
         pdf: RM46_datasheet.pdf
         pages:

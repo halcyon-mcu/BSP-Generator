@@ -120,6 +120,221 @@ def extract_register_essentials(reg_header_path: Path, size_threshold: int = 150
 
     return optimized
 
+
+# ============================================================================
+# Function Signature Parsing for Type-Safe Dependency Usage
+# ============================================================================
+
+def parse_function_signatures(manifest: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """
+    Parse function prototypes from manifest to extract return types and parameters.
+
+    This enables Pass 2 generation to enforce exact type matching when calling
+    dependency functions (e.g., knowing IOMM_Unlock() returns void, not iomm_status_t).
+
+    Args:
+        manifest: Module manifest dict with 'functions' array
+
+    Returns:
+        Dict mapping function_name -> {
+            'return_type': str,
+            'parameters': [(param_name, param_type), ...],
+            'prototype': str (original)
+        }
+
+    Example:
+        For IOMM manifest, returns:
+        {
+            'IOMM_Unlock': {
+                'return_type': 'void',
+                'parameters': [],
+                'prototype': 'void IOMM_Unlock(void);'
+            },
+            'IOMM_ConfigurePin': {
+                'return_type': 'iomm_status_t',
+                'parameters': [('pin_number', 'uint8_t'), ('function', 'iomm_pin_function_t')],
+                'prototype': 'iomm_status_t IOMM_ConfigurePin(uint8_t pin_number, iomm_pin_function_t function);'
+            }
+        }
+    """
+    signatures = {}
+
+    for func in manifest.get('functions', []):
+        name = func.get('name')
+        if not name:
+            continue
+
+        # If structured data already exists (future enhancement), use it
+        if 'return_type' in func and 'parameters' in func:
+            signatures[name] = {
+                'return_type': func['return_type'],
+                'parameters': [(p['name'], p['type']) for p in func['parameters']],
+                'prototype': func.get('prototype', '')
+            }
+        # Otherwise, parse prototype string
+        elif 'prototype' in func:
+            proto = func['prototype'].strip()
+
+            # Parse "return_type function_name(params);"
+            # Example: "iomm_status_t IOMM_ConfigurePin(uint8_t pin_number, iomm_pin_function_t function);"
+
+            # Remove trailing semicolon
+            proto_clean = proto.rstrip(';').strip()
+
+            # Find the opening parenthesis to split return_type + func_name from params
+            paren_pos = proto_clean.find('(')
+            if paren_pos == -1:
+                logger.warning(f"Could not parse prototype: {proto}")
+                continue
+
+            # Extract everything before '(' and split to get return type and function name
+            before_paren = proto_clean[:paren_pos].strip()
+            parts = before_paren.split()
+
+            if len(parts) < 2:
+                # Malformed prototype
+                logger.warning(f"Could not parse return type/name from: {before_paren}")
+                continue
+
+            # Last part is function name, everything before is return type
+            func_name = parts[-1]
+            return_type = ' '.join(parts[:-1])
+
+            # Extract parameters from within parentheses
+            close_paren_pos = proto_clean.rfind(')')
+            if close_paren_pos == -1:
+                logger.warning(f"Could not find closing paren in: {proto}")
+                continue
+
+            params_str = proto_clean[paren_pos+1:close_paren_pos].strip()
+
+            # Parse parameters
+            parameters = []
+            if params_str and params_str != 'void':
+                # Split by comma
+                param_list = params_str.split(',')
+                for param in param_list:
+                    param = param.strip()
+                    # Parse "type name" or "type* name" or "const type* name"
+                    # Simple approach: last token is name, rest is type
+                    param_parts = param.split()
+                    if len(param_parts) >= 2:
+                        param_name = param_parts[-1]
+                        # Remove pointer/array from param name if present
+                        if '*' in param_name:
+                            param_name = param_name.replace('*', '')
+                        if '[' in param_name:
+                            param_name = param_name[:param_name.index('[')]
+                        param_type = ' '.join(param_parts[:-1])
+                        parameters.append((param_name, param_type))
+
+            signatures[func_name] = {
+                'return_type': return_type,
+                'parameters': parameters,
+                'prototype': proto
+            }
+
+    return signatures
+
+
+def extract_header_api_snippets(header_path: Path) -> Dict[str, str]:
+    """
+    Extract key API declarations from Pass 1 header for use as concrete examples.
+
+    Args:
+        header_path: Path to the Pass 1 header file (e.g., iomm_driver.h)
+
+    Returns:
+        Dict with keys:
+        - 'enums': All enum typedef declarations (full text)
+        - 'functions': Sample function prototypes (up to 10)
+    """
+    if not header_path.exists():
+        return {}
+
+    import re
+    try:
+        content = header_path.read_text(encoding='utf-8')
+    except Exception as e:
+        logger.warning(f"Could not read header {header_path}: {e}")
+        return {}
+
+    snippets = {}
+
+    # Extract enum typedefs (complete declarations)
+    enum_pattern = r'typedef\s+enum\s*\{[^}]+\}\s*\w+;'
+    enum_matches = re.finditer(enum_pattern, content, re.MULTILINE | re.DOTALL)
+    enum_snippets = []
+    for match in enum_matches:
+        enum_snippets.append(match.group(0))
+    snippets['enums'] = '\n\n'.join(enum_snippets)
+
+    # Extract function prototypes (look for lines ending with ");")
+    func_pattern = r'^[\w\s\*]+\s+\w+\([^)]*\);'
+    func_matches = re.finditer(func_pattern, content, re.MULTILINE)
+    func_snippets = []
+    for match in func_matches:
+        line = match.group(0).strip()
+        # Skip commented lines
+        if not line.startswith('//') and not line.startswith('/*'):
+            func_snippets.append(line)
+    snippets['functions'] = '\n'.join(func_snippets[:10])  # Limit to first 10
+
+    return snippets
+
+
+def format_dependency_headers(manifest: Dict, output_dir: Path, dependency_names: List[str]) -> str:
+    """
+    Extract actual header snippets for dependencies to show EXACT API declarations.
+
+    Args:
+        manifest: Full BSP manifest with api_catalog
+        output_dir: Output directory containing include/ folder
+        dependency_names: List of dependency module names to extract
+
+    Returns:
+        Formatted string with header excerpts showing exact enum/function declarations
+    """
+    lines = []
+    lines.append("\n" + "="*70)
+    lines.append("DEPENDENCY API DECLARATIONS (FROM PASS 1 HEADERS)")
+    lines.append("="*70)
+    lines.append("These are the ACTUAL declarations from generated headers.")
+    lines.append("You MUST use these EXACT identifier names.\n")
+
+    include_dir = output_dir / "include"
+    api_catalog = manifest.get("api_catalog", {})
+
+    for dep_name in dependency_names:
+        if dep_name not in api_catalog:
+            continue
+
+        dep_manifest = api_catalog[dep_name]
+        header_file = dep_manifest.get('driver_header_file', f"{dep_name.lower()}_driver.h")
+        header_path = include_dir / header_file
+
+        if not header_path.exists():
+            logger.info(f"Header not found for {dep_name}: {header_path}")
+            continue
+
+        lines.append(f"\n--- {dep_name} Header Excerpts ({header_file}) ---")
+        snippets = extract_header_api_snippets(header_path)
+
+        if snippets.get('enums'):
+            lines.append(f"\nEnum Declarations:")
+            lines.append("```c")
+            lines.append(snippets['enums'])
+            lines.append("```")
+
+        if snippets.get('functions'):
+            lines.append(f"\nFunction Prototypes:")
+            lines.append("```c")
+            lines.append(snippets['functions'])
+            lines.append("```")
+
+    return '\n'.join(lines)
+
+
 def build_pll_bus_slice(bus_data: Dict[str, Any]) -> str:
     """
     Extract a focused bus.yaml slice for PLL context.
@@ -369,7 +584,7 @@ async def run_implementation_pass(
 
         return ("error", f"Max retries exceeded for {mod_name} header", "")
 
-    async def _generate_source(mod_name: str, mod_data: Dict, reg_content: str, soc_slice: str, bus_slice: str, pinmux_slice: str, instance_pin_config: dict = None, dependency_manifests: dict = None):
+    async def _generate_source(mod_name: str, mod_data: Dict, reg_content: str, soc_slice: str, bus_slice: str, pinmux_slice: str, instance_pin_config: dict = None, dependency_manifests: dict = None, dependency_signatures: dict = None):
         """Generate driver source with retry logic"""
         from ..regeneration.retry_policy import RetryPolicy, FailureReason
         from ..regeneration.truncation_detector import detect_simple_truncation
@@ -385,7 +600,19 @@ async def run_implementation_pass(
                     print(f"  [retry] Pass2 source {mod_name} - Attempt {attempt + 1} (tokens: {current_tokens})")
 
             try:
-                prompt = build_pass2_driver_c_prompt(mod_name, json.dumps(mod_data, indent=2), reg_content, soc_slice, bus_slice, pinmux_slice, manifest=manifest, instance_pin_config=instance_pin_config, dependency_manifests=dependency_manifests)
+                # Extract header snippets from Pass 1 dependencies for ground truth
+                header_snippets = ""
+                if mod_data and 'dependencies' in mod_data:
+                    try:
+                        header_snippets = format_dependency_headers(
+                            manifest,
+                            output_dir,
+                            mod_data.get('dependencies', [])
+                        )
+                    except Exception as e:
+                        logger.warning(f"Could not extract header snippets: {e}")
+
+                prompt = build_pass2_driver_c_prompt(mod_name, json.dumps(mod_data, indent=2), reg_content, soc_slice, bus_slice, pinmux_slice, manifest=manifest, instance_pin_config=instance_pin_config, dependency_manifests=dependency_manifests, dependency_signatures=dependency_signatures, header_snippets=header_snippets)
                 resp = await invoke_model(model, current_tokens, [{"role": "user", "content": prompt}])
                 text = extract_text_from_bedrock_response(resp)
 
@@ -470,26 +697,36 @@ async def run_implementation_pass(
         instance_pin_config = None
         try:
             from .pin_config_builder import extract_peripheral_instances
+
+            # Extract IOMM manifest for enum value lookup
+            iomm_manifest = None
+            if manifest and 'api_catalog' in manifest:
+                iomm_manifest = manifest['api_catalog'].get('IOMM')
+
             instance_pin_config = extract_peripheral_instances(
                 board_data=soc_data,
                 pinmux_data=pinmux_data,
-                peripheral=mod_name
+                peripheral=mod_name,
+                iomm_manifest=iomm_manifest
             )
         except Exception as e:
             if tracker:
                 tracker.add_message(f"Warning: Could not extract pin config for {mod_name}: {e}", level="warning")
             # Continue with None - graceful degradation
 
-        # 4b. Collect dependency manifests
+        # 4b. Collect dependency manifests and parse function signatures
         dependency_manifests = {}
+        dependency_signatures = {}  # NEW: parsed function signatures for type safety
         if mod_data and 'dependencies' in mod_data:
             for dep_name in mod_data['dependencies']:
                 if dep_name in api_catalog:
                     dependency_manifests[dep_name] = api_catalog[dep_name]
+                    # Parse function signatures for exact type matching
+                    dependency_signatures[dep_name] = parse_function_signatures(api_catalog[dep_name])
 
         # 5. Launch Parallel Gens
         t_h = asyncio.create_task(_generate_header(mod_name, mod_data, reg_content))
-        t_c = asyncio.create_task(_generate_source(mod_name, mod_data, reg_content, soc_slice, bus_slice, pinmux_slice, instance_pin_config, dependency_manifests))
+        t_c = asyncio.create_task(_generate_source(mod_name, mod_data, reg_content, soc_slice, bus_slice, pinmux_slice, instance_pin_config, dependency_manifests, dependency_signatures))
         
         results = await asyncio.gather(t_h, t_c)
         
@@ -561,6 +798,71 @@ async def run_implementation_pass(
                 raw_responses.append(raw_response)
                 if tracker:
                     tracker.increment_success()
+
+                # Validate dependency API usage (comprehensive validation)
+                validation_errors = []
+
+                # Run comprehensive dependency identifier validation
+                # dependency_manifests is a function parameter, always defined (but may be None or empty dict)
+                if dependency_manifests:
+                    try:
+                        from ..validation.pass2_validator import validate_dependency_identifiers, validate_void_function_assignments
+
+                        # Check for undefined identifiers
+                        validation_errors.extend(
+                            validate_dependency_identifiers(mod_name, clean_code, dependency_manifests)
+                        )
+
+                        # Check for void function assignments
+                        validation_errors.extend(
+                            validate_void_function_assignments(mod_name, clean_code, dependency_manifests)
+                        )
+                    except Exception as e:
+                        # Log validation errors but don't crash generation
+                        logger.warning(f"Error during dependency validation for {mod_name}: {e}")
+                        if tracker:
+                            tracker.add_message(f"Validation error: {e}", level="warning")
+
+                if validation_errors:
+                    logger.warning(f"{mod_name} driver: Dependency API validation errors detected:")
+                    for error in validation_errors:
+                        logger.warning(f"  - {error}")
+                    if tracker:
+                        for error in validation_errors:
+                            tracker.add_message(error, level="warning")
+
+                # Validate reserved keyword usage (safety net for TI compiler compatibility)
+                reserved_keywords_errors = []
+
+                # Check for 'interrupt' as a parameter name in function declarations/definitions
+                # Pattern: type function_name(... interrupt_t interrupt)
+                if re.search(r'\w+\s+\w+\([^)]*\w+_t\s+interrupt\s*[,)]', clean_code):
+                    reserved_keywords_errors.append(
+                        "'interrupt' used as parameter name - this is a TI compiler reserved keyword. "
+                        "Use 'int_type', 'int_flag', or 'int_event' instead."
+                    )
+
+                # Check for 'register' as a parameter name (less common but still prohibited)
+                if re.search(r'\w+\s+\w+\([^)]*\w+\s+register\s*[,)]', clean_code):
+                    reserved_keywords_errors.append(
+                        "'register' used as parameter name - this is a C reserved keyword. "
+                        "Use 'reg_value', 'reg_val', or 'register_value' instead."
+                    )
+
+                # Check for 'inline' as a variable name
+                if re.search(r'(?:uint\d+_t|int\d+_t|bool|char)\s+inline\s*[;=]', clean_code):
+                    reserved_keywords_errors.append(
+                        "'inline' used as variable name - this is a C99 reserved keyword. "
+                        "Use a different name."
+                    )
+
+                if reserved_keywords_errors:
+                    logger.error(f"{mod_name} driver: Reserved keyword usage detected (WILL CAUSE COMPILATION ERRORS):")
+                    for error in reserved_keywords_errors:
+                        logger.error(f"  - {error}")
+                    if tracker:
+                        for error in reserved_keywords_errors:
+                            tracker.add_message(f"{mod_name}: {error}", level="error")
 
         # Run validation if enabled
         if enable_validation and written_files and soc_data and regs_data:

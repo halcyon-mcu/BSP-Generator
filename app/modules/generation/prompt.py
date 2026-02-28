@@ -125,15 +125,38 @@ CODING RULES:
 - Do NOT use C99-only features (no mixed declarations/statements, no variable-length arrays, no designated initializers where not supported).
 
 RESERVED KEYWORD AVOIDANCE (CRITICAL for TI ARM Compiler):
-- Do NOT use reserved keywords as function parameter names or local variable names.
-- Prohibited keywords include:
-  * 'interrupt' - causes "invalid storage class for a parameter" errors
+- NEVER use reserved keywords as function parameter names or local variable names.
+- The TI ARM compiler treats certain keywords specially, causing compilation failures.
+- Prohibited keywords that MUST NOT be used as parameter/variable names:
+  * 'interrupt' - causes "invalid storage class for a parameter" and "unnamed prototyped parameters" errors
   * 'inline', 'restrict', 'register' (as variable names)
+  * 'auto', 'extern', 'static', 'typedef', 'volatile' (as variable names in some contexts)
   * Any compiler-specific keywords
-- Use alternative names instead:
-  * Instead of 'interrupt': use 'flags', 'int_flags', 'irq_flags', 'event', etc.
-  * Instead of 'register': use 'reg_value', 'reg', 'config', etc.
-- This applies to ALL function signatures in headers and implementations.
+- REQUIRED alternative names:
+  * Instead of 'interrupt': use 'int_type', 'int_flag', 'int_event', 'irq_type', 'event_type'
+  * Instead of 'register': use 'reg_value', 'reg_val', 'register_value', 'config'
+  * Instead of 'callback': prefer 'callback_func', 'handler', 'callback_fn' (not required, but improves clarity)
+- This applies to:
+  * ALL function parameter names in both header (.h) and implementation (.c) files
+  * ALL local variable names
+  * ALL struct/union member names (where applicable)
+- EXAMPLES:
+
+  // WRONG - will cause compilation error:
+  void FOO_EnableInterrupt(foo_interrupt_t interrupt);
+  void FOO_EnableInterrupt(foo_interrupt_t interrupt) { /* ... */ }
+
+  // CORRECT:
+  void FOO_EnableInterrupt(foo_interrupt_t int_type);
+  void FOO_EnableInterrupt(foo_interrupt_t int_type) { /* ... */ }
+
+  // WRONG - will cause compilation error:
+  void BAR_WriteReg(uint32_t register);
+
+  // CORRECT:
+  void BAR_WriteReg(uint32_t reg_value);
+
+- VERIFICATION: Before generating any function, check all parameter names against this list.
 
 DOCUMENTATION / DOXYGEN RULES (required):
 - All generated C header (.h) and source (.c) files MUST use Doxygen-style comments for public APIs and types.
@@ -2142,7 +2165,71 @@ OUTPUT:
 Return ONLY the C code content.
 """
 
-def build_pass2_driver_c_prompt(module_name: str, manifest_json: str, reg_header_content: str, soc_slice: str = "", bus_slice: str = "", pinmux_yaml: str = "", manifest: dict = None, instance_pin_config: dict = None, dependency_manifests: dict = None) -> str:
+def format_dependency_signatures(dependency_signatures: dict) -> str:
+    """
+    Format parsed function signatures for explicit type-safe usage instructions.
+
+    Args:
+        dependency_signatures: Dict mapping dep_name -> {func_name -> {return_type, parameters, prototype}}
+
+    Returns:
+        Formatted string showing exact function signatures with type information
+    """
+    if not dependency_signatures:
+        return "No dependency signatures available."
+
+    output = []
+
+    for dep_name, functions in dependency_signatures.items():
+        output.append(f"\n{dep_name.upper()} Module Functions:")
+        output.append("-" * (len(dep_name) + 17))
+
+        for func_name, sig_info in functions.items():
+            ret_type = sig_info['return_type']
+            params = sig_info['parameters']
+            proto = sig_info['prototype']
+
+            output.append(f"\nFunction: {func_name}")
+            output.append(f"  - Prototype: {proto}")
+
+            # Add specific guidance based on return type
+            ret_type_line = f"  - Return Type: {ret_type}"
+            if ret_type == 'void':
+                ret_type_line += " (DO NOT ASSIGN TO VARIABLE)"
+            elif '_status_t' in ret_type or ret_type.endswith('_t'):
+                ret_type_line += " (MUST CHECK RETURN VALUE)"
+            output.append(ret_type_line)
+
+            # Format parameters
+            if not params:
+                output.append("  - Parameters: none")
+            else:
+                output.append("  - Parameters:")
+                for param_name, param_type in params:
+                    param_line = f"    * {param_type} {param_name}"
+                    # Add guidance for enum types
+                    if '_t' in param_type and not param_type.startswith('uint') and not param_type.startswith('int'):
+                        param_line += " (ENUM TYPE - use named constants)"
+                    output.append(param_line)
+
+            # Add usage example
+            if ret_type == 'void':
+                if not params:
+                    output.append(f"  - Usage: {func_name}();")
+                else:
+                    param_examples = ', '.join([f"<{pname}>" for pname, _ in params])
+                    output.append(f"  - Usage: {func_name}({param_examples});")
+            else:
+                if not params:
+                    output.append(f"  - Usage: status = {func_name}();")
+                else:
+                    param_examples = ', '.join([f"<{pname}>" for pname, _ in params])
+                    output.append(f"  - Usage: result = {func_name}({param_examples});")
+
+    return '\n'.join(output)
+
+
+def build_pass2_driver_c_prompt(module_name: str, manifest_json: str, reg_header_content: str, soc_slice: str = "", bus_slice: str = "", pinmux_yaml: str = "", manifest: dict = None, instance_pin_config: dict = None, dependency_manifests: dict = None, dependency_signatures: dict = None, header_snippets: str = "") -> str:
     """
     Constructs the prompt for "Pass 2B" - Driver Implementation Generation.
     Uses the Registry Manifest + Register Header + Hardware Info + Bus Info + Pin Mux Info (optional).
@@ -2152,6 +2239,9 @@ def build_pass2_driver_c_prompt(module_name: str, manifest_json: str, reg_header
                              Format: {"dcan1": [{"package_pin": 90, "signal": "DCAN1RX", ...}], ...}
         dependency_manifests: Optional dict mapping dependency names to their manifests.
                              Format: {"IOMM": {...manifest...}, "PLL": {...manifest...}}
+        dependency_signatures: Optional dict mapping dependency names to parsed function signatures.
+                             Format: {"IOMM": {"Unlock": {"return_type": "void", "parameters": []}, ...}, ...}
+        header_snippets: Optional extracted header code snippets showing actual declarations.
     """
 
     def format_instance_pin_data(instance_config):
@@ -2176,6 +2266,7 @@ def build_pass2_driver_c_prompt(module_name: str, manifest_json: str, reg_header
                         register=pin.get('register'),
                         bit=pin.get('bit'),
                         af_number=pin.get('af_number'),
+                        af_enum=pin.get('af_enum'),
                         data_source=pin.get('data_source', 'unknown')
                     ))
             formatted_config[instance_name] = formatted_pins
@@ -2183,27 +2274,66 @@ def build_pass2_driver_c_prompt(module_name: str, manifest_json: str, reg_header
         return format_instance_data_for_llm(formatted_config)
 
     def format_dependency_manifests(dep_manifests):
-        """Format dependency manifests for LLM prompt."""
+        """Format dependency manifests for LLM prompt with explicit enum examples."""
         if not dep_manifests:
             return "No dependencies."
 
         import json
         lines = []
+
         for dep_name, dep_manifest in dep_manifests.items():
-            lines.append(f"\n### {dep_name} Module ###")
-            lines.append(f"Functions exported by {dep_name}:")
+            lines.append(f"\n{'='*70}")
+            lines.append(f"{dep_name} MODULE API")
+            lines.append(f"{'='*70}")
+
+            # Functions section with explicit signatures
+            lines.append(f"\nFunctions exported by {dep_name}:")
             for func in dep_manifest.get('functions', []):
-                lines.append(f"  - {func.get('prototype', func.get('name', 'UNKNOWN'))}")
+                proto = func.get('prototype', func.get('name', 'UNKNOWN'))
+                lines.append(f"  - {proto}")
                 if func.get('description'):
                     lines.append(f"    Description: {func['description']}")
 
-            # Include relevant types
+            # Types section with EXPLICIT enumeration of values
             types = dep_manifest.get('types', [])
             if types:
                 lines.append(f"\nTypes defined by {dep_name}:")
+                lines.append("="*70)
+
                 for type_def in types:
-                    if type_def.get('type') == 'enum':
-                        lines.append(f"  - enum {type_def.get('name')}: {', '.join(type_def.get('values', []))}")
+                    type_name = type_def.get('name')
+                    type_kind = type_def.get('type')
+
+                    if type_kind == 'enum':
+                        values = type_def.get('values', [])
+                        lines.append(f"\nEnum: {type_name}")
+                        lines.append(f"Available values (USE THESE EXACT NAMES):")
+                        for value in values:
+                            lines.append(f"  - {value}")
+
+                        # Add explicit usage example for IOMM pin functions
+                        if type_name == 'iomm_pin_function_t' and dep_name.upper() == 'IOMM':
+                            lines.append(f"\nUsage Example (CORRECT):")
+                            if len(values) > 1:
+                                lines.append(f"  IOMM_ConfigurePin(38, {values[1]});  // Use AF1 for SCIRX")
+                                lines.append(f"  IOMM_ConfigurePin(39, {values[1]});  // Use AF1 for SCITX")
+                            lines.append(f"\nINCORRECT Examples (DO NOT USE):")
+                            lines.append(f"  IOMM_ConfigurePin(38, IOMM_PIN_FUNCTION_1);  // WRONG - undefined identifier")
+                            lines.append(f"  IOMM_ConfigurePin(38, 1);                    // WRONG - integer literal, type error")
+                            lines.append(f"  IOMM_ConfigurePin(38, 0x1);                  // WRONG - hex literal, type error")
+
+                        if type_def.get('description'):
+                            lines.append(f"  Description: {type_def['description']}")
+
+                    elif type_kind == 'struct':
+                        members = type_def.get('members', [])
+                        lines.append(f"\nStruct: {type_name}")
+                        if members:
+                            lines.append(f"  Members:")
+                            for member in members:
+                                lines.append(f"    - {member.get('type')} {member.get('name')}")
+                        if type_def.get('description'):
+                            lines.append(f"  Description: {type_def['description']}")
 
         return '\n'.join(lines)
 
@@ -2482,6 +2612,78 @@ INPUT CONTEXT:
 {pinmux_yaml if pinmux_yaml else "Not provided - peripheral does not use external pins"}
 7. Dependency Module APIs (Available Functions):
 {format_dependency_manifests(dependency_manifests)}
+7A. DEPENDENCY FUNCTION SIGNATURES (CRITICAL FOR TYPE SAFETY):
+===========================================================================
+**YOU MUST use these EXACT function signatures when calling dependency functions.**
+Compilation will FAIL if you use wrong return types or parameter types.
+
+{format_dependency_signatures(dependency_signatures) if dependency_signatures else "No dependency signature information available."}
+
+7B. ACTUAL HEADER DECLARATIONS (GROUND TRUTH):
+===========================================================================
+{header_snippets if header_snippets else "Header snippets not available."}
+
+**CRITICAL REQUIREMENTS:**
+1. You MUST match return types exactly (void vs status return)
+2. You MUST use enum types where specified (e.g., iomm_pin_function_t)
+3. You MUST check status returns from non-void functions
+4. DO NOT assign return values from void functions
+5. COMPILATION WILL FAIL if signatures don't match
+
+===========================================================================
+CRITICAL: DEPENDENCY API USAGE RULES
+===========================================================================
+
+When calling functions from dependency modules (IOMM, PLL, VIM, etc.):
+
+1. IDENTIFIER VERIFICATION (MANDATORY):
+   - Before writing ANY dependency function call, verify the EXACT function name and signature
+   - Check the "DEPENDENCY MODULE APIs" section (INPUT CONTEXT 7) for actual identifiers
+   - Use ONLY identifiers that appear in the dependency manifests above
+   - NEVER fabricate or guess similar-sounding names
+
+2. ENUM TYPE USAGE (STRICT):
+   - When a parameter type is an enum (ends in _t, like iomm_pin_function_t):
+   - You MUST use the enum VALUE NAMES from the "Available values" list
+   - DO NOT fabricate similar-sounding names (e.g., IOMM_PIN_FUNCTION_1)
+   - DO NOT use integer literals (0, 1, 2, etc.)
+   - DO NOT use hex literals (0x0, 0x1, etc.)
+
+3. IOMM PIN CONFIGURATION (SPECIFIC EXAMPLE):
+   IOMM_ConfigurePin() takes (uint8_t pin_number, iomm_pin_function_t function)
+
+   ✅ CORRECT usage (use ACTUAL enum values from INPUT CONTEXT 7):
+   - IOMM_ConfigurePin(38, IOMM_PIN_FUNC_ALT1);  // From enum values list
+   - IOMM_ConfigurePin(39, IOMM_PIN_FUNC_GPIO);  // From enum values list
+
+   ❌ INCORRECT usage (will cause compilation errors):
+   - IOMM_ConfigurePin(38, IOMM_PIN_FUNCTION_1);  // WRONG - undefined identifier
+   - IOMM_ConfigurePin(38, 1);                     // WRONG - type mismatch
+   - IOMM_ConfigurePin(38, AF1);                   // WRONG - undefined identifier
+   - IOMM_ConfigurePin(38, 0x1);                   // WRONG - type mismatch
+
+4. RETURN TYPE HANDLING:
+   ❌ WRONG: status = IOMM_Unlock();  (IOMM_Unlock returns void)
+   ✅ CORRECT: IOMM_Unlock();  (no assignment)
+
+   ❌ WRONG: IOMM_ConfigurePin(39, IOMM_PIN_FUNCTION_1);  (wrong enum name)
+   ✅ CORRECT: status = IOMM_ConfigurePin(39, IOMM_PIN_FUNC_ALT1);  (use enum from list + check status)
+
+5. VERIFICATION CHECKLIST:
+   Before generating code, verify:
+   ☐ Every enum constant exists in the "Available values" list in INPUT CONTEXT 7
+   ☐ Every function name exists in the "Functions exported by" list in INPUT CONTEXT 7
+   ☐ Every parameter type matches the prototype exactly
+   ☐ Return types are handled correctly (void vs status_t)
+
+6. PIN CONFIGURATION EXAMPLES FROM INPUT CONTEXT 6:
+   If instance_pin_config provides pin mappings with af_enum values:
+   - Use the EXACT af_enum string provided (e.g., "IOMM_PIN_FUNC_ALT1")
+   - These values are derived from IOMM Pass 1 manifest
+   - They are guaranteed to match the actual enum declaration
+
+FAILURE TO FOLLOW THESE RULES WILL CAUSE COMPILATION ERRORS.
+===========================================================================
 
 MANDATORY PRE-FLIGHT CHECKS:
 ============================
@@ -2618,40 +2820,46 @@ DYNAMIC PIN ENABLE FUNCTION GENERATION (MANDATORY FOR I/O PERIPHERALS):
    ```c
    void {{INSTANCE_NAME}}_EnablePins(void) {{
        /* Variables at top (C89) */
-       status_type status;
+       iomm_status_t status;
 
-       /* Discover unlock function from IOMM dependency manifest */
-       status = <iomm_unlock_function>();
-       if (status != SUCCESS) {{
+       /* Unlock IOMM - void function, see INPUT CONTEXT 7A */
+       IOMM_Unlock();
+
+       /* Configure ONLY pins for THIS INSTANCE - use enum, see INPUT CONTEXT 7A */
+       status = IOMM_ConfigurePin(pin_number, IOMM_PIN_FUNCTION_X);
+       if (status != IOMM_STATUS_OK) {{
+           IOMM_Lock();
            return;
        }}
 
-       /* Configure ONLY pins for THIS INSTANCE */
-       <iomm_configure_function>(register_num, bit_pos);
-
-       /* Lock using function from manifest */
-       <iomm_lock_function>();
+       /* Lock IOMM - void function */
+       IOMM_Lock();
    }}
    ```
 
    **For single-instance peripherals** (e.g., SCI, LIN, GIO):
    ```c
    void {{MODULE_NAME}}_EnablePins(void) {{
-       IOMM_Status_t status;
+       iomm_status_t status;
 
-       /* Unlock IOMM registers */
-       status = IOMM_Unlock();
+       /* Unlock IOMM registers - void function, see INPUT CONTEXT 7A */
+       IOMM_Unlock();
+
+       /* Configure pin 39 for SCITX (AF1) - use enum from INPUT CONTEXT 7A */
+       status = IOMM_ConfigurePin(39, IOMM_PIN_FUNCTION_1);
        if (status != IOMM_STATUS_OK) {{
+           IOMM_Lock();
            return;
        }}
 
-       /* Configure pin 39 for SCITX (AF1 = 0x02) */
-       IOMM_ConfigurePin(39, 0x02U);
+       /* Configure pin 38 for SCIRX (AF1) - use enum from INPUT CONTEXT 7A */
+       status = IOMM_ConfigurePin(38, IOMM_PIN_FUNCTION_1);
+       if (status != IOMM_STATUS_OK) {{
+           IOMM_Lock();
+           return;
+       }}
 
-       /* Configure pin 38 for SCIRX (AF1 = 0x02) */
-       IOMM_ConfigurePin(38, 0x02U);
-
-       /* Lock IOMM registers */
+       /* Lock IOMM registers - void function */
        IOMM_Lock();
    }}
    ```
@@ -2693,27 +2901,40 @@ DYNAMIC PIN ENABLE FUNCTION GENERATION (MANDATORY FOR I/O PERIPHERALS):
 4a. ALTERNATE FUNCTION (AF) VALUE CONVERSION:
    **CRITICAL:** The AF number must be converted to a raw bit pattern value.
 
-   AF-to-Value Mapping (RM46/TMS570 Standard):
-   - AF0 → 0x01 (0b00000001)
-   - AF1 → 0x02 (0b00000010)
-   - AF2 → 0x04 (0b00000100)
-   - AF3 → 0x08 (0b00001000)
-   - AF4 → 0x10 (0b00010000)
+   **CRITICAL:** Use the iomm_pin_function_t enum values defined in iomm_driver.h
+   See INPUT CONTEXT 7A for EXACT function signatures.
 
-   **DO NOT use symbolic constants like IOMM_FUNCTION_AF1 - they do not exist!**
+   AF-to-Enum Mapping:
+   - AF0 → IOMM_PIN_FUNCTION_0
+   - AF1 → IOMM_PIN_FUNCTION_1
+   - AF2 → IOMM_PIN_FUNCTION_2
+   - AF3 → IOMM_PIN_FUNCTION_3
+   - AF4 → IOMM_PIN_FUNCTION_4
+   - AF5 → IOMM_PIN_FUNCTION_5
+   - AF6 → IOMM_PIN_FUNCTION_6
+   - AF7 → IOMM_PIN_FUNCTION_7
 
-   Example correct usage:
+   ✅ CORRECT usage (with status checking):
    ```c
-   /* Configure SCITX pin - Package pin 39, PINMMR8 bit 1, AF1 */
-   IOMM_ConfigurePin(39, 0x02U);  /* AF1 = 0x02 */
+   /* Configure SCITX pin - Package pin 39, AF1 */
+   status = IOMM_ConfigurePin(39, IOMM_PIN_FUNCTION_1);
+   if (status != IOMM_STATUS_OK) {{
+       IOMM_Lock();
+       return;
+   }}
 
-   /* Configure SCIRX pin - Package pin 38, PINMMR7 bit 17, AF1 */
-   IOMM_ConfigurePin(38, 0x02U);  /* AF1 = 0x02 */
+   /* Configure SCIRX pin - Package pin 38, AF1 */
+   status = IOMM_ConfigurePin(38, IOMM_PIN_FUNCTION_1);
+   if (status != IOMM_STATUS_OK) {{
+       IOMM_Lock();
+       return;
+   }}
    ```
 
-   Example WRONG usage (will not compile):
+   ❌ WRONG usage (will not compile):
    ```c
-   IOMM_ConfigurePin(39, IOMM_FUNCTION_AF1);  /* ❌ WRONG - constant doesn't exist */
+   IOMM_ConfigurePin(39, 0x02U);  /* ❌ WRONG - expects enum, not raw integer */
+   IOMM_ConfigurePin(39, 1);      /* ❌ WRONG - expects enum, not raw integer */
    ```
 
 4b. CRITICAL: IOMM PIN-TO-PINMMR MAPPING (NON-LINEAR HARDWARE MAPPING):
