@@ -410,6 +410,125 @@ def _is_acceptable_conflict(const_name: str, file_values: Dict[str, str]) -> boo
     return False
 
 
+def _validate_code_against_yaml(
+    written_files: List[Path],
+    soc_data: Dict[str, Any],
+    regs_data: Dict[str, Any],
+    module_name: str
+) -> FactsValidationResult:
+    """
+    Fallback validation when FACTS MIRROR is missing.
+    Validates generated code directly against YAML source.
+
+    Args:
+        written_files: List of generated files
+        soc_data: Parsed soc.yaml
+        regs_data: Parsed regs.yaml
+        module_name: Name of module being validated
+
+    Returns:
+        FactsValidationResult with validation status
+    """
+    result = FactsValidationResult(
+        is_valid=True,
+        module_name=module_name
+    )
+
+    # Extract constants from all generated files
+    code_defines = {}
+    for file_path in written_files:
+        if file_path.suffix in ['.c', '.h']:
+            try:
+                content = file_path.read_text(encoding='utf-8')
+                extracted = extract_constants_from_c_code(
+                    content,
+                    file_path.name
+                )
+                for define in extracted.defines:
+                    code_defines[define.name] = (define.value, file_path.name)
+            except Exception as e:
+                result.warnings.append(f"Could not read {file_path.name}: {e}")
+
+    # Find peripheral in soc.yaml
+    periph = find_soc_peripheral(soc_data, module_name)
+    if not periph:
+        result.warnings.append(f"Module {module_name} not found in soc.yaml - skipping YAML validation")
+        return result
+
+    # Get regs_ref
+    regs_ref = periph.get('regs_ref')
+    if not regs_ref:
+        result.warnings.append(f"Module {module_name} has no regs_ref in soc.yaml")
+        return result
+
+    # Get register block from regs.yaml
+    regs_block = get_regs_block(regs_data, regs_ref)
+    if not regs_block:
+        result.warnings.append(f"Register block {regs_ref} not found in regs.yaml")
+        return result
+
+    # Validate base address
+    yaml_base = regs_block.get('base_address')
+    if yaml_base:
+        # Look for BASE address in generated code
+        base_name_candidates = [
+            f"{module_name}_BASE",
+            f"{module_name}BASE",
+            f"{module_name.upper()}_BASE",
+        ]
+
+        found_base = False
+        for base_name in base_name_candidates:
+            if base_name in code_defines:
+                code_value, filename = code_defines[base_name]
+                found_base = True
+                if compare_values(code_value, yaml_base):
+                    result.matches.append((base_name, yaml_base, code_value))
+                else:
+                    result.mismatches.append((base_name, yaml_base, code_value))
+                    result.errors.append(
+                        f"Base address mismatch in {filename}: "
+                        f"{base_name}={code_value}, expected {yaml_base} from regs.yaml"
+                    )
+                    result.is_valid = False
+                break
+
+        if not found_base:
+            result.warnings.append(
+                f"No base address constant found for {module_name} "
+                f"(looked for {', '.join(base_name_candidates)})"
+            )
+
+    # Validate register offsets
+    registers = regs_block.get('registers', {})
+    for reg_name, reg_data in registers.items():
+        yaml_offset = reg_data.get('offset')
+        if not yaml_offset:
+            continue
+
+        # Look for offset constants in code
+        offset_name_candidates = [
+            f"{reg_name}_OFFSET",
+            f"{module_name}_{reg_name}_OFFSET",
+        ]
+
+        for offset_name in offset_name_candidates:
+            if offset_name in code_defines:
+                code_value, filename = code_defines[offset_name]
+                if compare_values(code_value, yaml_offset):
+                    result.matches.append((offset_name, yaml_offset, code_value))
+                else:
+                    result.mismatches.append((offset_name, yaml_offset, code_value))
+                    result.errors.append(
+                        f"Register {reg_name} offset mismatch in {filename}: "
+                        f"{offset_name}={code_value}, expected {yaml_offset} from regs.yaml"
+                    )
+                    result.is_valid = False
+                break
+
+    return result
+
+
 def validate_generation_output(
     tag: str,
     preamble: str,
@@ -447,14 +566,37 @@ def validate_generation_output(
         logger.error(f"[{tag}] Validation failed: FACTS MIRROR has TODOs")
         return result
 
-    # If no FACTS MIRROR, skip detailed validation (not all phases require it)
-    if not facts_mirror.entries:
-        result.warnings.append("No FACTS MIRROR found in preamble")
-        logger.info(f"[{tag}] No FACTS MIRROR found, skipping detailed validation")
-        return result
-
     # Extract module name from tag (e.g., "periph_gio" -> "GIO")
     module_name = tag.split('_')[-1].upper() if '_' in tag else tag
+
+    # If no FACTS MIRROR, use fallback validation
+    if not facts_mirror.entries:
+        result.warnings.append("No FACTS MIRROR found - using fallback validation")
+        logger.info(f"[{tag}] No FACTS MIRROR found, using fallback validation")
+
+        # Perform direct code-to-YAML validation
+        try:
+            fallback_validation = _validate_code_against_yaml(
+                written_files,
+                soc_data,
+                regs_data,
+                module_name
+            )
+            result.facts_validation = fallback_validation
+
+            if not fallback_validation.is_valid:
+                result.is_valid = False
+                result.errors.extend(fallback_validation.errors)
+                logger.error(f"[{tag}] Fallback validation failed: {len(fallback_validation.errors)} errors")
+
+            if fallback_validation.warnings:
+                result.warnings.extend(fallback_validation.warnings)
+        except Exception as e:
+            result.is_valid = False
+            result.errors.append(f"Fallback validation exception: {str(e)}")
+            logger.exception(f"[{tag}] Fallback validation error")
+
+        return result
 
     # Validate FACTS MIRROR against generated code and YAML
     try:

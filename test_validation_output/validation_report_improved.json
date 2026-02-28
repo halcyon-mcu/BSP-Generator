@@ -1,0 +1,21 @@
+{
+  "timestamp": "test_run",
+  "bsp_output_dir": "c:\\Users\\dovyd\\Documents\\GitHub\\BSP-Generator\\app\\output_20260223_200046",
+  "validation_summary": {
+    "total_modules": 0,
+    "modules_valid": 0,
+    "modules_invalid": 0,
+    "critical_errors": 0,
+    "warnings": 0,
+    "success_rate": 0.0
+  },
+  "peripheral_validations": {},
+  "cross_file_validation": {
+    "passes": true,
+    "conflicts": [],
+    "consistency_score": 1.0,
+    "errors": [],
+    "warnings": []
+  },
+  "dependency_graph": null
+}
