@@ -1036,7 +1036,13 @@ irq.yaml fragment (full list):
     """ % (soc_yaml, regs_yaml, irq_yaml)
 
 
-def build_system_init_prompt(soc_yaml: str, regs_yaml: str, manifest: dict = None, bus_yaml: str = ""):
+def build_system_init_prompt(
+    soc_yaml: str,
+    regs_yaml: str,
+    manifest: dict = None,
+    bus_yaml: str = "",
+    bringup_contract: dict = None,
+):
     # Extract typedef name from manifest (Pass 1 generated header)
     system_typedef = "SYSTEM_REGS_t"  # Default fallback
     pcr_typedef = "PCR_REG_MAP_t"  # Default fallback
@@ -1107,6 +1113,10 @@ def build_system_init_prompt(soc_yaml: str, regs_yaml: str, manifest: dict = Non
     #define REG32(addr) (*(volatile uint32_t *)(addr))
     ```
     """
+
+    bringup_contract_str = "(not provided)"
+    if isinstance(bringup_contract, dict) and bringup_contract:
+        bringup_contract_str = json.dumps(bringup_contract, indent=2)
 
     return typedef_section + """
     You are generating low-level embedded C startup code for a TI Hercules RM46-like MCU.
@@ -1306,10 +1316,19 @@ Here is bus.yaml (clock topology - sources, domains, and SYSTEM clock numbering)
 
 %s
 
+Here is bringup_contract.yaml (runtime invariants - authoritative when provided):
+
+%s
+
 Now, output FACTS MIRROR, then system.h followed by system.c, obeying the global HARD OUTPUT CONTRACT.
 
 
-    """ % (soc_yaml, regs_yaml, bus_yaml if bus_yaml else "(not provided)")
+    """ % (
+        soc_yaml,
+        regs_yaml,
+        bus_yaml if bus_yaml else "(not provided)",
+        bringup_contract_str,
+    )
 
 def build_linker_prompt(memmap_yaml: str):
     return """You are generating a TI ARM CGT linker command file (linker.cmd) for an ARM-based TI Hercules RM46-like MCU, built with the TI ARM CGT linker (armcl) from Code Composer Studio (CCS).
@@ -2212,7 +2231,20 @@ def format_dependency_signatures(dependency_signatures: dict) -> str:
     return '\n'.join(output)
 
 
-def build_pass2_driver_c_prompt(module_name: str, manifest_json: str, reg_header_content: str, soc_slice: str = "", bus_slice: str = "", pinmux_yaml: str = "", manifest: dict = None, instance_pin_config: dict = None, dependency_manifests: dict = None, dependency_signatures: dict = None, header_snippets: str = "") -> str:
+def build_pass2_driver_c_prompt(
+    module_name: str,
+    manifest_json: str,
+    reg_header_content: str,
+    soc_slice: str = "",
+    bus_slice: str = "",
+    pinmux_yaml: str = "",
+    manifest: dict = None,
+    instance_pin_config: dict = None,
+    dependency_manifests: dict = None,
+    dependency_signatures: dict = None,
+    header_snippets: str = "",
+    bringup_contract: dict = None,
+) -> str:
     """
     Constructs the prompt for "Pass 2B" - Driver Implementation Generation.
     Uses the Registry Manifest + Register Header + Hardware Info + Bus Info + Pin Mux Info (optional).
@@ -2301,7 +2333,7 @@ def build_pass2_driver_c_prompt(module_name: str, manifest_json: str, reg_header
                                 lines.append(f"  IOMM_ConfigurePin(38, {values[1]});  // Use AF1 for SCIRX")
                                 lines.append(f"  IOMM_ConfigurePin(39, {values[1]});  // Use AF1 for SCITX")
                             lines.append(f"\nINCORRECT Examples (DO NOT USE):")
-                            lines.append(f"  IOMM_ConfigurePin(38, IOMM_PIN_FUNCTION_1);  // WRONG - undefined identifier")
+                            lines.append(f"  IOMM_ConfigurePin(38, IOMM_PIN_FUNC_ALT1);   // WRONG if not declared in enum")
                             lines.append(f"  IOMM_ConfigurePin(38, 1);                    // WRONG - integer literal, type error")
                             lines.append(f"  IOMM_ConfigurePin(38, 0x1);                  // WRONG - hex literal, type error")
 
@@ -2319,6 +2351,43 @@ def build_pass2_driver_c_prompt(module_name: str, manifest_json: str, reg_header
                             lines.append(f"  Description: {type_def['description']}")
 
         return '\n'.join(lines)
+
+    def format_bringup_contract(contract: dict) -> str:
+        if not isinstance(contract, dict) or not contract:
+            return "No explicit bring-up contract provided."
+
+        serial = contract.get("serial", {}) if isinstance(contract.get("serial"), dict) else {}
+        lin = contract.get("lin", {}) if isinstance(contract.get("lin"), dict) else {}
+        iomm = contract.get("iomm", {}) if isinstance(contract.get("iomm"), dict) else {}
+        pll = contract.get("pll", {}) if isinstance(contract.get("pll"), dict) else {}
+        startup = contract.get("startup", {}) if isinstance(contract.get("startup"), dict) else {}
+
+        lines = ["Bring-up Contract Constraints (Authoritative):"]
+        if serial:
+            lines.append(f"- serial.primary_path: {serial.get('primary_path')}")
+            lines.append(f"- serial.baud_default: {serial.get('baud_default')}")
+            req_pins = serial.get("required_pins", [])
+            if isinstance(req_pins, list):
+                for pin in req_pins:
+                    if isinstance(pin, dict):
+                        lines.append(
+                            f"- serial.required_pin: pin={pin.get('pin')} register={pin.get('register')} bit={pin.get('bit')} af={pin.get('af')}"
+                        )
+        req_regs = lin.get("required_registers", {}) if isinstance(lin, dict) else {}
+        if isinstance(req_regs, dict) and isinstance(req_regs.get("SCIPIO0"), dict):
+            lines.append(f"- lin.required_registers.SCIPIO0.required_value: {req_regs['SCIPIO0'].get('required_value')}")
+        unlock_seq = iomm.get("unlock_sequence", [])
+        if isinstance(unlock_seq, list) and unlock_seq:
+            lines.append("- iomm.unlock_sequence: " + ", ".join(str(v) for v in unlock_seq))
+        req_seq = pll.get("required_sequence", [])
+        if isinstance(req_seq, list) and req_seq:
+            lines.append("- pll.required_sequence tokens: " + ", ".join(str(v) for v in req_seq))
+        req_order = startup.get("required_order", [])
+        if isinstance(req_order, list) and req_order:
+            lines.append("- startup.required_order: " + " -> ".join(str(v) for v in req_order))
+
+        lines.append("- These constraints override heuristic or descriptive guidance.")
+        return "\n".join(lines)
 
     # PLL-specific implementation requirements
     pll_section = ""
@@ -2483,6 +2552,12 @@ REGISTER EXTRACTION (Step by step):
    uint32_t f_pll = (OSCIN_HZ * NF) / (NR * R);
    uint32_t f_hclk = f_pll / ODPLL;
 
+ACTIVE SOURCE RULE (MANDATORY):
+- Read SYSREG->GHVSRC and derive the live HCLK source before returning domain frequencies.
+- If GHVSRC selects OSCIN/LF_LPO/HF_LPO/PLL2, return frequencies from that selected source path.
+- Do NOT assume PLL1 is always active.
+- Do NOT hardcode PLL1-derived HCLK when GHVSRC indicates another source.
+
 WORKED EXAMPLE (from bus.yaml typical configuration):
 - OSCIN_HZ = 16,000,000 Hz (16 MHz)
 - NF = 120 (multiplier)
@@ -2605,6 +2680,8 @@ Compilation will FAIL if you use wrong return types or parameter types.
 7B. ACTUAL HEADER DECLARATIONS (GROUND TRUTH):
 ===========================================================================
 {header_snippets if header_snippets else "Header snippets not available."}
+8. Bring-up Contract Constraints:
+{format_bringup_contract(bringup_contract)}
 
 **CRITICAL REQUIREMENTS:**
 1. You MUST match return types exactly (void vs status return)
@@ -2628,7 +2705,7 @@ When calling functions from dependency modules (IOMM, PLL, VIM, etc.):
 2. ENUM TYPE USAGE (STRICT):
    - When a parameter type is an enum (ends in _t, like iomm_pin_function_t):
    - You MUST use the enum VALUE NAMES from the "Available values" list
-   - DO NOT fabricate similar-sounding names (e.g., IOMM_PIN_FUNCTION_1)
+   - DO NOT fabricate similar-sounding names (e.g., IOMM_PIN_FUNC_ALT1 when not declared)
    - DO NOT use integer literals (0, 1, 2, etc.)
    - DO NOT use hex literals (0x0, 0x1, etc.)
 
@@ -2640,7 +2717,7 @@ When calling functions from dependency modules (IOMM, PLL, VIM, etc.):
    - IOMM_ConfigurePin(39, IOMM_PIN_FUNC_GPIO);  // From enum values list
 
    ❌ INCORRECT usage (will cause compilation errors):
-   - IOMM_ConfigurePin(38, IOMM_PIN_FUNCTION_1);  // WRONG - undefined identifier
+   - IOMM_ConfigurePin(38, IOMM_PIN_ENUM_AF1);    // WRONG - undefined identifier
    - IOMM_ConfigurePin(38, 1);                     // WRONG - type mismatch
    - IOMM_ConfigurePin(38, AF1);                   // WRONG - undefined identifier
    - IOMM_ConfigurePin(38, 0x1);                   // WRONG - type mismatch
@@ -2649,7 +2726,7 @@ When calling functions from dependency modules (IOMM, PLL, VIM, etc.):
    ❌ WRONG: status = IOMM_Unlock();  (IOMM_Unlock returns void)
    ✅ CORRECT: IOMM_Unlock();  (no assignment)
 
-   ❌ WRONG: IOMM_ConfigurePin(39, IOMM_PIN_FUNCTION_1);  (wrong enum name)
+   ❌ WRONG: IOMM_ConfigurePin(39, IOMM_PIN_ENUM_AF1);  (wrong enum name)
    ✅ CORRECT: status = IOMM_ConfigurePin(39, IOMM_PIN_FUNC_ALT1);  (use enum from list + check status)
 
 5. VERIFICATION CHECKLIST:
@@ -2809,7 +2886,7 @@ DYNAMIC PIN ENABLE FUNCTION GENERATION (MANDATORY FOR I/O PERIPHERALS):
        IOMM_Unlock();
 
        /* Configure ONLY pins for THIS INSTANCE - use enum, see INPUT CONTEXT 7A */
-       status = IOMM_ConfigurePin(pin_number, IOMM_PIN_FUNCTION_X);
+       status = IOMM_ConfigurePin(pin_number, <IOMM_ENUM_VALUE_FROM_CONTEXT7>);
        if (status != IOMM_STATUS_OK) {{
            IOMM_Lock();
            return;
@@ -2829,14 +2906,14 @@ DYNAMIC PIN ENABLE FUNCTION GENERATION (MANDATORY FOR I/O PERIPHERALS):
        IOMM_Unlock();
 
        /* Configure pin 39 for SCITX (AF1) - use enum from INPUT CONTEXT 7A */
-       status = IOMM_ConfigurePin(39, IOMM_PIN_FUNCTION_1);
+       status = IOMM_ConfigurePin(39, <IOMM_ENUM_VALUE_FROM_CONTEXT7>);
        if (status != IOMM_STATUS_OK) {{
            IOMM_Lock();
            return;
        }}
 
        /* Configure pin 38 for SCIRX (AF1) - use enum from INPUT CONTEXT 7A */
-       status = IOMM_ConfigurePin(38, IOMM_PIN_FUNCTION_1);
+       status = IOMM_ConfigurePin(38, <IOMM_ENUM_VALUE_FROM_CONTEXT7>);
        if (status != IOMM_STATUS_OK) {{
            IOMM_Lock();
            return;
@@ -2888,26 +2965,20 @@ DYNAMIC PIN ENABLE FUNCTION GENERATION (MANDATORY FOR I/O PERIPHERALS):
    See INPUT CONTEXT 7A for EXACT function signatures.
 
    AF-to-Enum Mapping:
-   - AF0 → IOMM_PIN_FUNCTION_0
-   - AF1 → IOMM_PIN_FUNCTION_1
-   - AF2 → IOMM_PIN_FUNCTION_2
-   - AF3 → IOMM_PIN_FUNCTION_3
-   - AF4 → IOMM_PIN_FUNCTION_4
-   - AF5 → IOMM_PIN_FUNCTION_5
-   - AF6 → IOMM_PIN_FUNCTION_6
-   - AF7 → IOMM_PIN_FUNCTION_7
+   - Use the exact enum symbol provided in INPUT CONTEXT 7A for each AF value.
+   - Do not assume naming pattern and do not invent aliases.
 
    ✅ CORRECT usage (with status checking):
    ```c
    /* Configure SCITX pin - Package pin 39, AF1 */
-   status = IOMM_ConfigurePin(39, IOMM_PIN_FUNCTION_1);
+   status = IOMM_ConfigurePin(39, <IOMM_ENUM_VALUE_FROM_CONTEXT7>);
    if (status != IOMM_STATUS_OK) {{
        IOMM_Lock();
        return;
    }}
 
    /* Configure SCIRX pin - Package pin 38, AF1 */
-   status = IOMM_ConfigurePin(38, IOMM_PIN_FUNCTION_1);
+   status = IOMM_ConfigurePin(38, <IOMM_ENUM_VALUE_FROM_CONTEXT7>);
    if (status != IOMM_STATUS_OK) {{
        IOMM_Lock();
        return;

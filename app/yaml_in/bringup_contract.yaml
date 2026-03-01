@@ -1,0 +1,36 @@
+ir_schema_version: 1.0.0
+target_board: LAUNCHXL2-TMS57012-RM46
+serial:
+  primary_path: LIN_SCI_MODE
+  baud_default: 9600
+  required_pins:
+    - pin: 38
+      register: PINMMR7
+      bit: 17
+      af: 1
+    - pin: 39
+      register: PINMMR8
+      bit: 1
+      af: 1
+lin:
+  required_registers:
+    SCIPIO0:
+      required_value: "0x00000006"
+iomm:
+  unlock_sequence:
+    - "0x83E70B13"
+    - "0x95A4F1E0"
+pll:
+  required_sequence:
+    - CSDISSET
+    - CSVSTAT
+    - GHVSRC
+    - RCLKSRC
+    - VCLKASRC
+    - CLKCNTL
+startup:
+  required_order:
+    - PCR_Init
+    - PCR_EnableAllPeripherals
+    - flash_waitstates
+    - PLL_Init

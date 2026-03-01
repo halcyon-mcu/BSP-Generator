@@ -7,7 +7,7 @@ import re
 import signal
 import sys
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 from config import YAMLS_DIR, TARGET_FILES, FACTS_CANON, PATTERN_SNIPS
 
@@ -46,6 +46,7 @@ from modules.yaml.yaml_utils import (
     load_bus_yaml,
     load_soc_yaml,
     load_board_yaml,
+    load_bringup_contract,
     load_generation_profile,
     load_pinmux_yaml,
     load_regs_yaml,
@@ -88,6 +89,12 @@ DEFAULT_GENERATION_PROFILE = {
     "contract_mode": "auto_fix_then_fail",
     "contract_lock_mode": "strict",
     "require_ccs_proof": True,
+    "bringup": {
+        "mode": "strict",
+        "contract_file": "app/yaml_in/bringup_contract.yaml",
+        "fail_on_contract_mismatch": True,
+        "emit_debug_probes": False,
+    },
 }
 
 
@@ -860,6 +867,57 @@ async def main():
         print(f"[info] Loaded generation profile: {profile_path}")
 
     generation_profile = _merge_generation_profile(profile_data)
+    bringup_cfg = generation_profile.get("bringup", {}) if isinstance(generation_profile.get("bringup", {}), dict) else {}
+    bringup_mode = str(bringup_cfg.get("mode", "strict")).strip().lower()
+    if bringup_mode not in {"strict", "relaxed"}:
+        print(f"[warn] Unknown bringup.mode '{bringup_mode}', defaulting to 'strict'")
+        bringup_mode = "strict"
+    bringup_strict = bringup_mode == "strict"
+    fail_on_contract_mismatch = bool(bringup_cfg.get("fail_on_contract_mismatch", True))
+
+    bringup_contract = None
+    bringup_contract_path: Optional[Path] = None
+
+    def _resolve_bringup_contract_path(contract_file: str) -> Optional[Path]:
+        candidates = []
+        raw_path = Path(contract_file)
+        if raw_path.is_absolute():
+            candidates.append(raw_path)
+        else:
+            candidates.append(Path.cwd() / raw_path)
+            candidates.append(Path(args.yamlpath) / raw_path)
+            candidates.append(Path(args.yamlpath).parent / raw_path)
+            candidates.append(Path(args.yamlpath) / raw_path.name)
+
+        seen = set()
+        for candidate in candidates:
+            normalized = candidate.resolve()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            if normalized.exists():
+                return normalized
+        return None
+
+    configured_contract_file = bringup_cfg.get("contract_file")
+    if isinstance(configured_contract_file, str) and configured_contract_file.strip():
+        bringup_contract_path = _resolve_bringup_contract_path(configured_contract_file.strip())
+        if bringup_contract_path is None:
+            print(f"[warn] bringup.contract_file not found: {configured_contract_file}")
+    else:
+        default_contract = Path(args.yamlpath) / "bringup_contract.yaml"
+        if default_contract.exists():
+            bringup_contract_path = default_contract
+
+    if bringup_strict and fail_on_contract_mismatch and bringup_contract_path is None:
+        raise ValueError(
+            "bringup.mode=strict requires a valid bringup_contract file, but none was found."
+        )
+
+    if bringup_contract_path is not None:
+        bringup_contract = load_bringup_contract(bringup_contract_path)
+        print(f"[info] Loaded bringup contract: {bringup_contract_path}")
+
     strict_validation_enabled = bool(generation_profile.get("strict_validation", False))
     contract_mode = str(generation_profile.get("contract_mode", "auto_fix_then_fail"))
     contract_lock_mode = str(generation_profile.get("contract_lock_mode", "strict")).strip().lower()
@@ -872,8 +930,12 @@ async def main():
     if target_board_name and actual_board_name and target_board_name != actual_board_name:
         print(f"[warn] Profile target_board '{target_board_name}' != board.yaml name '{actual_board_name}'")
 
-    # Inject profile defaults into SOC slices consumed by prompts
+    # Inject profile/bring-up defaults into SOC slices consumed by prompts
     default_baud = generation_profile.get("sci", {}).get("default_baud")
+    if not isinstance(default_baud, int) and isinstance(bringup_contract, dict):
+        serial_cfg = bringup_contract.get("serial", {})
+        if isinstance(serial_cfg, dict) and isinstance(serial_cfg.get("baud_default"), int):
+            default_baud = serial_cfg.get("baud_default")
     if isinstance(default_baud, int):
         for periph in soc_data.get("soc", {}).get("peripherals", []):
             if periph.get("name", "").upper() in {"SCI", "LIN"}:
@@ -1044,6 +1106,7 @@ async def main():
     bsp_manifest = None
     api_contract_manifest = None
     startup_contract_result = None
+    bringup_contract_failed = False
     bsp_validate_contract_result = None
     bsp_validate_autofix_actions = []
     if pass1_modules or not generate_peripherals:
@@ -1128,6 +1191,8 @@ async def main():
                 strict_validation=strict_validation_enabled,
                 contract_mode=contract_mode,
                 api_contract_manifest=api_contract_manifest,
+                bringup_contract=bringup_contract,
+                bringup_strict=bringup_strict,
                 token_allocator=token_allocator,
                 progress_manager=progress_manager
             )
@@ -1191,7 +1256,11 @@ async def main():
         if init_order.is_valid():
             print(f"[ok] Dependency graph valid - {len(init_order.order)} modules")
             print(f"[info] Init order: {' -> '.join(init_order.order[:5])}{'...' if len(init_order.order) > 5 else ''}")
-            startup_contract_result = validate_startup_contract(init_order, out_dir)
+            startup_contract_result = validate_startup_contract(
+                init_order,
+                out_dir,
+                bringup_contract=bringup_contract,
+            )
             if not startup_contract_result.get("passes", True):
                 print("[warn] Startup contract validation failed before main.c generation")
                 for err in startup_contract_result.get("errors", [])[:5]:
@@ -1284,7 +1353,8 @@ async def main():
         system_init_user_prompt = build_system_init_prompt(
             system_soc_slice, system_regs_slice,
             manifest=bsp_manifest,
-            bus_yaml=system_bus_slice
+            bus_yaml=system_bus_slice,
+            bringup_contract=bringup_contract,
         )
 
     linker_user_prompt = None
@@ -1427,6 +1497,24 @@ async def main():
             progress_manager.complete_pass("Platform", success=True)
         else:
             print("[info] No additional platform tasks to run.")
+
+    # Re-run startup contract after platform generation so validation reflects final files.
+    if "init_order" in locals() and init_order is not None and hasattr(init_order, "is_valid"):
+        try:
+            startup_contract_result = validate_startup_contract(
+                init_order,
+                out_dir,
+                bringup_contract=bringup_contract,
+            )
+            if not startup_contract_result.get("passes", True):
+                print("[warn] Startup contract validation failed after platform generation")
+                for err in startup_contract_result.get("errors", [])[:8]:
+                    print(f"  - {err}")
+                if bringup_strict and fail_on_contract_mismatch:
+                    print("[error] bringup.mode=strict and fail_on_contract_mismatch=true: startup contract mismatch detected")
+                    bringup_contract_failed = True
+        except Exception as e:
+            print(f"[warn] Post-platform startup contract validation failed: {e}")
 
     # Check for shutdown request before documentation
     if _shutdown_requested:
@@ -1574,6 +1662,21 @@ async def main():
         }
         if api_contract_manifest:
             final_report.api_contract_hash = api_contract_manifest.get("api_contract_hash")
+        final_report.runtime_invariants = {
+            "bringup_contract_loaded": bool(bringup_contract),
+            "bringup_mode": bringup_mode,
+            "fail_on_contract_mismatch": fail_on_contract_mismatch,
+            "serial_primary_path": (
+                (bringup_contract or {}).get("serial", {}).get("primary_path")
+                if isinstance(bringup_contract, dict)
+                else None
+            ),
+            "startup_contract_passes": (
+                startup_contract_result.get("passes", True)
+                if isinstance(startup_contract_result, dict)
+                else True
+            ),
+        }
 
         if strict_validation_enabled:
             if not final_report.compile_contract.get("passes", True):
@@ -1659,6 +1762,11 @@ async def main():
         print(f"    Actual cost: ${stats['cost_usd']:.2f} USD")
     except Exception as e:
         print(f"[warn] Could not display cost summary: {e}")
+
+    if bringup_contract_failed and bringup_strict and fail_on_contract_mismatch:
+        raise RuntimeError(
+            "Strict bring-up contract validation failed; see validation_report for details."
+        )
 
     # Ensure any remaining spinner threads are stopped
     _progress.stop_spinner()

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..utils.dependency_resolver import InitOrder
 
@@ -17,10 +17,15 @@ def _find_call_index(content: str, token: str) -> int:
     return idx if idx >= 0 else 10**9
 
 
-def validate_startup_contract(init_order: InitOrder, output_dir: Path) -> Dict[str, Any]:
+def validate_startup_contract(
+    init_order: InitOrder,
+    output_dir: Path,
+    bringup_contract: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     errors: List[str] = []
     warnings: List[str] = []
     checks: Dict[str, Any] = {}
+    bringup_contract = bringup_contract or {}
 
     if not init_order.is_valid():
         errors.append("Startup init order is invalid due to dependency cycle")
@@ -103,8 +108,62 @@ def validate_startup_contract(init_order: InitOrder, output_dir: Path) -> Dict[s
                 errors.append("PCR_EnableAllPeripherals is called from system.c but missing in pcr_driver.h")
             if not pcr_source or "PCR_EnableAllPeripherals(" not in pcr_source.read_text(encoding="utf-8", errors="ignore"):
                 errors.append("PCR_EnableAllPeripherals is called from system.c but missing in pcr_driver.c")
+
+        startup_cfg = bringup_contract.get("startup", {}) if isinstance(bringup_contract, dict) else {}
+        required_order = startup_cfg.get("required_order", []) if isinstance(startup_cfg, dict) else []
+        if isinstance(required_order, list) and required_order:
+            order_markers: Dict[str, int] = {}
+            flash_markers = ["system_setup_flash_waitstates(", "FLASH_FRDCNTL"]
+            for token in required_order:
+                if not isinstance(token, str):
+                    continue
+                if token == "PCR_Init":
+                    order_markers[token] = _find_call_index(content, "PCR_Init(")
+                elif token == "PCR_EnableAllPeripherals":
+                    order_markers[token] = _find_call_index(content, "PCR_EnableAllPeripherals(")
+                elif token == "PLL_Init":
+                    order_markers[token] = _find_call_index(content, "PLL_Init(")
+                elif token == "flash_waitstates":
+                    indices = [content.find(marker) for marker in flash_markers if marker in content]
+                    order_markers[token] = min(indices) if indices else 10**9
+                else:
+                    order_markers[token] = _find_call_index(content, token)
+
+            missing_tokens = [name for name, idx in order_markers.items() if idx == 10**9]
+            if missing_tokens:
+                errors.append(
+                    "system.c missing required startup bring-up markers: " + ", ".join(missing_tokens)
+                )
+            else:
+                ordered = list(required_order)
+                for i in range(len(ordered) - 1):
+                    left = ordered[i]
+                    right = ordered[i + 1]
+                    if order_markers.get(left, 10**9) > order_markers.get(right, 10**9):
+                        errors.append(
+                            f"system.c bring-up ordering violation: expected {left} before {right}"
+                        )
     else:
         warnings.append("system.c not present for startup call-sequence validation")
+
+    pll_candidates = [
+        Path(output_dir) / "pll_driver.c",
+        Path(output_dir) / "include" / "pll_driver.c",
+        Path(output_dir) / "source" / "pll_driver.c",
+    ]
+    pll_path = next((p for p in pll_candidates if p.exists()), None)
+    pll_cfg = bringup_contract.get("pll", {}) if isinstance(bringup_contract, dict) else {}
+    required_sequence = pll_cfg.get("required_sequence", []) if isinstance(pll_cfg, dict) else []
+    if pll_path and isinstance(required_sequence, list) and required_sequence:
+        pll_text = pll_path.read_text(encoding="utf-8", errors="ignore")
+        missing_tokens = []
+        for token in required_sequence:
+            if isinstance(token, str) and token and token not in pll_text:
+                missing_tokens.append(token)
+        if missing_tokens:
+            errors.append(
+                "pll_driver.c missing required bring-up sequence tokens: " + ", ".join(missing_tokens)
+            )
 
     start_s_candidates = [
         Path(output_dir) / "start.s",

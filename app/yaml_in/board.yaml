@@ -374,6 +374,14 @@ debug:
         designator: C55
         value: 100µF
 communication:
+  preferred_debug_path:
+    peripheral: LIN
+    mode: SCI
+    instance: lin1
+    rx_pin: 38
+    tx_pin: 39
+    af: 1
+    note: Preferred terminal output path for RM46 bring-up.
   can:
     dcan1:
       rx_pin: 90

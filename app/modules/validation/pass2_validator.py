@@ -10,7 +10,7 @@ Validates driver implementations generated in Pass 2 to ensure:
 
 import re
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional
 from dataclasses import dataclass, field
 
 
@@ -53,7 +53,8 @@ def validate_driver_implementation(
     written_files: List[Path],
     soc_data: dict,
     regs_data: dict,
-    clock_h_path: Path = None
+    clock_h_path: Path = None,
+    bringup_contract: Optional[Dict] = None,
 ) -> Pass2ValidationResult:
     """
     Validate Pass 2 driver implementation.
@@ -73,6 +74,17 @@ def validate_driver_implementation(
     errors = []
     warnings = []
     has_todos = False
+    bringup_contract = bringup_contract or {}
+
+    def _parse_contract_int(value) -> Optional[int]:
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            try:
+                return int(value, 0)
+            except ValueError:
+                return None
+        return None
 
     # Check 1: FACTS MIRROR has no TODOs
     if "FACTS MIRROR" in preamble and "TODO:" in preamble:
@@ -323,21 +335,37 @@ def validate_driver_implementation(
 
     # Check 11: LIN-specific SCI mode bring-up checks
     if module_name.upper() == "LIN":
+        expected_scipio0 = 0x6
+        lin_contract_cfg = bringup_contract.get("lin", {}) if isinstance(bringup_contract, dict) else {}
+        if isinstance(lin_contract_cfg, dict):
+            required_regs = lin_contract_cfg.get("required_registers", {})
+            if isinstance(required_regs, dict):
+                scipio0_rule = required_regs.get("SCIPIO0", {})
+                if isinstance(scipio0_rule, dict):
+                    parsed_value = _parse_contract_int(scipio0_rule.get("required_value"))
+                    if parsed_value is not None:
+                        expected_scipio0 = parsed_value
+
         for file_path in driver_c_files:
             try:
                 content = file_path.read_text(encoding='utf-8', errors='ignore')
 
                 # Ensure SCIPIO0 config includes TX/RX functional bits (bit2 + bit1).
                 if 'LIN_Init' in content and 'SCIPIO0' in content:
-                    has_hex_mode = re.search(r'SCIPIO0\s*=\s*0x0*6U?', content) is not None
-                    has_bit_mode = (
-                        re.search(r'1U?\s*<<\s*2U?', content) is not None and
-                        re.search(r'1U?\s*<<\s*1U?', content) is not None
+                    has_hex_mode = re.search(
+                        rf'SCIPIO0\s*=\s*0x0*{expected_scipio0:X}U?',
+                        content,
+                        re.IGNORECASE,
+                    ) is not None
+                    expected_bits = [bit for bit in range(0, 32) if (expected_scipio0 >> bit) & 0x1]
+                    has_bit_mode = all(
+                        re.search(rf'1U?\s*<<\s*{bit}U?', content) is not None
+                        for bit in expected_bits
                     )
                     if not has_hex_mode and not has_bit_mode:
                         errors.append(
                             f"{file_path.name}: LIN_Init() does not configure SCIPIO0 for SCI TX/RX "
-                            "(expected bit2|bit1 / 0x6)."
+                            f"(expected 0x{expected_scipio0:08X})."
                         )
 
                 lin_rx_def = re.search(r'LIN_ReceiveByte\s*\(([^)]*)\)\s*\{', content)
@@ -368,6 +396,69 @@ def validate_driver_implementation(
                     )
             except Exception:
                 pass
+
+    # Check 12: IOMM bring-up path contract (unlock sequence + required pins)
+    if module_name.upper() == "IOMM" and isinstance(bringup_contract, dict):
+        iomm_cfg = bringup_contract.get("iomm", {})
+        serial_cfg = bringup_contract.get("serial", {})
+        required_pins = serial_cfg.get("required_pins", []) if isinstance(serial_cfg, dict) else []
+        unlock_seq = iomm_cfg.get("unlock_sequence", []) if isinstance(iomm_cfg, dict) else []
+        for file_path in driver_c_files:
+            try:
+                content = file_path.read_text(encoding='utf-8', errors='ignore')
+                for unlock_val in unlock_seq:
+                    value_int = _parse_contract_int(unlock_val)
+                    if value_int is None:
+                        continue
+                    hex_token = f"0x{value_int:08X}"
+                    if hex_token not in content and hex_token.lower() not in content.lower():
+                        errors.append(
+                            f"{file_path.name}: Missing IOMM unlock sequence value {hex_token} required by bring-up contract."
+                        )
+
+                for pin_entry in required_pins:
+                    if not isinstance(pin_entry, dict):
+                        continue
+                    pin_num = pin_entry.get("pin")
+                    bit_num = pin_entry.get("bit")
+                    reg_name = pin_entry.get("register")
+                    if isinstance(pin_num, int):
+                        pin_pattern = rf"\b{pin_num}\b"
+                        if re.search(pin_pattern, content) is None:
+                            errors.append(
+                                f"{file_path.name}: Missing required pin mapping for package pin {pin_num}."
+                            )
+                    if isinstance(bit_num, int):
+                        bit_pattern = rf"\b{bit_num}\b"
+                        if re.search(bit_pattern, content) is None:
+                            warnings.append(
+                                f"{file_path.name}: Could not confirm required bit position {bit_num} for bring-up pin mapping."
+                            )
+                    if isinstance(reg_name, str) and reg_name.strip():
+                        if reg_name not in content:
+                            warnings.append(
+                                f"{file_path.name}: Register token '{reg_name}' not present; ensure mapping uses equivalent resolved index."
+                            )
+            except Exception:
+                pass
+
+    # Check 13: PLL required sequence token presence from bring-up contract
+    if module_name.upper() == "PLL" and isinstance(bringup_contract, dict):
+        pll_cfg = bringup_contract.get("pll", {})
+        required_sequence = pll_cfg.get("required_sequence", []) if isinstance(pll_cfg, dict) else []
+        if required_sequence:
+            for file_path in driver_c_files:
+                try:
+                    content = file_path.read_text(encoding='utf-8', errors='ignore')
+                    for token in required_sequence:
+                        if not isinstance(token, str) or not token.strip():
+                            continue
+                        if token not in content:
+                            errors.append(
+                                f"{file_path.name}: Missing required PLL sequence token '{token}' from bring-up contract."
+                            )
+                except Exception:
+                    pass
 
     is_valid = len(errors) == 0 and not has_todos
 

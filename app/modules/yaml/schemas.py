@@ -328,6 +328,82 @@ class BoardYAML(BaseModel):
 
 
 # ==============================================================================
+# BRINGUP CONTRACT YAML SCHEMA (Optional)
+# ==============================================================================
+
+class BringupRequiredPin(BaseModel):
+    """Required pin mux selection for deterministic bring-up."""
+    model_config = ConfigDict(extra='allow', populate_by_name=True)
+
+    pin: int = Field(..., ge=0)
+    register_name: str = Field(..., alias='register')
+    bit: int = Field(..., ge=0)
+    af: int = Field(..., ge=0)
+
+
+class BringupSerialContract(BaseModel):
+    """Serial-path requirements for bring-up."""
+    model_config = ConfigDict(extra='allow')
+
+    primary_path: str
+    baud_default: int = Field(..., gt=0)
+    required_pins: List[BringupRequiredPin] = Field(default_factory=list)
+
+
+class BringupLinRegisterRule(BaseModel):
+    """Required LIN register value."""
+    model_config = ConfigDict(extra='allow')
+
+    required_value: str
+
+
+class BringupLinRegisters(BaseModel):
+    """LIN register constraints."""
+    model_config = ConfigDict(extra='allow')
+
+    SCIPIO0: Optional[BringupLinRegisterRule] = None
+
+
+class BringupLinContract(BaseModel):
+    """LIN bring-up constraints."""
+    model_config = ConfigDict(extra='allow')
+
+    required_registers: BringupLinRegisters
+
+
+class BringupIommContract(BaseModel):
+    """IOMM bring-up constraints."""
+    model_config = ConfigDict(extra='allow')
+
+    unlock_sequence: List[str] = Field(default_factory=list)
+
+
+class BringupPllContract(BaseModel):
+    """PLL bring-up constraints."""
+    model_config = ConfigDict(extra='allow')
+
+    required_sequence: List[str] = Field(default_factory=list)
+
+
+class BringupStartupContract(BaseModel):
+    """Startup ordering constraints."""
+    model_config = ConfigDict(extra='allow')
+
+    required_order: List[str] = Field(default_factory=list)
+
+
+class BringupContractYAML(BaseModel):
+    """Root schema for bringup_contract.yaml (optional)."""
+    model_config = ConfigDict(extra='allow')
+
+    serial: BringupSerialContract
+    lin: Optional[BringupLinContract] = None
+    iomm: Optional[BringupIommContract] = None
+    pll: Optional[BringupPllContract] = None
+    startup: Optional[BringupStartupContract] = None
+
+
+# ==============================================================================
 # VALIDATION HELPERS
 # ==============================================================================
 

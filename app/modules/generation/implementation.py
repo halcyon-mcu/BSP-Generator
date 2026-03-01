@@ -589,6 +589,8 @@ async def run_implementation_pass(
     strict_validation: bool = False,
     contract_mode: str = "auto_fix_then_fail",
     api_contract_manifest: Optional[Dict[str, Any]] = None,
+    bringup_contract: Optional[Dict[str, Any]] = None,
+    bringup_strict: bool = False,
     token_allocator = None,
     progress_manager = None
 ):
@@ -719,7 +721,20 @@ async def run_implementation_pass(
                     except Exception as e:
                         logger.warning(f"Could not extract header snippets: {e}")
 
-                prompt = build_pass2_driver_c_prompt(mod_name, json.dumps(mod_data, indent=2), reg_content, soc_slice, bus_slice, pinmux_slice, manifest=manifest, instance_pin_config=instance_pin_config, dependency_manifests=dependency_manifests, dependency_signatures=dependency_signatures, header_snippets=header_snippets)
+                prompt = build_pass2_driver_c_prompt(
+                    mod_name,
+                    json.dumps(mod_data, indent=2),
+                    reg_content,
+                    soc_slice,
+                    bus_slice,
+                    pinmux_slice,
+                    manifest=manifest,
+                    instance_pin_config=instance_pin_config,
+                    dependency_manifests=dependency_manifests,
+                    dependency_signatures=dependency_signatures,
+                    header_snippets=header_snippets,
+                    bringup_contract=bringup_contract,
+                )
                 resp = await invoke_model(model, current_tokens, [{"role": "user", "content": prompt}])
                 text = extract_text_from_bedrock_response(resp)
 
@@ -991,14 +1006,13 @@ async def run_implementation_pass(
                 module_source_path,
                 api_contract_manifest,
             )
-            always_autofix_modules = {"LIN", "IOMM"}
+            critical_runtime_modules = {"LIN", "IOMM", "PLL", "SYSTEM"}
             should_run_autofix = (
                 contract_mode == "auto_fix_then_fail"
-                and (
-                    mod_name.upper() in always_autofix_modules
-                    or not module_contract_result.get("passed", True)
-                )
+                and not module_contract_result.get("passed", True)
             )
+            if bringup_strict and mod_name.upper() in critical_runtime_modules:
+                should_run_autofix = False
             if should_run_autofix:
                 autofix_result = autofix_module_contract(
                     mod_name,
@@ -1051,7 +1065,8 @@ async def run_implementation_pass(
                     preamble=combined_raw,
                     written_files=written_files,
                     soc_data=soc_data,
-                    regs_data=regs_data
+                    regs_data=regs_data,
+                    bringup_contract=bringup_contract,
                 )
 
                 # Merge validation results

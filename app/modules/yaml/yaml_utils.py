@@ -25,6 +25,7 @@ from .schemas import (
     PinmuxYAML,
     MemmapYAML,
     BoardYAML,
+    BringupContractYAML,
     validate_yaml_schema
 )
 
@@ -155,6 +156,20 @@ def load_board_yaml(path: Path) -> Dict[str, Any]:
     return data
 
 
+def load_bringup_contract(path: Path) -> Dict[str, Any]:
+    """Load optional bringup_contract.yaml and validate if present."""
+    data = _load_yaml(path)
+
+    is_valid, errors = validate_yaml_schema(data, BringupContractYAML)
+    if not is_valid:
+        error_msg = f"bringup_contract.yaml validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    logger.debug("bringup_contract.yaml validation passed")
+    return data
+
+
 def load_generation_profile(path: Path) -> Dict[str, Any]:
     """
     Load optional generation profile YAML with minimal validation.
@@ -174,6 +189,11 @@ def load_generation_profile(path: Path) -> Dict[str, Any]:
         enabled: bool
       contract_mode: "auto_fix_then_fail" | "hard_fail" | "warn_only"
       require_ccs_proof: bool
+      bringup:
+        mode: "strict" | "relaxed"
+        contract_file: str
+        fail_on_contract_mismatch: bool
+        emit_debug_probes: bool
     """
     data = _load_yaml(path)
 
@@ -224,6 +244,18 @@ def load_generation_profile(path: Path) -> Dict[str, Any]:
 
     if "require_ccs_proof" in data and not isinstance(data["require_ccs_proof"], bool):
         raise ValueError("generation_profile.yaml: 'require_ccs_proof' must be boolean")
+
+    bringup = data.get("bringup", {})
+    if bringup and not isinstance(bringup, dict):
+        raise ValueError("generation_profile.yaml: 'bringup' must be a mapping")
+    if "mode" in bringup and bringup["mode"] not in ("strict", "relaxed"):
+        raise ValueError("generation_profile.yaml: 'bringup.mode' must be 'strict' or 'relaxed'")
+    if "contract_file" in bringup and not isinstance(bringup["contract_file"], str):
+        raise ValueError("generation_profile.yaml: 'bringup.contract_file' must be a string")
+    if "fail_on_contract_mismatch" in bringup and not isinstance(bringup["fail_on_contract_mismatch"], bool):
+        raise ValueError("generation_profile.yaml: 'bringup.fail_on_contract_mismatch' must be boolean")
+    if "emit_debug_probes" in bringup and not isinstance(bringup["emit_debug_probes"], bool):
+        raise ValueError("generation_profile.yaml: 'bringup.emit_debug_probes' must be boolean")
 
     return data
 

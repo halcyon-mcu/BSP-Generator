@@ -4729,8 +4729,8 @@ peripherals:
         reset: '0x00000000'
         desc: "SCI Pin I/O Control Register 0 - function select for LINRX and LINTX pins"
         fields:
-          - { name: "TX_FUNC", bit: 1, access: RW, desc: "LINTX function. 0=general-purpose I/O, 1=SCI/LIN transmit" }
-          - { name: "RX_FUNC", bit: 0, access: RW, desc: "LINRX function. 0=general-purpose I/O, 1=SCI/LIN receive" }
+          - { name: "TX_FUNC", bit: 2, access: RW, desc: "LINTX function. 0=general-purpose I/O, 1=SCI/LIN transmit" }
+          - { name: "RX_FUNC", bit: 1, access: RW, desc: "LINRX function. 0=general-purpose I/O, 1=SCI/LIN receive" }
       SCIPIO1:
         offset: '0x40'
         access: RW

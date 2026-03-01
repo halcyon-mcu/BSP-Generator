@@ -20,3 +20,8 @@ contract_mode: auto_fix_then_fail
 contract_lock_mode: strict
 bsp_validation:
   enabled: true
+bringup:
+  mode: strict
+  contract_file: app/yaml_in/bringup_contract.yaml
+  fail_on_contract_mismatch: true
+  emit_debug_probes: false

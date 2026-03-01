@@ -573,7 +573,16 @@ def _parse_board_lin_sci_pins(board_data: Optional[Dict[str, Any]]) -> tuple[int
     if not board_data:
         return (38, 39)
 
-    board = board_data.get("peripherals", {}) if isinstance(board_data, dict) else {}
+    comms = board_data.get("communication", {}) if isinstance(board_data, dict) else {}
+    if isinstance(comms, dict):
+        preferred = comms.get("preferred_debug_path", {})
+        if isinstance(preferred, dict):
+            rx_pin = preferred.get("rx_pin")
+            tx_pin = preferred.get("tx_pin")
+            if isinstance(rx_pin, int) and isinstance(tx_pin, int):
+                return (rx_pin, tx_pin)
+
+    board = comms if isinstance(comms, dict) else {}
     lin = board.get("lin", {}) if isinstance(board, dict) else {}
     lin1 = lin.get("lin1", {}) if isinstance(lin, dict) else {}
     if isinstance(lin1, dict):

@@ -172,3 +172,49 @@ lin_status_t LIN_ReceiveByte(uint8_t* data, uint32_t timeout_ms)
 
     assert result.is_valid is False
     assert any("timeout_ms==0" in e or "timeout_ms==0" in e.replace(" ", "") for e in result.critical_errors)
+
+
+def test_pass2_lin_uses_bringup_contract_scipio0_value(tmp_path):
+    lin_c = _write(
+        tmp_path,
+        "lin_driver.c",
+        """
+#include "lin_driver.h"
+
+lin_status_t LIN_Init(const lin_config_t* config)
+{
+    (void)config;
+    linREG->SCIPIO0 = 0x00000003U;
+    return LIN_STATUS_OK;
+}
+""".strip()
+        + "\n",
+    )
+
+    manifest_entry = {
+        "init_function": "LIN_Init",
+        "api_functions": [{"name": "LIN_Init"}],
+        "dependencies": [],
+    }
+    soc_data = {"peripherals": [{"name": "LIN"}]}
+    regs_data = {}
+    bringup_contract = {
+        "lin": {
+            "required_registers": {
+                "SCIPIO0": {"required_value": "0x00000006"}
+            }
+        }
+    }
+
+    result = validate_driver_implementation(
+        module_name="LIN",
+        manifest_entry=manifest_entry,
+        preamble="",
+        written_files=[lin_c],
+        soc_data=soc_data,
+        regs_data=regs_data,
+        bringup_contract=bringup_contract,
+    )
+
+    assert result.is_valid is False
+    assert any("SCIPIO0" in e and "00000006" in e for e in result.critical_errors)

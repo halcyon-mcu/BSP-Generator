@@ -55,6 +55,7 @@ class ValidationReport:
     startup_contract: Optional[Dict[str, Any]] = None
     build_evidence: Optional[Dict[str, Any]] = None
     api_contract_hash: Optional[str] = None
+    runtime_invariants: Optional[Dict[str, Any]] = None
 
     def is_successful(self) -> bool:
         if self.compile_contract and not self.compile_contract.get("passes", True):
@@ -78,6 +79,7 @@ class ValidationReport:
             "startup_contract": self.startup_contract,
             "build_evidence": self.build_evidence,
             "api_contract_hash": self.api_contract_hash,
+            "runtime_invariants": self.runtime_invariants,
         }
 
 
@@ -223,6 +225,13 @@ def write_markdown_report(report: ValidationReport, output_path: Path) -> Path:
             lines.append(f"- FAIL {error}")
         for warning in cc.get("warnings", [])[:10]:
             lines.append(f"- WARN {warning}")
+        lines.append("")
+
+    if report.runtime_invariants:
+        lines.append("## Runtime Invariants")
+        lines.append("")
+        for key, value in report.runtime_invariants.items():
+            lines.append(f"- **{key}:** {value}")
         lines.append("")
 
     if report.autofix_actions:

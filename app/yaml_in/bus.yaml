@@ -613,6 +613,19 @@ x-ext:
       vclk_ratio_field: VCLKR
       hclk_source: OSCIN
       gclk_source: OSCIN
+      bringup_defaults:
+        ghvsrc_source_numbers:
+          OSCIN: 0
+          PLL1: 1
+          LF_LPO: 4
+          HF_LPO: 5
+          PLL2: 6
+        rclksrc_sys_vclk_source_id: 9
+        vclkasrc_sys_vclk_source_id: 9
+        hal_aligned_values:
+          CSDIS: "0x0000008C"
+          CDDIS: "0x00000020"
+          CSVSTAT_REQUIRED_MASK: "0x00000042"
       clock_domains:
       - name: GCLK
         domain_number: 0

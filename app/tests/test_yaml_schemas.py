@@ -9,6 +9,7 @@ from modules.yaml.schemas import (
     BusYAML,
     IrqYAML,
     PinmuxYAML,
+    BringupContractYAML,
     validate_yaml_schema
 )
 
@@ -249,19 +250,65 @@ class TestPinmuxYAMLSchema:
         """Test that valid pinmux.yaml data passes validation."""
         data = {
             "pins": [
-                {"pin": 1, "signals": ["GIOA0", "ETPWM1A"]},
-                {"pin": 2, "signals": ["GIOA1", "ETPWM1B"]}
+                {
+                    "package_pin": 1,
+                    "name": "GIOA0",
+                    "functions": [
+                        {"af": "AF0", "signal": "GIOA0", "mux": {"register": "PINMMR0", "bit": 0}}
+                    ],
+                },
+                {
+                    "package_pin": 2,
+                    "name": "GIOA1",
+                    "functions": [
+                        {"af": "AF1", "signal": "ETPWM1B", "mux": {"register": "PINMMR0", "bit": 1}}
+                    ],
+                },
             ]
         }
         is_valid, errors = validate_yaml_schema(data, PinmuxYAML)
         assert is_valid
+
+
+class TestBringupContractSchema:
+    """Test bringup_contract.yaml schema validation."""
+
+    def test_valid_bringup_contract(self):
+        data = {
+            "serial": {
+                "primary_path": "LIN_SCI_MODE",
+                "baud_default": 9600,
+                "required_pins": [
+                    {"pin": 38, "register": "PINMMR7", "bit": 17, "af": 1},
+                    {"pin": 39, "register": "PINMMR8", "bit": 1, "af": 1},
+                ],
+            },
+            "lin": {
+                "required_registers": {
+                    "SCIPIO0": {"required_value": "0x00000006"}
+                }
+            },
+            "iomm": {"unlock_sequence": ["0x83E70B13", "0x95A4F1E0"]},
+            "pll": {"required_sequence": ["CSDISSET", "CSVSTAT", "GHVSRC"]},
+            "startup": {"required_order": ["PCR_Init", "PCR_EnableAllPeripherals", "flash_waitstates", "PLL_Init"]},
+        }
+        is_valid, errors = validate_yaml_schema(data, BringupContractYAML)
+        assert is_valid
         assert errors == []
+
+    def test_invalid_bringup_contract_missing_serial(self):
+        data = {
+            "lin": {"required_registers": {"SCIPIO0": {"required_value": "0x6"}}}
+        }
+        is_valid, errors = validate_yaml_schema(data, BringupContractYAML)
+        assert not is_valid
+        assert any("serial" in err.lower() for err in errors)
 
     def test_empty_signals_rejected(self):
         """Test that empty signals list is rejected."""
         data = {
             "pins": [
-                {"pin": 1, "signals": []}  # Empty signals
+                {"package_pin": 1, "name": "GIOA0", "functions": []}  # Empty functions
             ]
         }
         is_valid, errors = validate_yaml_schema(data, PinmuxYAML)
@@ -271,7 +318,14 @@ class TestPinmuxYAMLSchema:
         """Test that string pin names are accepted."""
         data = {
             "pins": [
-                {"pin": "GIOA0", "signals": ["FUNC1", "FUNC2"]}
+                {
+                    "package_pin": 1,
+                    "name": "GIOA0",
+                    "functions": [
+                        {"af": "AF0", "signal": "FUNC1", "mux": {"register": "PINMMR0", "bit": 0}},
+                        {"af": "AF1", "signal": "FUNC2", "mux": {"register": "PINMMR0", "bit": 1}},
+                    ],
+                }
             ]
         }
         is_valid, errors = validate_yaml_schema(data, PinmuxYAML)

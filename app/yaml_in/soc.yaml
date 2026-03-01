@@ -1931,12 +1931,6 @@ soc:
     clock_ref: VCLK
     x-ext:
       init:
-      - reg: CLKCNTL
-        op: set_bits
-        value: '0x00000100'
-      - reg: CLKCNTL
-        op: write
-        value: '0x00010000'
       - reg: MINITGCR
         op: set_bits
         value: '0x0000000A'
@@ -1949,18 +1943,6 @@ soc:
       - reg: MINITGCR
         op: clear_bits
         value: '0x00000005'
-      - reg: PLLCTL1
-        op: write
-        value: '0x00000000'
-      - reg: CSDISCLR
-        op: set_bits
-        value: '0x00000002'
-      - reg: CSVSTAT
-        op: write
-        value: '0x00000000'
-      - reg: GHVSRC
-        op: write
-        value: '0x00000001'
       base_address:
         base: '0xFFFFFF00'
         size: '0x100'
