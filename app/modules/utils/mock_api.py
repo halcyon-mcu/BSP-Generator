@@ -7,30 +7,52 @@ Enable mock mode by setting environment variable: BSP_MOCK_MODE=1
 import json
 import random
 import asyncio
+import re
 from typing import Dict, Any
 
 
-def generate_mock_manifest_response() -> str:
+def _extract_module_name(user_message: str) -> str:
+    """Best-effort module name extraction from prompt text."""
+    explicit = re.search(r'module\s+name:\s*"?([a-z0-9_]+)"?', user_message, re.IGNORECASE)
+    if explicit:
+        return explicit.group(1).upper()
+
+    known = [
+        "SYSTEM", "PCR", "IOMM", "PLL", "VIM", "SCI", "LIN", "GIO",
+        "CAN", "DCAN", "I2C", "MIBSPI", "ADC", "RTI", "DMA", "ESM"
+    ]
+    upper_msg = user_message.upper()
+    for name in known:
+        if re.search(rf"\b{name}\b", upper_msg):
+            return name
+    return "MOCK"
+
+
+def generate_mock_manifest_response(module_name: str) -> str:
     """Generate a realistic mock manifest JSON."""
+    mod = module_name.upper()
     return json.dumps({
-        "module_name": "MOCK",
-        "api_prefix": "MOCK",
-        "reg_header_file": "reg_mock.h",
+        "module_name": mod,
+        "api_prefix": mod,
+        "reg_header_file": f"reg_{mod.lower()}.h",
+        "header_file": f"{mod.lower()}.h",
+        "source_file": f"{mod.lower()}.c",
+        "init_function": f"{mod}_Init",
+        "types": [],
+        "dependencies": [],
         "categories": ["control", "status"],
         "functions": [
             {
-                "name": "MOCK_Init",
+                "name": f"{mod}_Init",
+                "prototype": f"void {mod}_Init(void);",
                 "category": "control",
-                "description": "Initialize the MOCK module",
-                "parameters": [],
-                "returns": "void"
+                "brief": f"Initialize the {mod} module"
             },
             {
-                "name": "MOCK_GetStatus",
+                "name": f"{mod}_GetStatus",
+                "prototype": f"uint32_t {mod}_GetStatus(void);",
                 "category": "status",
-                "description": "Get module status",
-                "parameters": [],
-                "returns": "uint32_t"
+                "brief": "Get module status"
             }
         ]
     })
@@ -59,18 +81,34 @@ typedef struct {
 
 def generate_mock_driver_response(module_name: str) -> str:
     """Generate a realistic mock driver implementation."""
+    mod = module_name.upper()
     return f"""```c
-#include "{module_name.lower()}.h"
-#include "reg_{module_name.lower()}.h"
+#include "{mod.lower()}_driver.h"
+#include "reg_{mod.lower()}.h"
 
-void {module_name}_Init(void) {{
-    // Initialize {module_name} module
-    {module_name}->CTRL = 0x00000001U;  // Enable module
+void {mod}_Init(void) {{
+    // Initialize {mod} module
 }}
 
-uint32_t {module_name}_GetStatus(void) {{
-    return {module_name}->STATUS;
+uint32_t {mod}_GetStatus(void) {{
+    return 0U;
 }}
+```"""
+
+
+def generate_mock_driver_header_response(module_name: str) -> str:
+    """Generate a realistic mock driver header."""
+    mod = module_name.upper()
+    return f"""```c
+#ifndef {mod}_DRIVER_H
+#define {mod}_DRIVER_H
+
+#include <stdint.h>
+
+void {mod}_Init(void);
+uint32_t {mod}_GetStatus(void);
+
+#endif /* {mod}_DRIVER_H */
 ```"""
 
 
@@ -178,22 +216,18 @@ async def mock_invoke_model(model, max_tokens: int, messages: list) -> Dict[str,
             user_message = msg.get("content", "").lower()
             break
 
-    # Generate appropriate mock content
-    if "manifest" in user_message or "json" in user_message:
-        content = generate_mock_manifest_response()
-        input_tokens = random.randint(3000, 5000)
-        output_tokens = random.randint(800, 1500)
-    elif "register header" in user_message or "reg_" in user_message:
+    module_name = _extract_module_name(user_message)
+
+    # Generate appropriate mock content (specific handlers first)
+    if "generate the register map header file" in user_message:
         content = generate_mock_header_response()
         input_tokens = random.randint(8000, 15000)
         output_tokens = random.randint(2000, 4000)
-    elif "driver" in user_message or "implementation" in user_message:
-        # Extract module name if present
-        module_name = "MOCK"
-        for word in user_message.split():
-            if word.isupper() and len(word) > 2:
-                module_name = word
-                break
+    elif "public driver header file" in user_message or "generate the c header file" in user_message:
+        content = generate_mock_driver_header_response(module_name)
+        input_tokens = random.randint(7000, 12000)
+        output_tokens = random.randint(1200, 2500)
+    elif "driver implementation file" in user_message or "generate the c source file" in user_message:
         content = generate_mock_driver_response(module_name)
         input_tokens = random.randint(10000, 20000)
         output_tokens = random.randint(2000, 5000)
@@ -209,6 +243,15 @@ async def mock_invoke_model(model, max_tokens: int, messages: list) -> Dict[str,
         content = generate_mock_platform_response("linker")
         input_tokens = random.randint(20000, 30000)
         output_tokens = random.randint(2000, 4000)
+    elif (
+        "valid json object" in user_message
+        or "output format (critical" in user_message
+        or ("define its software interface" in user_message and "\"module_name\"" in user_message)
+        or "manifest" in user_message
+    ):
+        content = generate_mock_manifest_response(module_name)
+        input_tokens = random.randint(3000, 5000)
+        output_tokens = random.randint(800, 1500)
     else:
         # Generic response
         content = f"Mock response for testing. Original request was approximately {len(user_message)} characters."

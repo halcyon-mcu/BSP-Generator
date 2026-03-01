@@ -19,6 +19,7 @@ from typing import List
 
 # Matches lines like: ===== FILE: foo.c =====
 FILE_SPLIT_RE = re.compile(r"^===== FILE: (.+) =====\s*$", re.M)
+GENERATED_TEXT_EXTENSIONS = {".c", ".h", ".s", ".S", ".cmd", ".ld"}
 
 
 def _now_tag() -> str:
@@ -56,6 +57,19 @@ def _safe_relpath(s: str) -> str:
     # p = parts[-1] if parts else p
 
     return p
+
+
+def normalize_generated_text(content: str, file_path: Path | str) -> str:
+    """
+    Normalize generated source/script text for toolchain compatibility.
+
+    For generated code/script files, enforce exactly one trailing newline to
+    avoid compiler/IDE warnings for missing EOF newline.
+    """
+    path = Path(file_path)
+    if path.suffix in GENERATED_TEXT_EXTENSIONS:
+        return content.rstrip("\n") + "\n"
+    return content
 
 
 def split_and_write_files(raw_text: str, out_dir: Path) -> tuple[List[Path], str]:
@@ -124,7 +138,7 @@ def split_and_write_files(raw_text: str, out_dir: Path) -> tuple[List[Path], str
             raise RuntimeError(f"Refusing to write outside out_dir: {target}")
 
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        target.write_text(normalize_generated_text(content, target), encoding="utf-8")
         written.append(target)
 
         # Print a friendly relative path (robust across platforms)
@@ -295,7 +309,11 @@ def write_makefile(out_dir: Path, elf_name: str = "app.elf") -> Path:
     return makefile_path
 
 
-def write_manifest(out_dir: Path, written_files: List[Path]) -> Path:
+def write_manifest(
+    out_dir: Path,
+    written_files: List[Path],
+    filename: str = "generated_files_manifest.json",
+) -> Path:
     """
     Write a simple JSON manifest summarizing generated files in out_dir.
 
@@ -330,7 +348,7 @@ def write_manifest(out_dir: Path, written_files: List[Path]) -> Path:
         ],
     }
 
-    manifest_path = out_dir / "bsp_manifest.json"
+    manifest_path = out_dir / filename
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     print("[ok] Wrote", manifest_path.relative_to(out_dir))
     return manifest_path

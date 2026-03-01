@@ -1039,12 +1039,14 @@ irq.yaml fragment (full list):
 def build_system_init_prompt(soc_yaml: str, regs_yaml: str, manifest: dict = None, bus_yaml: str = ""):
     # Extract typedef name from manifest (Pass 1 generated header)
     system_typedef = "SYSTEM_REGS_t"  # Default fallback
+    pcr_typedef = "PCR_REG_MAP_t"  # Default fallback
     has_system2 = False
     system2_typedef = None
 
     if manifest:
         api_catalog = manifest.get("api_catalog", {})
         system_entry = api_catalog.get("SYSTEM", {})
+        pcr_entry = api_catalog.get("PCR", {})
 
         # Try new array format first, fall back to old single typedef
         typedefs = system_entry.get("register_typedefs", [])
@@ -1059,6 +1061,12 @@ def build_system_init_prompt(soc_yaml: str, regs_yaml: str, manifest: dict = Non
             if "register_typedef" in system_entry:
                 system_typedef = system_entry["register_typedef"]
 
+        pcr_typedefs = pcr_entry.get("register_typedefs", [])
+        if pcr_typedefs:
+            pcr_typedef = pcr_typedefs[0]
+        elif "register_typedef" in pcr_entry:
+            pcr_typedef = pcr_entry["register_typedef"]
+
     typedef_section = f"""
     REGISTER ACCESS (MANDATORY - CRITICAL FOR COMPILATION):
     -------------------------------------------------------
@@ -1066,9 +1074,11 @@ def build_system_init_prompt(soc_yaml: str, regs_yaml: str, manifest: dict = Non
 
     REQUIRED INCLUDES in system.c:
     - #include "reg_system.h"   (for SYSTEM registers)
+    - #include "reg_pcr.h"      (for PCR registers, only when SYSTEM.x-ext.init contains PCR.* operations)
 
     REGISTER TYPEDEF NAME (FROM PASS 1 - USE EXACTLY AS SHOWN):
     - SYSTEM register struct typedef: {system_typedef}
+    - PCR register struct typedef (only if PCR pointer is needed): {pcr_typedef}
 
     REQUIRED PATTERN for declaring register pointers:
     ```c
@@ -1221,7 +1231,8 @@ Requirements:
 
 - Declare register base pointers using struct-based access (as shown in REGISTER ACCESS section):
     static {system_typedef} * const SYS = ({system_typedef} *)0xFFFFFF00u;
-    static PCR_REGS_t * const PCR = (PCR_REGS_t *)0xFFFFE000u;  /* if needed */
+    static <PCR_TYPEDEF_FROM_PASS1> * const PCR = (<PCR_TYPEDEF_FROM_PASS1> *)0xFFFFE000u;  /* only if needed */
+  IMPORTANT: If no SYSTEM.x-ext.init operation targets PCR.*, do not declare PCR pointer at all.
 
 - For SYSTEM.x-ext.init operations:
     - Parse each "reg" field to determine peripheral (SYSTEM or PCR) and register name
@@ -1235,16 +1246,26 @@ Requirements:
 - The base addresses MUST come from regs.yaml.
 
 - Implement void system_init(void) that performs, in this exact order:
-  1) Apply SYSTEM.x-ext.init register operations in order using struct member access as shown above.
+  1) Call PCR_Init(); then PCR_EnableAllPeripherals(); before any SYSTEM/PLL-sensitive register writes.
+     This ordering is mandatory for RM46 bring-up stability.
+  2) Configure flash wait-state and EEPROM timing registers before any PLL handoff.
+     - Emit a helper like system_setup_flash_waitstates() and call it here.
+     - Program HAL-aligned sequence (RM46):
+         FRDCNTL = (3 << 8) | (1 << 4) | 1
+         FSMWRENA = 0x5; EEPROMCONFIG = 0x00000002 | (3 << 16); FSMWRENA = 0xA
+         FBFALLBACK = 0x00000000
+  3) Apply SYSTEM.x-ext.init register operations in order using struct member access as shown above.
      (Skip any forbidden PLL-owned registers per SYSTEM MODULE SCOPE constraints above.)
-  2) Call PLL_Init() to configure the PLL and activate the complete clock tree.
+  4) Call PLL_Init() to configure the PLL and activate the complete clock tree.
      This is MANDATORY — entry.c calls system_init() and then main(); it does NOT call PLL_Init()
      separately. Without this call the device runs unconfigured on OSCIN only.
-  3) Enable additional base clocks (optional):
+  5) Enable additional base clocks (optional):
      - If SYSTEM.x-ext.base_clock_refs exists, call PLL_EnableClock() for each listed ref, in order.
      - If absent, skip this step (PLL_Init() already enables the core domains).
 
 - The effective behavior MUST match exactly:
+  - PCR_Init() and PCR_EnableAllPeripherals() executed before PLL_Init()
+  - flash wait-state helper/register programming executed before PLL_Init()
   - The provided SYSTEM.x-ext.init list (minus forbidden PLL registers)
   - A call to PLL_Init() after the register operations
   - The provided SYSTEM.x-ext.base_clock_refs list (if present, called after PLL_Init)
@@ -1614,116 +1635,78 @@ Output:
 
 def build_start_asm_prompt():
     return f"""
-    You are generating ARM assembly startup code for a TI Hercules RM46-like MCU, using the TI ARM CGT assembler (armcl) from Code Composer Studio (CCS).
+    You are generating ARM assembly startup code for a TI Hercules RM46-like MCU, using TI ARM CGT assembler syntax.
 
 GOAL
 ----
-Generate a minimal start.s file that:
+Generate start.s for Cortex-R4 bring-up that is compatible with RM46 exception-vector behavior.
 
-- Defines an interrupt vector table section called .intvecs.
-- Places the initial stack pointer and Reset_Handler in .intvecs in the first two entries.
-- Provides minimal placeholder vectors for other exceptions (they may all branch to Reset_Handler).
-- Defines a Reset_Handler label in a .text section.
-- In Reset_Handler:
-  - Loads the address end_of_stack (a linker-defined symbol) into SP.
-  - Branches with link to Reset_Handler_C (a C function implemented elsewhere).
-  - If Reset_Handler_C returns, loops forever.
+CRITICAL CORTEX-R RULES
+-----------------------
+- RM46 exception vectors at 0x00000000 are executable ARM instructions, NOT address words.
+- Therefore:
+  - DO NOT emit a vector table like `.long Reset_Handler` for each vector.
+  - DO emit branch instructions in `.intvecs`:
+      B Reset_Handler
+      B Undef_Handler
+      B SVC_Handler
+      B Prefetch_Abort_Handler
+      B Data_Abort_Handler
+      B Phantom_Handler
+      LDR PC, [PC, #-0x1B0]    ; IRQ (VIM style)
+      LDR PC, [PC, #-0x1B0]    ; FIQ (VIM style)
+
+- Startup must initialize banked stack pointers for exception modes before calling Reset_Handler_C.
+  Required sequence in Reset_Handler:
+  1) Read CPSR
+  2) Switch to FIQ/IRQ/ABT/UND/SVC modes (MSR CPSR_c, <mode>)
+  3) Load SP from stack_addr in each mode
+  4) Return to SVC mode
+  5) BL Reset_Handler_C
+  6) Loop forever if it returns
 
 ASSEMBLER / SYNTAX REQUIREMENTS
 -------------------------------
-- You MUST use TI ARM CGT assembler syntax, not GNU.
-- DO NOT use:
-  - .syntax
-  - .cpu
-  - .section
-  - .word
-- INSTEAD, use:
-  - .sect   for sections
-  - .align  for alignment
-  - .long   for 32-bit constants
-  - .global for global symbols
-  - .ref    for referenced external symbols
-- All labels should end with ':' and be placed at the start of a line.
+- Use TI ARM CGT directives: `.sect`, `.align`, `.global`, `.ref`, `.long`.
+- Use `;` comments.
+- Do not use GNU directives such as `.syntax`, `.cpu`, `.section`, `.word`.
+- Do not use GNU pseudo-op `LDR <reg>, =...` for symbols OR immediates.
+- For symbols, use literal-pool style:
+    LDR   SP, stack_addr
+    ...
+  stack_addr:
+    .long end_of_stack
+- For immediate constants, use TI-safe instruction form:
+    MOVW  R0, #0x0000
+    MOVT  R0, #0x0800
+- The token `=0x...` MUST NOT appear anywhere in start.s.
 
-VECTOR TABLE LAYOUT
--------------------
-- The vector table must be emitted in a section named ".intvecs":
+REQUIRED LABELS
+---------------
+- Reset_Handler
+- Undef_Handler
+- SVC_Handler
+- Prefetch_Abort_Handler
+- Data_Abort_Handler
+- Phantom_Handler
+- Reset_Loop
+- stack_addr
 
-    .sect   ".intvecs"
-    .align  4
+REQUIRED EXTERNAL SYMBOLS
+-------------------------
+- .ref Reset_Handler_C
+- .ref end_of_stack
 
-- The first entries should be (in order):
-
-    0x00: initial SP value (symbol end_of_stack)
-    0x04: Reset vector (address of Reset_Handler)
-    0x08: Undefined instruction vector
-    0x0C: Supervisor call (SVC) vector
-    0x10: Prefetch abort vector
-    0x14: Data abort vector
-    0x18: Reserved word
-    0x1C: IRQ vector
-    0x20: FIQ vector
-
-- For this minimal BSP, ALL exception vectors except the initial SP may simply point to Reset_Handler (or a single error handler label that loops forever).
-
-- Example shape (do NOT copy verbatim, but match the structure):
-
-    .sect   ".intvecs"
-    .align  4
-
-    .long   end_of_stack      ; initial stack pointer
-    .long   Reset_Handler     ; reset
-    .long   Reset_Handler     ; undef
-    .long   Reset_Handler     ; svc
-    .long   Reset_Handler     ; prefetch abort
-    .long   Reset_Handler     ; data abort
-    .long   0                 ; reserved
-    .long   Reset_Handler     ; irq
-    .long   Reset_Handler     ; fiq
-
-CODE SECTION AND RESET HANDLER
-------------------------------
-- After the vector table, define a .text section for the actual Reset_Handler code:
-
-    .sect   ".text"
-    .align  4
-
-- You MUST declare:
-
-    .global  Reset_Handler
-    .ref     Reset_Handler_C
-    .ref     end_of_stack
-
-- Implement Reset_Handler:
-
-  - Use an address label to load end_of_stack into SP using TI assembler syntax.
-    One safe pattern is:
-
-        Reset_Handler:
-            LDR   SP, stack_addr
-            BL    Reset_Handler_C
-
-        Reset_Loop:
-            B     Reset_Loop
-
-        stack_addr:
-            .long end_of_stack
-
-    This avoids GNU-style "LDR SP, =symbol" syntax and uses only TI-supported directives.
-
-- Reset_Handler_C is a C function defined in entry.c and must be declared .ref so the linker can resolve it.
-- end_of_stack is a symbol defined in the linker command file and must be declared .ref as well.
+EXCEPTION HANDLERS
+------------------
+- Keep exception handlers minimal and deterministic: branch to local infinite loop labels.
+- Do NOT emit RAM scratch writes or debug-tag stores in handlers.
 
 OUTPUT CONTRACT
 ---------------
-- You MUST produce exactly one FILE block:
-
+- Emit exactly one file block:
     ===== FILE: source/start.s =====
-    <assembly here>
-
-- Use only TI assembler directives (.sect, .align, .long, .global, .ref) and ARM instructions (LDR, BL, B).
-- Do NOT emit any C code or additional files.
-- The file must end with a trailing newline to avoid compiler warnings.
+- File must end with a trailing newline.
 
 Now generate start.s that satisfies all requirements above.
 

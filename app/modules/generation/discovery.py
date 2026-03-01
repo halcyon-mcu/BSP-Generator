@@ -15,9 +15,79 @@ from .prompt import (
 from ..utils.utils import extract_text_from_bedrock_response
 from ..yaml.yaml_utils import dump_yaml_str, get_soc_peripherals
 from ..utils.file_locking import FileLock
+from ..utils.file_io import normalize_generated_text
 from ..validation.field_validator import validate_manifest_completeness
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_manifest_entry(manifest: Dict[str, Any], module_name: str) -> Dict[str, Any]:
+    """
+    Normalize manifest shape so downstream passes have stable required fields.
+    """
+    normalized = dict(manifest or {})
+    mod = module_name.upper()
+
+    normalized.setdefault("module_name", mod)
+    normalized.setdefault("api_prefix", mod)
+    normalized.setdefault("reg_header_file", f"reg_{module_name.lower()}.h")
+    normalized.setdefault("header_file", f"{module_name.lower()}.h")
+    normalized.setdefault("source_file", f"{module_name.lower()}.c")
+    normalized.setdefault("init_function", f"{mod}_Init")
+    normalized.setdefault("types", [])
+    normalized.setdefault("dependencies", [])
+    normalized.setdefault("categories", [])
+
+    if not isinstance(normalized.get("types"), list):
+        normalized["types"] = []
+    if not isinstance(normalized.get("dependencies"), list):
+        normalized["dependencies"] = []
+    if not isinstance(normalized.get("categories"), list):
+        normalized["categories"] = []
+
+    functions = normalized.get("functions", [])
+    if not isinstance(functions, list):
+        functions = []
+
+    fixed_functions: List[Dict[str, Any]] = []
+    for fn in functions:
+        if not isinstance(fn, dict):
+            continue
+        name = fn.get("name") or ""
+        returns = fn.get("returns", "void")
+        params = fn.get("parameters")
+        proto = fn.get("prototype")
+
+        if not proto and name:
+            if isinstance(params, list) and params:
+                param_chunks: List[str] = []
+                for p in params:
+                    if isinstance(p, dict):
+                        p_type = p.get("type", "uint32_t")
+                        p_name = p.get("name", "arg")
+                        param_chunks.append(f"{p_type} {p_name}")
+                param_text = ", ".join(param_chunks) if param_chunks else "void"
+            else:
+                param_text = "void"
+            proto = f"{returns} {name}({param_text});"
+
+        fixed = dict(fn)
+        if name:
+            fixed["name"] = name
+        if proto:
+            fixed["prototype"] = proto
+        fixed_functions.append(fixed)
+
+    if not fixed_functions:
+        init_name = normalized.get("init_function", f"{mod}_Init")
+        fixed_functions = [{
+            "name": init_name,
+            "prototype": f"void {init_name}(void);",
+            "brief": f"Initialize the {mod} module"
+        }]
+
+    normalized["functions"] = fixed_functions
+    return normalized
 
 
 def clean_json_string(json_str: str) -> str:
@@ -131,6 +201,8 @@ async def run_discovery_pass(
         if tracker:
             tracker.set_total_tasks(len(peripherals) * 2)  # manifest + header per module
 
+    pass1_tokens_total = 0
+
     async def _process_module_manifest(name: str, soc_slice: str) -> Optional[Dict[str, Any]]:
         """Fetch JSON Manifest with retry logic"""
         from ..regeneration.retry_policy import RetryPolicy, FailureReason
@@ -150,6 +222,16 @@ async def run_discovery_pass(
                 prompt = build_manifest_prompt(name, soc_slice)
                 resp = await invoke_model(model, current_tokens, [{"role": "user", "content": prompt}])
                 text = extract_text_from_bedrock_response(resp)
+                nonlocal pass1_tokens_total
+                if token_allocator:
+                    try:
+                        from ..utils.utils import extract_usage_from_bedrock_response
+                        usage = extract_usage_from_bedrock_response(resp)
+                        tokens_used = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+                        if tokens_used > 0:
+                            pass1_tokens_total += tokens_used
+                    except Exception:
+                        pass
 
                 # Check for truncation
                 truncation_reason = detect_simple_truncation(text)
@@ -179,6 +261,7 @@ async def run_discovery_pass(
                 try:
                     manifest = json.loads(json_text)
 
+                    manifest = _normalize_manifest_entry(manifest, name)
                     # Validate manifest completeness
                     validation_errors = validate_manifest_completeness(manifest, name)
                     if validation_errors:
@@ -193,6 +276,7 @@ async def run_discovery_pass(
                         cleaned_json = clean_json_string(json_text)
                         manifest = json.loads(cleaned_json)
 
+                        manifest = _normalize_manifest_entry(manifest, name)
                         # Validate manifest completeness
                         validation_errors = validate_manifest_completeness(manifest, name)
                         if validation_errors:
@@ -280,6 +364,16 @@ async def run_discovery_pass(
                 prompt = build_reg_header_prompt(name, soc_slice, regs_slice)
                 resp = await invoke_model(model, current_tokens, [{"role": "user", "content": prompt}])
                 text = extract_text_from_bedrock_response(resp)
+                nonlocal pass1_tokens_total
+                if token_allocator:
+                    try:
+                        from ..utils.utils import extract_usage_from_bedrock_response
+                        usage = extract_usage_from_bedrock_response(resp)
+                        tokens_used = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+                        if tokens_used > 0:
+                            pass1_tokens_total += tokens_used
+                    except Exception:
+                        pass
 
                 # Check for truncation before parsing
                 truncation_reason = detect_simple_truncation(text)
@@ -304,9 +398,6 @@ async def run_discovery_pass(
                     end_block = code_text.find("```")
                     if end_block != -1:
                         extracted = code_text[:end_block].strip()
-                        # Record success with module count for Pass 1
-                        if token_allocator:
-                            token_allocator.record_success(f"pass1_{name}_header", current_tokens, num_modules=len(peripherals))
                         return (extracted, text)
 
                 # 2. Try generic markdown
@@ -316,15 +407,11 @@ async def run_discovery_pass(
                     end_block = code_text.find("```")
                     if end_block != -1:
                         extracted = code_text[:end_block].strip()
-                        if token_allocator:
-                            token_allocator.record_success(f"pass1_{name}_header", current_tokens, num_modules=len(peripherals))
                         return (extracted, text)
 
                 # 3. Fallback: If it looks like a header, return full text
                 if "#ifndef" in text or "typedef" in text:
                     extracted = text.replace("```c", "").replace("```", "").strip()
-                    if token_allocator:
-                        token_allocator.record_success(f"pass1_{name}_header", current_tokens, num_modules=len(peripherals))
                     return (extracted, text)
 
                 # Could not parse
@@ -450,7 +537,25 @@ async def run_discovery_pass(
         man_task = asyncio.create_task(_process_module_manifest(name, soc_slice))
         head_task = asyncio.create_task(_process_module_header(name, soc_slice, regs_slice))
 
-        man_res, head_res_tuple = await asyncio.gather(man_task, head_task)
+        man_res, head_res_tuple = await asyncio.gather(
+            man_task,
+            head_task,
+            return_exceptions=True,
+        )
+
+        if isinstance(man_res, BaseException):
+            logger.error(
+                f"Discovery manifest task failed for {name}: {man_res}",
+                exc_info=(type(man_res), man_res, man_res.__traceback__),
+            )
+            man_res = None
+
+        if isinstance(head_res_tuple, BaseException):
+            logger.error(
+                f"Discovery header task failed for {name}: {head_res_tuple}",
+                exc_info=(type(head_res_tuple), head_res_tuple, head_res_tuple.__traceback__),
+            )
+            head_res_tuple = None
 
         # Unpack header result (extracted_code, raw_response)
         if head_res_tuple:
@@ -479,7 +584,26 @@ async def run_discovery_pass(
     manifest_entries = {}  # Collect manifest entries
 
     for f in asyncio.as_completed(tasks):
-        res = await f
+        try:
+            res = await f
+        except asyncio.CancelledError as e:
+            logger.error(
+                f"Discovery task cancelled: {e}",
+                exc_info=(type(e), e, e.__traceback__),
+            )
+            if tracker:
+                tracker.increment_failure()
+                tracker.add_message("Discovery task cancelled; continuing with remaining modules", level="warning")
+            continue
+        except Exception as e:
+            logger.error(
+                f"Unhandled exception collecting discovery task result: {e}",
+                exc_info=(type(e), e, e.__traceback__),
+            )
+            if tracker:
+                tracker.increment_failure()
+                tracker.add_message("Discovery task crashed; continuing with remaining modules", level="error")
+            continue
 
         if res:
             mod_name = res.get("module_name", "Unknown")
@@ -494,7 +618,10 @@ async def run_discovery_pass(
 
                 # Use file locking to prevent race conditions
                 with FileLock(header_path):
-                    header_path.write_text(header_content, encoding="utf-8")
+                    header_path.write_text(
+                        normalize_generated_text(header_content, header_path),
+                        encoding="utf-8",
+                    )
 
                 if tracker:
                     tracker.increment_success()
@@ -604,6 +731,10 @@ async def run_discovery_pass(
 
     logger.info(f"Pass 1 Complete. Registry built with {success_count} modules.")
     logger.info(f"Manifest: {manifest_path}")
+
+    # Record one cumulative pass1 usage sample per run.
+    if token_allocator and pass1_tokens_total > 0:
+        token_allocator.record_success("pass1_total", pass1_tokens_total, num_modules=len(peripherals))
 
     if enable_validation and validation_results:
         failed_count = sum(1 for _, vr in validation_results if not vr.is_valid)

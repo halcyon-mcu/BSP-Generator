@@ -1,0 +1,22 @@
+target_board: LAUNCHXL2-TMS57012-RM46
+modules:
+  enabled:
+  - SCI
+  - GIO
+  - LIN
+  - PLL
+  - IOMM
+  - PCR
+  - SYSTEM
+  - VIM
+sci:
+  default_baud: 9600
+pins:
+  lock_board_mapping: true
+clocks:
+  mode: board_default
+strict_validation: true
+contract_mode: auto_fix_then_fail
+contract_lock_mode: strict
+bsp_validation:
+  enabled: true

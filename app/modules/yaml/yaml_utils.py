@@ -140,6 +140,94 @@ def load_pinmux_yaml(path: Path) -> Dict[str, Any]:
     return data
 
 
+def load_board_yaml(path: Path) -> Dict[str, Any]:
+    """Load board.yaml and perform lightweight schema validation."""
+    data = _load_yaml(path)
+
+    # Optional schema, allow extra fields for board-specific metadata.
+    is_valid, errors = validate_yaml_schema(data, BoardYAML)
+    if not is_valid:
+        error_msg = f"board.yaml validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    logger.debug("board.yaml validation passed")
+    return data
+
+
+def load_generation_profile(path: Path) -> Dict[str, Any]:
+    """
+    Load optional generation profile YAML with minimal validation.
+
+    Expected shape (all keys optional):
+      target_board: str
+      modules:
+        enabled: [str, ...]
+      sci:
+        default_baud: int
+      pins:
+        lock_board_mapping: bool
+      clocks:
+        mode: "board_default"
+      strict_validation: bool
+      bsp_validation:
+        enabled: bool
+      contract_mode: "auto_fix_then_fail" | "hard_fail" | "warn_only"
+      require_ccs_proof: bool
+    """
+    data = _load_yaml(path)
+
+    if "target_board" in data and not isinstance(data["target_board"], str):
+        raise ValueError("generation_profile.yaml: 'target_board' must be a string")
+
+    modules = data.get("modules", {})
+    if modules and not isinstance(modules, dict):
+        raise ValueError("generation_profile.yaml: 'modules' must be a mapping")
+    enabled = modules.get("enabled", [])
+    if enabled and (not isinstance(enabled, list) or not all(isinstance(m, str) for m in enabled)):
+        raise ValueError("generation_profile.yaml: 'modules.enabled' must be a list of strings")
+
+    sci = data.get("sci", {})
+    if sci and not isinstance(sci, dict):
+        raise ValueError("generation_profile.yaml: 'sci' must be a mapping")
+    if "default_baud" in sci and not isinstance(sci["default_baud"], int):
+        raise ValueError("generation_profile.yaml: 'sci.default_baud' must be an integer")
+
+    pins = data.get("pins", {})
+    if pins and not isinstance(pins, dict):
+        raise ValueError("generation_profile.yaml: 'pins' must be a mapping")
+    if "lock_board_mapping" in pins and not isinstance(pins["lock_board_mapping"], bool):
+        raise ValueError("generation_profile.yaml: 'pins.lock_board_mapping' must be boolean")
+
+    clocks = data.get("clocks", {})
+    if clocks and not isinstance(clocks, dict):
+        raise ValueError("generation_profile.yaml: 'clocks' must be a mapping")
+    if "mode" in clocks and clocks["mode"] not in ("board_default",):
+        raise ValueError("generation_profile.yaml: 'clocks.mode' must be 'board_default'")
+
+    if "strict_validation" in data and not isinstance(data["strict_validation"], bool):
+        raise ValueError("generation_profile.yaml: 'strict_validation' must be boolean")
+
+    bsp_validation = data.get("bsp_validation", {})
+    if bsp_validation and not isinstance(bsp_validation, dict):
+        raise ValueError("generation_profile.yaml: 'bsp_validation' must be a mapping")
+    if "enabled" in bsp_validation and not isinstance(bsp_validation["enabled"], bool):
+        raise ValueError("generation_profile.yaml: 'bsp_validation.enabled' must be boolean")
+
+    if "contract_mode" in data:
+        valid_modes = {"auto_fix_then_fail", "hard_fail", "warn_only"}
+        if data["contract_mode"] not in valid_modes:
+            raise ValueError(
+                "generation_profile.yaml: 'contract_mode' must be one of "
+                "'auto_fix_then_fail', 'hard_fail', 'warn_only'"
+            )
+
+    if "require_ccs_proof" in data and not isinstance(data["require_ccs_proof"], bool):
+        raise ValueError("generation_profile.yaml: 'require_ccs_proof' must be boolean")
+
+    return data
+
+
 # ---------------------------------------------------------------------------
 # SOC helpers
 # ---------------------------------------------------------------------------

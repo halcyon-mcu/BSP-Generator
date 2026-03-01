@@ -13,6 +13,7 @@ This module provides:
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
@@ -148,6 +149,148 @@ class ValidationResult:
 # ==============================================================================
 # VALIDATION FUNCTIONS
 # ==============================================================================
+
+def _validate_system_init_startup_contract(
+    written_files: List[Path],
+    result: "ValidationResult"
+) -> None:
+    """
+    Enforce startup ordering contract for system.c bring-up.
+
+    Contract:
+      PCR_Init() -> PCR_EnableAllPeripherals() -> PLL_Init()
+    """
+    system_c = None
+    for file_path in written_files:
+        if file_path.name.lower() == "system.c":
+            system_c = file_path
+            break
+
+    if not system_c or not system_c.exists():
+        return
+
+    try:
+        content = system_c.read_text(encoding="utf-8", errors="ignore")
+    except Exception as e:
+        result.warnings.append(f"system.c: Could not read file for startup contract check: {e}")
+        return
+
+    required_calls = ["PCR_Init(", "PCR_EnableAllPeripherals(", "PLL_Init("]
+    missing = [call for call in required_calls if call not in content]
+    if missing:
+        result.is_valid = False
+        result.errors.append(
+            "system.c: Missing required startup calls: " + ", ".join(missing)
+        )
+        return
+
+    pcr_init_idx = content.find("PCR_Init(")
+    pcr_enable_idx = content.find("PCR_EnableAllPeripherals(")
+    pll_init_idx = content.find("PLL_Init(")
+
+    if not (pcr_init_idx < pcr_enable_idx < pll_init_idx):
+        result.is_valid = False
+        result.errors.append(
+            "system.c: Startup ordering violation. Expected PCR_Init() -> "
+            "PCR_EnableAllPeripherals() -> PLL_Init()."
+        )
+
+    # Required: explicit flash wait-state setup before PLL handoff.
+    flash_markers = [
+        "system_setup_flash_waitstates(",
+        "FLASH_FRDCNTL",
+    ]
+    flash_indices = [content.find(marker) for marker in flash_markers if marker in content]
+    if not flash_indices:
+        result.is_valid = False
+        result.errors.append(
+            "system.c: Missing explicit flash wait-state setup before PLL bring-up "
+            "(expected system_setup_flash_waitstates()/FLASH_FRDCNTL programming)."
+        )
+    else:
+        flash_idx = min(flash_indices)
+        if flash_idx > pll_init_idx:
+            result.is_valid = False
+            result.errors.append(
+                "system.c: Flash wait-state setup must occur before PLL_Init()."
+            )
+
+
+def _validate_start_asm_contract(
+    written_files: List[Path],
+    result: "ValidationResult"
+) -> None:
+    """
+    Enforce Cortex-R startup assembly contract for start.s.
+
+    Contract:
+      - .intvecs contains executable branch vectors (not .long Reset_Handler table)
+      - IRQ/FIQ vectors use VIM-style LDR PC indirection
+      - Reset handler initializes banked mode stacks before calling Reset_Handler_C
+    """
+    start_s = None
+    for file_path in written_files:
+        if file_path.name.lower() == "start.s":
+            start_s = file_path
+            break
+
+    if not start_s or not start_s.exists():
+        return
+
+    try:
+        content = start_s.read_text(encoding="utf-8", errors="ignore")
+    except Exception as e:
+        result.warnings.append(f"start.s: Could not read file for startup contract check: {e}")
+        return
+
+    pattern_checks = [
+        (r"\.sect\s+\"\.intvecs\"", ".intvecs section"),
+        (r"\bB\s+(?:Reset_Handler|Reset_Entry)\b", "reset vector branch"),
+        (r"\bB\s+Undef_Handler\b", "Undef handler vector"),
+        (r"\bB\s+SVC_Handler\b", "SVC handler vector"),
+        (r"\bB\s+Prefetch_Abort_Handler\b", "Prefetch abort vector"),
+        (r"\bB\s+Data_Abort_Handler\b", "Data abort vector"),
+        (r"\bB\s+Phantom_Handler\b", "Phantom handler vector"),
+        (r"\bMRS\s+R0,\s*CPSR\b", "CPSR read in reset path"),
+        (r"\bMSR\s+CPSR_c\b", "mode switch writes"),
+        (r"\bLDR\s+SP,\s*stack_addr\b", "stack pointer initialization"),
+        (r"\bBL\s+Reset_Handler_C\b", "C reset handoff"),
+        (r"^\s*stack_addr\s*:", "stack_addr label"),
+        (r"\.long\s+end_of_stack\b", "end_of_stack literal"),
+    ]
+    missing = [
+        name
+        for pattern, name in pattern_checks
+        if re.search(pattern, content, re.MULTILINE) is None
+    ]
+    if missing:
+        result.is_valid = False
+        result.errors.append(
+            "start.s: Missing required Cortex-R startup elements: " + ", ".join(missing)
+        )
+
+    vim_vector_count = len(re.findall(r"\bLDR\s+PC,\s*\[PC,\s*#-0x1B0\]", content, re.MULTILINE))
+    if vim_vector_count < 2:
+        result.is_valid = False
+        result.errors.append(
+            "start.s: Missing IRQ/FIQ VIM vectors using 'LDR PC, [PC, #-0x1B0]'."
+        )
+
+    long_reset_count = len(re.findall(r'^\s*\.long\s+Reset_Handler\b', content, re.MULTILINE))
+    if long_reset_count >= 3:
+        result.is_valid = False
+        result.errors.append(
+            "start.s: Detected address-word vector table (.long Reset_Handler). "
+            "RM46 requires executable branch vectors in .intvecs."
+        )
+
+    if re.search(r"^\s*LDR\s+R\d+\s*,\s*=0x[0-9A-Fa-f]+", content, re.MULTILINE):
+        result.is_valid = False
+        result.errors.append(
+            "start.s: Detected GNU-style literal immediate loads (LDR Rn, =0x...). "
+            "Use TI-safe MOVW/MOVT sequences."
+        )
+
 
 def validate_facts_mirror(
     facts_mirror: FactsMirror,
@@ -554,6 +697,24 @@ def validate_generation_output(
     # Parse FACTS MIRROR from preamble
     facts_mirror = parse_facts_mirror(preamble)
     result.facts_mirror = facts_mirror
+
+    # Check EOF newline hygiene for generated source/script files
+    newline_exts = {".c", ".h", ".s", ".S", ".cmd", ".ld"}
+    for file_path in written_files:
+        if file_path.suffix not in newline_exts:
+            continue
+        try:
+            data = file_path.read_bytes()
+            if data and not data.endswith(b"\n"):
+                result.warnings.append(f"{file_path.name}: Missing newline at end of file")
+        except Exception as e:
+            result.warnings.append(f"Could not check EOF newline in {file_path.name}: {e}")
+
+    # Enforce startup contract for system initialization phase.
+    if tag == "system_init":
+        _validate_system_init_startup_contract(written_files, result)
+    if tag == "start_asm":
+        _validate_start_asm_contract(written_files, result)
 
     # Check for TODOs
     if facts_mirror.has_todos:

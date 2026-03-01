@@ -3,6 +3,7 @@ import asyncio
 import inspect
 import json
 import os
+import re
 import signal
 import sys
 from pathlib import Path
@@ -27,11 +28,25 @@ from modules.generation.prompt import (
     _cost_tracker,                # global cost tracker
 )
 from modules.utils.user import prompt_user_for_peripherals, get_peripheral_list
+from modules.contracts.api_contract_manifest import (
+    build_api_contract_manifest,
+    hydrate_contract_from_generated_headers,
+    write_api_contract_manifest,
+)
+from modules.contracts.contract_checker import (
+    check_bsp_validate_contract,
+)
+from modules.contracts.contract_autofix import (
+    autofix_bsp_validate,
+)
+from modules.validation.startup_contract_validator import validate_startup_contract
 
 from modules.yaml.yaml_utils import (
     dump_yaml_str,
     load_bus_yaml,
     load_soc_yaml,
+    load_board_yaml,
+    load_generation_profile,
     load_pinmux_yaml,
     load_regs_yaml,
     load_memmap_yaml,
@@ -58,6 +73,36 @@ CORE_MODULES = [
 CORE_MANIFEST_ALIASES = {
     # Removed PLL->clock alias. PLL module provides clock APIs directly.
 }
+CRITICAL_BUILD_MODULES = {"SCI", "GIO", "PLL", "IOMM", "PCR"}
+
+DEFAULT_GENERATION_PROFILE = {
+    "target_board": "LAUNCHXL2-TMS57012-RM46",
+    "modules": {
+        "enabled": ["SCI", "GIO", "LIN", "PLL", "IOMM", "PCR", "SYSTEM", "VIM"]
+    },
+    "sci": {"default_baud": 9600},
+    "pins": {"lock_board_mapping": True},
+    "clocks": {"mode": "board_default"},
+    "strict_validation": False,
+    "bsp_validation": {"enabled": True},
+    "contract_mode": "auto_fix_then_fail",
+    "contract_lock_mode": "strict",
+    "require_ccs_proof": True,
+}
+
+
+def _merge_generation_profile(override_profile: dict | None) -> dict:
+    """Merge user profile over defaults with shallow-per-section semantics."""
+    merged = json.loads(json.dumps(DEFAULT_GENERATION_PROFILE))
+    if not override_profile:
+        return merged
+
+    for key, value in override_profile.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key].update(value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def resolve_dependencies(modules: List[str], manifest: Dict) -> List[str]:
@@ -106,7 +151,7 @@ def gather_all_clock_domains(soc_data: dict, bus_data: dict = None) -> list:
     domains = set()
 
     # 1. Scan soc.yaml peripherals
-    for periph in soc_data.get("peripherals", []):
+    for periph in soc_data.get("soc", {}).get("peripherals", []):
         ref = periph.get("clock_ref")
         if ref and isinstance(ref, str):
             domains.add(ref)
@@ -469,7 +514,7 @@ async def _generate_startup(
     progress_manager = None,
 ):
     """Generate start.s (assembly vector / SP setup)"""
-    return await _invoke_and_write(
+    written_files = await _invoke_and_write(
         tag="start_asm",
         system_prompt=system_prompt,
         user_prompt=start_user_prompt,
@@ -480,6 +525,45 @@ async def _generate_startup(
         token_allocator=token_allocator,
         progress_manager=progress_manager,
     )
+    _sanitize_start_asm_files(written_files)
+    return written_files
+
+
+def _sanitize_start_asm_files(written_files: List[Path]) -> None:
+    """
+    Normalize start.s output for TI ARM CGT compatibility.
+
+    Rewrites GNU-style literal-immediate pseudo-ops:
+      LDR Rx, =0x12345678
+    into:
+      MOVW Rx, #0x5678
+      MOVT Rx, #0x1234
+    """
+    ldr_hex_re = re.compile(r"^(\s*)LDR\s+(R\d+)\s*,\s*=0x([0-9A-Fa-f]{1,8})\s*$")
+
+    for path in written_files:
+        if path.suffix.lower() != ".s":
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        lines = text.splitlines()
+        updated: List[str] = []
+        changed = False
+
+        for line in lines:
+            match = ldr_hex_re.match(line)
+            if not match:
+                updated.append(line)
+                continue
+            indent, reg, hex_value = match.groups()
+            value = int(hex_value, 16)
+            low = value & 0xFFFF
+            high = (value >> 16) & 0xFFFF
+            updated.append(f"{indent}MOVW    {reg}, #0x{low:04X}")
+            updated.append(f"{indent}MOVT    {reg}, #0x{high:04X}")
+            changed = True
+
+        if changed:
+            path.write_text("\n".join(updated) + "\n", encoding="utf-8")
 
 
 async def _generate_entry(
@@ -705,6 +789,11 @@ async def main():
         action="store_true",
         help="Use mock API responses for testing (no real API calls, no cost)",
     )
+    parser.add_argument(
+        "--profile",
+        default=None,
+        help="Optional generation profile YAML path (e.g., yaml_in/generation_profile.yaml)",
+    )
     args = parser.parse_args()
 
     # Enable mock mode if requested
@@ -758,10 +847,43 @@ async def main():
     memmap_data = load_memmap_yaml(Path(args.yamlpath) / "memmap.yaml")
     bus_data = load_bus_yaml(Path(args.yamlpath) / "bus.yaml")
     pinmux_data = load_pinmux_yaml(Path(args.yamlpath) / "pinmux.yaml")
+    board_data = load_board_yaml(Path(args.yamlpath) / "board.yaml")
+
+    # Load optional profile and merge with defaults
+    profile_data = None
+    if args.profile:
+        profile_data = load_generation_profile(Path(args.profile))
+        print(f"[info] Loaded generation profile: {args.profile}")
+    elif (Path(args.yamlpath) / "generation_profile.yaml").exists():
+        profile_path = Path(args.yamlpath) / "generation_profile.yaml"
+        profile_data = load_generation_profile(profile_path)
+        print(f"[info] Loaded generation profile: {profile_path}")
+
+    generation_profile = _merge_generation_profile(profile_data)
+    strict_validation_enabled = bool(generation_profile.get("strict_validation", False))
+    contract_mode = str(generation_profile.get("contract_mode", "auto_fix_then_fail"))
+    contract_lock_mode = str(generation_profile.get("contract_lock_mode", "strict")).strip().lower()
+    if contract_lock_mode not in {"strict", "relaxed"}:
+        print(f"[warn] Unknown contract_lock_mode '{contract_lock_mode}', defaulting to 'strict'")
+        contract_lock_mode = "strict"
+    require_ccs_proof = bool(generation_profile.get("require_ccs_proof", True))
+    target_board_name = generation_profile.get("target_board")
+    actual_board_name = board_data.get("board", {}).get("name")
+    if target_board_name and actual_board_name and target_board_name != actual_board_name:
+        print(f"[warn] Profile target_board '{target_board_name}' != board.yaml name '{actual_board_name}'")
+
+    # Inject profile defaults into SOC slices consumed by prompts
+    default_baud = generation_profile.get("sci", {}).get("default_baud")
+    if isinstance(default_baud, int):
+        for periph in soc_data.get("soc", {}).get("peripherals", []):
+            if periph.get("name", "").upper() in {"SCI", "LIN"}:
+                x_ext = periph.setdefault("x-ext", {})
+                if isinstance(x_ext, dict):
+                    x_ext["default_baud"] = default_baud
 
     # Validate cross-file references
     from modules.validation.cross_reference_validator import validate_and_report_cross_references
-    if not validate_and_report_cross_references(soc_data, regs_data, irq_data, bus_data, pinmux_data):
+    if not validate_and_report_cross_references(soc_data, regs_data, irq_data, bus_data, pinmux_data, board_data):
         print("[error] Cross-reference validation failed - see errors above")
         return 1
 
@@ -780,8 +902,11 @@ async def main():
     from modules.regeneration.token_strategy import AdaptiveTokenAllocator
     token_allocator = AdaptiveTokenAllocator()
     token_history_path = out_dir.parent / ".token_history.json"
-    token_allocator.load_history(token_history_path)
-    progress_manager.log_or_print(f"[info] Loaded token history from {token_history_path.name}")
+    if args.mock:
+        progress_manager.log_or_print("[info] Mock mode: skipping token history load/save")
+    else:
+        token_allocator.load_history(token_history_path)
+        progress_manager.log_or_print(f"[info] Loaded token history from {token_history_path.name}")
 
     # Reset cost tracker for this generation run
     _cost_tracker.reset()
@@ -813,7 +938,12 @@ async def main():
     pass2_modules = ["PLL", "IOMM", "PCR"]  # Pass 2: Core infrastructure drivers
 
     if generate_peripherals:
-        # Use --modules argument if provided, otherwise prompt interactively
+        profile_enabled = generation_profile.get("modules", {}).get("enabled", [])
+
+        # Selection priority:
+        # 1) explicit CLI modules
+        # 2) profile modules
+        # 3) interactive prompt
         if args.modules:
             progress_manager.log_or_print(f"[info] Using peripherals from command line: {', '.join(args.modules)}")
             # Filter soc_data to only include specified modules
@@ -823,6 +953,13 @@ async def main():
                 found_names = [p.get("name") for p in chosen_peripherals]
                 missing = set(m.upper() for m in args.modules) - set(n.upper() for n in found_names)
                 print(f"[warn] Could not find modules: {', '.join(missing)}")
+        elif profile_enabled:
+            enabled_upper = {m.upper() for m in profile_enabled}
+            all_peripherals = get_peripheral_list(soc_data)
+            chosen_peripherals = [p for p in all_peripherals if p.get("name", "").upper() in enabled_upper]
+            progress_manager.log_or_print(
+                f"[info] Using modules from profile: {', '.join(profile_enabled)}"
+            )
         else:
             print("\n[user] Select Peripherals for BSP Generation:")
             print("[info] Core infrastructure (SYSTEM, VIM) are platform files; PLL driver provides clock APIs")
@@ -905,6 +1042,10 @@ async def main():
 
     # --- PASS 1: Architecture Discovery ---
     bsp_manifest = None
+    api_contract_manifest = None
+    startup_contract_result = None
+    bsp_validate_contract_result = None
+    bsp_validate_autofix_actions = []
     if pass1_modules or not generate_peripherals:
         progress_manager.log_or_print("\n[info] Starting Pass 1: Architecture Discovery...")
         bsp_manifest = await run_discovery_pass(
@@ -952,6 +1093,11 @@ async def main():
             manifest_path = out_dir / "bsp_manifest.json"
             manifest_path.write_text(json.dumps(bsp_manifest, indent=2), encoding="utf-8")
 
+        if bsp_manifest:
+            api_contract_manifest = build_api_contract_manifest(bsp_manifest, generation_profile)
+            contract_path = write_api_contract_manifest(out_dir, api_contract_manifest)
+            print(f"[ok] API contract manifest written: {contract_path}")
+
         # --- DEPENDENCY RESOLUTION ---
         # Resolve dependencies to include PCR and other required modules
         if generate_peripherals and pass2_modules and bsp_manifest:
@@ -970,6 +1116,7 @@ async def main():
             pass2_validation_results = await run_implementation_pass(
                 bsp_manifest,
                 soc_data,
+                board_data,
                 bus_data,
                 pinmux_data,
                 model_enum,
@@ -978,10 +1125,24 @@ async def main():
                 allowed_modules=pass2_modules,
                 regs_data=regs_data,
                 enable_validation=True,
+                strict_validation=strict_validation_enabled,
+                contract_mode=contract_mode,
+                api_contract_manifest=api_contract_manifest,
                 token_allocator=token_allocator,
                 progress_manager=progress_manager
             )
             progress_manager.log_or_print("\n[info] Pass 2 Complete.")
+
+            if api_contract_manifest:
+                if contract_lock_mode == "relaxed":
+                    api_contract_manifest = hydrate_contract_from_generated_headers(
+                        out_dir,
+                        api_contract_manifest,
+                    )
+                    write_api_contract_manifest(out_dir, api_contract_manifest)
+                    print("[ok] API contract manifest hydrated from generated headers (relaxed lock mode)")
+                else:
+                    print("[info] Contract lock mode is strict: skipping header hydration to preserve canonical contract")
 
             # Check for shutdown request
             if _shutdown_requested:
@@ -1030,6 +1191,11 @@ async def main():
         if init_order.is_valid():
             print(f"[ok] Dependency graph valid - {len(init_order.order)} modules")
             print(f"[info] Init order: {' -> '.join(init_order.order[:5])}{'...' if len(init_order.order) > 5 else ''}")
+            startup_contract_result = validate_startup_contract(init_order, out_dir)
+            if not startup_contract_result.get("passes", True):
+                print("[warn] Startup contract validation failed before main.c generation")
+                for err in startup_contract_result.get("errors", [])[:5]:
+                    print(f"  - {err}")
 
             # Generate main.c with correct init sequence
             main_c_path = generate_main_c(
@@ -1037,10 +1203,37 @@ async def main():
                 dep_graph,
                 out_dir,
                 include_tests=args.include_tests,
-                manifest=bsp_manifest
+                manifest=bsp_manifest,
+                generation_profile=generation_profile,
+                board_data=board_data,
+                api_contract_manifest=api_contract_manifest,
             )
             test_msg = " with test harness" if args.include_tests else ""
             print(f"[ok] Generated {main_c_path.name} with dependency-ordered init sequence{test_msg}")
+
+            # Validate and autofix bsp_validate helper contract drift deterministically
+            if api_contract_manifest:
+                bsp_validate_candidates = [
+                    out_dir / "bsp_validate.c",
+                    out_dir / "include" / "bsp_validate.c",
+                    out_dir / "source" / "bsp_validate.c",
+                ]
+                bsp_validate_path = next((p for p in bsp_validate_candidates if p.exists()), bsp_validate_candidates[0])
+                bsp_validate_contract_result = check_bsp_validate_contract(
+                    bsp_validate_path,
+                    api_contract_manifest,
+                )
+                if not bsp_validate_contract_result.get("passed", True):
+                    if contract_mode == "auto_fix_then_fail":
+                        fix_result = autofix_bsp_validate(bsp_validate_path, api_contract_manifest)
+                        for action in fix_result.get("actions", []):
+                            bsp_validate_autofix_actions.append(
+                                {"module": "BSP_VALIDATE", "action": action}
+                            )
+                        bsp_validate_contract_result = check_bsp_validate_contract(
+                            bsp_validate_path,
+                            api_contract_manifest,
+                        )
         else:
             print(f"[error] Circular dependency detected!")
             print(f"[error] Cycle: {' -> '.join(init_order.cycle_nodes)}")
@@ -1263,8 +1456,12 @@ async def main():
         )
 
         # Add Pass 2 validation results
+        compile_contract_errors = []
+        compile_contract_warnings = []
+        compile_contract_checks = 0
+        autofix_actions = []
         if 'pass2_validation_results' in locals() and pass2_validation_results:
-            for module_name, validation_result in pass2_validation_results:
+            for module_name, validation_result in sorted(pass2_validation_results, key=lambda item: item[0]):
                 # Extract facts validation details if available
                 constants_validated = 0
                 mismatches = 0
@@ -1272,36 +1469,117 @@ async def main():
                     constants_validated = len(validation_result.facts_validation.matches) + len(validation_result.facts_validation.mismatches)
                     mismatches = len(validation_result.facts_validation.mismatches)
 
+                module_errors = list(validation_result.errors[:10])
+                module_warnings = list(validation_result.warnings[:10])
+                module_contract_result = getattr(validation_result, "compile_contract", None)
+                module_autofix_actions = getattr(validation_result, "autofix_actions", [])
+
+                if module_contract_result:
+                    compile_contract_checks += 1
+                    compile_contract_errors.extend(module_contract_result.get("errors", []))
+                    compile_contract_warnings.extend(module_contract_result.get("warnings", []))
+                    for action in module_autofix_actions:
+                        autofix_actions.append({"module": module_name, "action": action})
+
+                    if not module_contract_result.get("passed", True):
+                        module_errors.append(
+                            f"[contract] {module_name}: compile contract check failed"
+                        )
+
+                # Strict mode: promote key warnings to critical failures for core build-readiness modules
+                if strict_validation_enabled and module_name.upper() in CRITICAL_BUILD_MODULES:
+                    for warn in list(module_warnings):
+                        warn_lower = warn.lower()
+                        if (
+                            "no facts mirror found" in warn_lower
+                            or "missing init function" in warn_lower
+                            or "missing #include" in warn_lower
+                            or "function '" in warn_lower and "not found in implementation" in warn_lower
+                        ):
+                            promoted = f"[strict] {warn}"
+                            if promoted not in module_errors:
+                                module_errors.append(promoted)
+
+                    if constants_validated == 0:
+                        module_errors.append(
+                            f"[strict] {module_name}: no validated constants for critical module"
+                        )
+                    if module_contract_result and not module_contract_result.get("passed", True):
+                        module_errors.extend(
+                            [f"[strict] {e}" for e in module_contract_result.get("errors", [])[:5]]
+                        )
+
+                module_is_valid = validation_result.is_valid and len(module_errors) == 0
+
                 module_validation = ModuleValidation(
                     module_name=module_name,
-                    facts_mirror_valid=validation_result.is_valid,
+                    facts_mirror_valid=module_is_valid,
                     constants_validated=constants_validated,
                     mismatches=mismatches,
                     tests_generated=False,  # Not tracking test generation currently
-                    critical_errors=validation_result.errors[:10],  # Limit to 10
-                    warnings=validation_result.warnings[:10]  # Limit to 10
+                    critical_errors=module_errors[:10],  # Limit to 10
+                    warnings=module_warnings[:10]  # Limit to 10
                 )
                 final_report.peripheral_validations[module_name] = module_validation
 
             # Update summary
             final_report.validation_summary.total_modules = len(pass2_validation_results)
             final_report.validation_summary.modules_valid = sum(
-                1 for _, vr in pass2_validation_results if vr.is_valid
+                1 for val in final_report.peripheral_validations.values() if val.facts_mirror_valid
             )
-            final_report.validation_summary.modules_invalid = sum(
-                1 for _, vr in pass2_validation_results if not vr.is_valid
+            final_report.validation_summary.modules_invalid = (
+                final_report.validation_summary.total_modules - final_report.validation_summary.modules_valid
             )
             final_report.validation_summary.critical_errors = sum(
-                len(vr.errors) for _, vr in pass2_validation_results
+                len(val.critical_errors) for val in final_report.peripheral_validations.values()
             )
             final_report.validation_summary.warnings = sum(
-                len(vr.warnings) for _, vr in pass2_validation_results
+                len(val.warnings) for val in final_report.peripheral_validations.values()
             )
             if final_report.validation_summary.total_modules > 0:
                 final_report.validation_summary.success_rate = (
                     final_report.validation_summary.modules_valid /
                     final_report.validation_summary.total_modules
                 ) * 100.0
+
+        if bsp_validate_contract_result:
+            compile_contract_checks += 1
+            compile_contract_errors.extend(bsp_validate_contract_result.get("errors", []))
+            compile_contract_warnings.extend(bsp_validate_contract_result.get("warnings", []))
+        if bsp_validate_autofix_actions:
+            autofix_actions.extend(bsp_validate_autofix_actions)
+
+        compile_contract_passes = len(compile_contract_errors) == 0 or contract_mode == "warn_only"
+        if contract_mode == "warn_only" and compile_contract_errors:
+            compile_contract_warnings.extend(compile_contract_errors)
+            compile_contract_errors = []
+
+        final_report.compile_contract = {
+            "passes": compile_contract_passes,
+            "checks": compile_contract_checks,
+            "errors": compile_contract_errors,
+            "warnings": compile_contract_warnings,
+        }
+        final_report.autofix_actions = autofix_actions
+        final_report.startup_contract = startup_contract_result or {
+            "passes": True,
+            "errors": [],
+            "warnings": ["startup contract not evaluated"],
+            "checks": {},
+        }
+        final_report.build_evidence = {
+            "mode": "user_ccs_compile_log_required",
+            "required": require_ccs_proof,
+            "status": "not_provided_in_this_run" if require_ccs_proof else "optional_not_provided",
+        }
+        if api_contract_manifest:
+            final_report.api_contract_hash = api_contract_manifest.get("api_contract_hash")
+
+        if strict_validation_enabled:
+            if not final_report.compile_contract.get("passes", True):
+                final_report.validation_summary.critical_errors += len(final_report.compile_contract.get("errors", []))
+            if not final_report.startup_contract.get("passes", True):
+                final_report.validation_summary.critical_errors += len(final_report.startup_contract.get("errors", []))
 
         # Add cross-file validation
         try:
@@ -1355,8 +1633,9 @@ async def main():
         progress_manager.log_or_print(f"[warn] Could not generate final validation report: {e}")
 
     # Save token history for future runs
-    token_allocator.save_history(token_history_path)
-    progress_manager.log_or_print(f"[info] Saved token history to {token_history_path.name}")
+    if not args.mock:
+        token_allocator.save_history(token_history_path)
+        progress_manager.log_or_print(f"[info] Saved token history to {token_history_path.name}")
 
     # Display cost summary (always show final costs)
     try:
@@ -1393,10 +1672,10 @@ async def main():
 
         # Print final messages (cleanup already called before validation output)
         print(f"\n[info] Generation log saved to: {progress_manager.logger.log_file}")
-        print(f"\n[info] ✓ BSP generation complete!")
+        print(f"\n[ok] BSP generation complete!")
         print(f"[info] Output directory: {out_dir}")
     else:
-        print(f"\n[info] ✓ BSP generation complete!")
+        print(f"\n[ok] BSP generation complete!")
         print(f"[info] Output directory: {out_dir}")
 
     if not progress_manager or not progress_manager.should_suppress_prints():

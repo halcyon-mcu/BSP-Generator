@@ -23,6 +23,29 @@ class Pass2ValidationResult:
     has_todos: bool = False
 
 
+def _count_params(param_blob: str) -> int:
+    blob = (param_blob or "").strip()
+    if not blob or blob == "void":
+        return 0
+    return len([p for p in blob.split(",") if p.strip()])
+
+
+def _extract_prototypes(content: str) -> Dict[str, int]:
+    pattern = re.compile(r'^\s*[A-Za-z_][\w\s\*]*?\s+([A-Za-z_]\w*)\s*\(([^;{}]*)\)\s*;', re.MULTILINE)
+    out: Dict[str, int] = {}
+    for match in pattern.finditer(content):
+        out[match.group(1)] = _count_params(match.group(2))
+    return out
+
+
+def _extract_definitions(content: str) -> Dict[str, int]:
+    pattern = re.compile(r'^\s*[A-Za-z_][\w\s\*]*?\s+([A-Za-z_]\w*)\s*\(([^;{}]*)\)\s*\{', re.MULTILINE)
+    out: Dict[str, int] = {}
+    for match in pattern.finditer(content):
+        out[match.group(1)] = _count_params(match.group(2))
+    return out
+
+
 def validate_driver_implementation(
     module_name: str,
     manifest_entry: Dict,
@@ -161,6 +184,28 @@ def validate_driver_implementation(
 
     # Check 6: Required headers included
     driver_c_files = [f for f in written_files if f.exists() and f.suffix == '.c']
+    driver_h_files = [f for f in written_files if f.exists() and f.suffix == '.h']
+
+    # Check 6b: Header/source prototype parity (ABI drift guard)
+    if driver_c_files and driver_h_files:
+        try:
+            h_content = driver_h_files[0].read_text(encoding='utf-8', errors='ignore')
+            c_content = driver_c_files[0].read_text(encoding='utf-8', errors='ignore')
+            decls = _extract_prototypes(h_content)
+            defs = _extract_definitions(c_content)
+            module_prefix = f"{module_name.upper()}_"
+
+            for fname, decl_arity in decls.items():
+                if not fname.startswith(module_prefix):
+                    continue
+                if fname in defs and defs[fname] != decl_arity:
+                    errors.append(
+                        f"{module_name}: Header/source signature mismatch for {fname} "
+                        f"({decl_arity} args in header, {defs[fname]} in source)"
+                    )
+        except Exception as e:
+            warnings.append(f"{module_name}: Could not complete ABI drift check: {e}")
+
     for file_path in driver_c_files:
         try:
             content = file_path.read_text(encoding='utf-8', errors='ignore')
@@ -251,6 +296,76 @@ def validate_driver_implementation(
                         f"{file_path.name}: Module has 'PLL' or 'clock' dependency but doesn't include pll_driver.h or clock.h"
                     )
 
+            except Exception:
+                pass
+
+    # Check 10: PLL-specific build-readiness checks
+    if module_name.upper() == "PLL":
+        for file_path in driver_c_files:
+            try:
+                content = file_path.read_text(encoding='utf-8', errors='ignore')
+
+                if 'PLL_GetFrequency' in content:
+                    if 'GHVSRC' not in content:
+                        errors.append(
+                            f"{file_path.name}: PLL_GetFrequency() does not reference GHVSRC. "
+                            "Frequency must account for active clock source selection."
+                        )
+
+                # Catch obvious hardcoded HCLK style constants that hide clock-source issues.
+                if re.search(r'#define\s+\w*HCLK\w*\s+\d{6,}', content, re.IGNORECASE):
+                    warnings.append(
+                        f"{file_path.name}: Contains hardcoded HCLK-like constant. "
+                        "Prefer runtime derivation from PLL/GHVSRC registers."
+                    )
+            except Exception:
+                pass
+
+    # Check 11: LIN-specific SCI mode bring-up checks
+    if module_name.upper() == "LIN":
+        for file_path in driver_c_files:
+            try:
+                content = file_path.read_text(encoding='utf-8', errors='ignore')
+
+                # Ensure SCIPIO0 config includes TX/RX functional bits (bit2 + bit1).
+                if 'LIN_Init' in content and 'SCIPIO0' in content:
+                    has_hex_mode = re.search(r'SCIPIO0\s*=\s*0x0*6U?', content) is not None
+                    has_bit_mode = (
+                        re.search(r'1U?\s*<<\s*2U?', content) is not None and
+                        re.search(r'1U?\s*<<\s*1U?', content) is not None
+                    )
+                    if not has_hex_mode and not has_bit_mode:
+                        errors.append(
+                            f"{file_path.name}: LIN_Init() does not configure SCIPIO0 for SCI TX/RX "
+                            "(expected bit2|bit1 / 0x6)."
+                        )
+
+                lin_rx_def = re.search(r'LIN_ReceiveByte\s*\(([^)]*)\)\s*\{', content)
+                lin_rx_arity = _count_params(lin_rx_def.group(1)) if lin_rx_def else -1
+
+                # Enforce non-blocking branch for timeout_ms == 0 only when timeout-aware API is present.
+                if 'LIN_ReceiveByte' in content and lin_rx_arity >= 2:
+                    if ('timeout_ms == 0' not in content) and ('timeout_ms==0' not in content):
+                        errors.append(
+                            f"{file_path.name}: LIN_ReceiveByte() missing explicit timeout_ms==0 non-blocking path."
+                        )
+
+                # Canonical ABI requirement: timeout-aware signature
+                if not re.search(r'LIN_ReceiveByte\s*\(\s*uint8_t\s*\*\s*\w+\s*,\s*uint32_t\s+\w+\s*\)', content):
+                    warnings.append(
+                        f"{file_path.name}: LIN_ReceiveByte() does not match preferred timeout-aware "
+                        f"signature. Acceptable if equivalent RX-byte API is used consistently."
+                    )
+
+                # Hard fail: timeout logic references timeout_ms without declaring it.
+                lin_rx_block = re.search(
+                    r'LIN_ReceiveByte\s*\(\s*uint8_t\s*\*\s*\w+\s*\)\s*\{([\s\S]*?)\n\s*\}',
+                    content,
+                )
+                if lin_rx_block and re.search(r'\btimeout_ms\b', lin_rx_block.group(1)):
+                    errors.append(
+                        f"{file_path.name}: LIN_ReceiveByte() references timeout_ms but signature has no timeout parameter."
+                    )
             except Exception:
                 pass
 

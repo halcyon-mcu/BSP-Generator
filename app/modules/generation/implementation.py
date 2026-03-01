@@ -10,8 +10,111 @@ from .prompt import build_pass2_driver_h_prompt, build_pass2_driver_c_prompt, in
 from ..utils.utils import extract_text_from_bedrock_response
 from ..yaml.yaml_utils import dump_yaml_str, find_soc_peripheral
 from ..utils.file_locking import FileLock
+from ..utils.file_io import normalize_generated_text
+from ..contracts.contract_checker import check_generated_module_contract
+from ..contracts.contract_autofix import autofix_module_contract
 
 logger = logging.getLogger(__name__)
+
+
+def _inject_include_if_missing(code: str, include_line: str) -> str:
+    """Inject include/macro after include block if not already present."""
+    if include_line in code:
+        return code
+    include_block = re.search(r"^(\s*#include[^\n]*\n)+", code, re.MULTILINE)
+    if include_block:
+        insert_at = include_block.end()
+        return code[:insert_at] + include_line + "\n" + code[insert_at:]
+    return include_line + "\n\n" + code
+
+
+def _inject_before_header_endif(code: str, snippet: str, guard_tail: str) -> str:
+    marker = f"#endif /* {guard_tail} */"
+    if marker in code:
+        return code.replace(marker, snippet + "\n" + marker)
+    return code + ("\n" if not code.endswith("\n") else "") + snippet + "\n"
+
+
+def _ensure_pcr_enable_all_declaration(header_code: str) -> str:
+    if "PCR_EnableAllPeripherals(" in header_code:
+        return header_code
+    decl = (
+        "/**\n"
+        " * @brief Enable all known PCR-controlled peripherals\n"
+        " *\n"
+        " * @details Compatibility helper used by early startup code. This performs\n"
+        " *          a best-effort enable of every peripheral enum entry.\n"
+        " */\n"
+        "void PCR_EnableAllPeripherals(void);\n"
+    )
+    return _inject_before_header_endif(header_code, decl, "PCR_DRIVER_H")
+
+
+def _ensure_pcr_enable_all_definition(source_code: str) -> str:
+    if "void PCR_EnableAllPeripherals(void)" in source_code:
+        return source_code
+    if "PCR_EnablePeripheral(" in source_code and "PCR_PERIPHERAL_EMIF" in source_code:
+        snippet = (
+            "\n"
+            "/**\n"
+            " * @brief Enable all known PCR-controlled peripherals\n"
+            " * @details Compatibility helper for startup ordering contract.\n"
+            " */\n"
+            "void PCR_EnableAllPeripherals(void)\n"
+            "{\n"
+            "    int peripheral;\n"
+            "\n"
+            "    for (peripheral = (int)PCR_PERIPHERAL_SCI1; peripheral <= (int)PCR_PERIPHERAL_EMIF; peripheral++)\n"
+            "    {\n"
+            "        (void)PCR_EnablePeripheral((pcr_peripheral_t)peripheral);\n"
+            "    }\n"
+            "}\n"
+        )
+    else:
+        # Fallback when PCR_EnablePeripheral enum helpers are absent in generated source.
+        snippet = (
+            "\n"
+            "/**\n"
+            " * @brief Enable all known PCR-controlled peripherals\n"
+            " * @details Compatibility helper for startup ordering contract.\n"
+            " */\n"
+            "void PCR_EnableAllPeripherals(void)\n"
+            "{\n"
+            "    PCR_Init();\n"
+            "}\n"
+        )
+    return source_code + ("" if source_code.endswith("\n") else "\n") + snippet
+
+
+def _postprocess_generated_code(mod_name: str, type_tag: str, code: str) -> str:
+    """
+    Apply deterministic compile-safety rewrites for known TI compiler pitfalls.
+    """
+    processed = code
+
+    if type_tag in {"h", "c"}:
+        # TI ARM compiler reserves 'interrupt' in this context.
+        processed = re.sub(r"\binterrupt\b", "int_type", processed)
+        if mod_name.upper() == "PCR" and type_tag == "h":
+            processed = _ensure_pcr_enable_all_declaration(processed)
+
+    if type_tag == "c":
+        # Ensure NULL is defined when used.
+        if re.search(r"\bNULL\b", processed) and not re.search(r"#include\s*<(stddef|stdlib)\.h>", processed):
+            processed = _inject_include_if_missing(processed, "#include <stddef.h>")
+
+        # Handle IOMM PINMMR access when register map is scalar fields.
+        if mod_name.upper() == "IOMM":
+            replaced = re.sub(r"\biommREG->PINMMR0\[(\d+)\]", r"IOMM_PINMMR(\1)", processed)
+            if replaced != processed:
+                processed = replaced
+                macro = "#define IOMM_PINMMR(n) (*((volatile uint32_t*)(&iommREG->PINMMR0) + (n)))"
+                if macro not in processed:
+                    processed = _inject_include_if_missing(processed, macro)
+        elif mod_name.upper() == "PCR":
+            processed = _ensure_pcr_enable_all_definition(processed)
+
+    return processed
 
 
 # ============================================================================
@@ -474,6 +577,7 @@ def build_pinmux_slice(pinmux_data: Dict[str, Any], module_name: str) -> str:
 async def run_implementation_pass(
     manifest: Dict[str, Any],
     soc_data: Dict[str, Any],
+    board_data: Dict[str, Any],
     bus_data: Dict[str, Any],
     pinmux_data: Dict[str, Any],
     model: Model,
@@ -482,6 +586,9 @@ async def run_implementation_pass(
     allowed_modules: Optional[List[str]] = None,
     regs_data: Optional[Dict[str, Any]] = None,
     enable_validation: bool = True,
+    strict_validation: bool = False,
+    contract_mode: str = "auto_fix_then_fail",
+    api_contract_manifest: Optional[Dict[str, Any]] = None,
     token_allocator = None,
     progress_manager = None
 ):
@@ -695,24 +802,25 @@ async def run_implementation_pass(
 
         # 4a. Extract per-instance pin configurations
         instance_pin_config = None
-        try:
-            from .pin_config_builder import extract_peripheral_instances
+        if mod_name.upper() in {"SCI", "LIN", "GIO", "GPIO", "CAN", "DCAN", "UART"}:
+            try:
+                from .pin_config_builder import extract_peripheral_instances
 
-            # Extract IOMM manifest for enum value lookup
-            iomm_manifest = None
-            if manifest and 'api_catalog' in manifest:
-                iomm_manifest = manifest['api_catalog'].get('IOMM')
+                # Extract IOMM manifest for enum value lookup
+                iomm_manifest = None
+                if manifest and 'api_catalog' in manifest:
+                    iomm_manifest = manifest['api_catalog'].get('IOMM')
 
-            instance_pin_config = extract_peripheral_instances(
-                board_data=soc_data,
-                pinmux_data=pinmux_data,
-                peripheral=mod_name,
-                iomm_manifest=iomm_manifest
-            )
-        except Exception as e:
-            if tracker:
-                tracker.add_message(f"Warning: Could not extract pin config for {mod_name}: {e}", level="warning")
-            # Continue with None - graceful degradation
+                instance_pin_config = extract_peripheral_instances(
+                    board_data=board_data,
+                    pinmux_data=pinmux_data,
+                    peripheral=mod_name,
+                    iomm_manifest=iomm_manifest
+                )
+            except Exception as e:
+                if tracker:
+                    tracker.add_message(f"Warning: Could not extract pin config for {mod_name}: {e}", level="warning")
+                # Continue with None - graceful degradation
 
         # 4b. Collect dependency manifests and parse function signatures
         dependency_manifests = {}
@@ -730,10 +838,10 @@ async def run_implementation_pass(
         
         results = await asyncio.gather(t_h, t_c)
         
-        return mod_name, results
+        return mod_name, results, dependency_manifests
 
     # Launch all modules
-    for name, data in api_catalog.items():
+    for name, data in sorted(api_catalog.items(), key=lambda item: item[0].upper()):
         tasks.append(_implement_module(name, data))
         
     print(f"[pass2] Implementing {len(tasks)} modules...")
@@ -742,7 +850,7 @@ async def run_implementation_pass(
     validation_results = []
 
     for f in asyncio.as_completed(tasks):
-        mod_name, results = await f
+        mod_name, results, dependency_manifests = await f
 
         # Track progress
         if tracker:
@@ -754,6 +862,8 @@ async def run_implementation_pass(
         written_files = []
         raw_responses = []
         has_error = False
+        module_header_path: Optional[Path] = None
+        module_source_path: Optional[Path] = None
 
         for type_tag, content, raw_response in results:
             if type_tag == "error":
@@ -768,10 +878,10 @@ async def run_implementation_pass(
             # Clean Code Block
             clean_code = content
             if "```" in content:
-                import re
                 match = re.search(r"```c?(.*?)```", content, re.DOTALL)
                 if match:
                     clean_code = match.group(1).strip()
+            clean_code = _postprocess_generated_code(mod_name, type_tag, clean_code)
 
             # Write File
             if type_tag == "h":
@@ -780,9 +890,10 @@ async def run_implementation_pass(
 
                 # Use file locking to prevent race conditions
                 with FileLock(fpath):
-                    fpath.write_text(clean_code, encoding="utf-8")
+                    fpath.write_text(normalize_generated_text(clean_code, fpath), encoding="utf-8")
 
                 written_files.append(fpath)
+                module_header_path = fpath
                 raw_responses.append(raw_response)
                 if tracker:
                     tracker.increment_success()
@@ -792,9 +903,10 @@ async def run_implementation_pass(
 
                 # Use file locking to prevent race conditions
                 with FileLock(fpath):
-                    fpath.write_text(clean_code, encoding="utf-8")
+                    fpath.write_text(normalize_generated_text(clean_code, fpath), encoding="utf-8")
 
                 written_files.append(fpath)
+                module_source_path = fpath
                 raw_responses.append(raw_response)
                 if tracker:
                     tracker.increment_success()
@@ -864,6 +976,55 @@ async def run_implementation_pass(
                         for error in reserved_keywords_errors:
                             tracker.add_message(f"{mod_name}: {error}", level="error")
 
+        module_contract_result = None
+        module_autofix_actions: List[str] = []
+        if (
+            api_contract_manifest
+            and module_header_path
+            and module_source_path
+            and module_header_path.exists()
+            and module_source_path.exists()
+        ):
+            module_contract_result = check_generated_module_contract(
+                mod_name,
+                module_header_path,
+                module_source_path,
+                api_contract_manifest,
+            )
+            always_autofix_modules = {"LIN", "IOMM"}
+            should_run_autofix = (
+                contract_mode == "auto_fix_then_fail"
+                and (
+                    mod_name.upper() in always_autofix_modules
+                    or not module_contract_result.get("passed", True)
+                )
+            )
+            if should_run_autofix:
+                autofix_result = autofix_module_contract(
+                    mod_name,
+                    module_header_path,
+                    module_source_path,
+                    api_contract_manifest,
+                )
+                module_autofix_actions.extend(autofix_result.get("actions", []))
+                module_contract_result = check_generated_module_contract(
+                    mod_name,
+                    module_header_path,
+                    module_source_path,
+                    api_contract_manifest,
+                )
+
+            if module_contract_result and not module_contract_result.get("passed", True):
+                for err in module_contract_result.get("errors", []):
+                    if contract_mode == "warn_only":
+                        logger.warning(f"{mod_name} contract warning: {err}")
+                    else:
+                        logger.error(f"{mod_name} contract error: {err}")
+                if tracker:
+                    for err in module_contract_result.get("errors", [])[:5]:
+                        level = "warning" if contract_mode == "warn_only" else "error"
+                        tracker.add_message(f"{mod_name}: {err}", level=level)
+
         # Run validation if enabled
         if enable_validation and written_files and soc_data and regs_data:
             from ..validation.validation_engine import validate_generation_output
@@ -899,6 +1060,18 @@ async def run_implementation_pass(
                     validation_result.errors.extend(pass2_result.critical_errors)
                     validation_result.warnings.extend(pass2_result.warnings)
 
+                if module_contract_result and not module_contract_result.get("passed", True):
+                    if contract_mode == "warn_only":
+                        validation_result.warnings.extend(module_contract_result.get("errors", []))
+                        validation_result.warnings.extend(module_contract_result.get("warnings", []))
+                    else:
+                        validation_result.is_valid = False
+                        validation_result.errors.extend(module_contract_result.get("errors", []))
+                        validation_result.warnings.extend(module_contract_result.get("warnings", []))
+
+                setattr(validation_result, "compile_contract", module_contract_result)
+                setattr(validation_result, "autofix_actions", module_autofix_actions)
+
                 validation_results.append((mod_name, validation_result))
 
                 # Log validation summary
@@ -920,6 +1093,7 @@ async def run_implementation_pass(
         print("\n[pass2] Implementation Complete.")
 
     if enable_validation and validation_results:
+        validation_results.sort(key=lambda item: item[0])
         failed_count = sum(1 for _, vr in validation_results if not vr.is_valid)
         logger.info(f"Pass 2 Validation: {len(validation_results)} modules checked, {failed_count} failed")
 

@@ -13,10 +13,13 @@ This module provides:
 from __future__ import annotations
 
 import logging
+import re
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Any
+
+from .file_io import normalize_generated_text
 
 logger = logging.getLogger(__name__)
 
@@ -516,12 +519,864 @@ def find_enable_pins_functions(manifest: dict, module_name: str) -> list:
     return enable_pins_funcs
 
 
+def _parse_board_led_gpio(board_data: Optional[Dict[str, Any]]) -> tuple[str, int]:
+    """
+    Parse LED GPIO from board.yaml-like data.
+
+    Returns:
+        Tuple of (port_letter, pin_index), defaults to ("B", 1).
+    """
+    if not board_data:
+        return ("B", 1)
+
+    leds = board_data.get("leds", [])
+    if not isinstance(leds, list):
+        return ("B", 1)
+
+    # Prefer GIOB[1] explicitly when available (known RM46 LaunchXL user LED path).
+    for led in leds:
+        if not isinstance(led, dict):
+            continue
+        gpio_name = led.get("gpio")
+        if isinstance(gpio_name, str) and gpio_name.strip().upper() == "GIOB[1]":
+            return ("B", 1)
+
+    # Prefer USER LED entries first.
+    ordered_leds = sorted(
+        leds,
+        key=lambda x: 0 if isinstance(x, dict) and "USER" in str(x.get("function", "")).upper() else 1,
+    )
+
+    for led in ordered_leds:
+        if not isinstance(led, dict):
+            continue
+        gpio_name = led.get("gpio")
+        if not isinstance(gpio_name, str):
+            continue
+        match = re.match(r"GIO([AB])\[(\d+)\]", gpio_name.strip().upper())
+        if not match:
+            continue
+        port = match.group(1)
+        pin = int(match.group(2))
+        return (port, pin)
+
+    return ("B", 1)
+
+
+def _parse_board_lin_sci_pins(board_data: Optional[Dict[str, Any]]) -> tuple[int, int]:
+    """
+    Parse board LIN/SCI debug UART pin mapping.
+
+    Returns:
+        Tuple of (rx_pin, tx_pin). Defaults to (38, 39) for RM46 LaunchXL path.
+    """
+    if not board_data:
+        return (38, 39)
+
+    board = board_data.get("peripherals", {}) if isinstance(board_data, dict) else {}
+    lin = board.get("lin", {}) if isinstance(board, dict) else {}
+    lin1 = lin.get("lin1", {}) if isinstance(lin, dict) else {}
+    if isinstance(lin1, dict):
+        rx_pin = lin1.get("rx_pin")
+        tx_pin = lin1.get("tx_pin")
+        if isinstance(rx_pin, int) and isinstance(tx_pin, int):
+            return (rx_pin, tx_pin)
+
+    uart = board.get("uart", {}) if isinstance(board, dict) else {}
+    sci = uart.get("sci", {}) if isinstance(uart, dict) else {}
+    if isinstance(sci, dict):
+        rx_pin = sci.get("rx_pin")
+        tx_pin = sci.get("tx_pin")
+        if isinstance(rx_pin, int) and isinstance(tx_pin, int):
+            return (rx_pin, tx_pin)
+
+    return (38, 39)
+
+
+def _should_generate_bsp_validation(
+    generation_profile: Optional[Dict[str, Any]],
+    manifest: Optional[Dict[str, Any]]
+) -> bool:
+    """
+    Determine whether to auto-generate runtime BSP validation module.
+    """
+    profile = generation_profile or {}
+
+    # Explicit profile override wins.
+    bsp_validation_cfg = profile.get("bsp_validation")
+    if isinstance(bsp_validation_cfg, dict) and "enabled" in bsp_validation_cfg:
+        return bool(bsp_validation_cfg.get("enabled"))
+
+    target = str(profile.get("target_board", "")).upper()
+    if "RM46" not in target:
+        return False
+
+    # Require core serial/gpio modules to be available when profile enables modules.
+    enabled = {
+        str(m).upper()
+        for m in profile.get("modules", {}).get("enabled", [])
+        if isinstance(m, str)
+    }
+    if enabled:
+        required = {"SCI", "LIN", "GIO"}
+        if not required.issubset(enabled):
+            return False
+
+    if not manifest:
+        return True
+
+    api_catalog = manifest.get("api_catalog", {})
+    required_catalog = {"SCI", "LIN", "GIO", "IOMM", "VIM"}
+    return required_catalog.issubset({name.upper() for name in api_catalog.keys()})
+
+
+def _get_contract_module(api_contract_manifest: Optional[Dict[str, Any]], module_name: str) -> Dict[str, Any]:
+    if not api_contract_manifest:
+        return {}
+    modules = api_contract_manifest.get("modules", {})
+    if not isinstance(modules, dict):
+        return {}
+    return modules.get(module_name.upper(), {}) or {}
+
+
+def _find_enum_value(module_contract: Dict[str, Any], enum_name: str, contains: str, fallback: str) -> str:
+    types = module_contract.get("types", {}) if isinstance(module_contract, dict) else {}
+    enum_def = types.get(enum_name, {})
+    values = enum_def.get("values", []) if isinstance(enum_def, dict) else []
+    for value in values:
+        if isinstance(value, str) and contains in value:
+            return value
+    if values and isinstance(values[0], str):
+        return values[0]
+    return fallback
+
+
+def _find_enum_value_any(
+    module_contract: Dict[str, Any],
+    enum_names: List[str],
+    contains: str,
+    fallback: str,
+) -> str:
+    for enum_name in enum_names:
+        value = _find_enum_value(module_contract, enum_name, contains, "")
+        if value:
+            return value
+    return fallback
+
+
+def _find_enum_value_candidates(
+    module_contract: Dict[str, Any],
+    enum_names: List[str],
+    contains_tokens: List[str],
+    fallback: str,
+    allow_first_fallback: bool = True,
+) -> str:
+    types = module_contract.get("types", {}) if isinstance(module_contract, dict) else {}
+    values: List[str] = []
+    for enum_name in enum_names:
+        enum_def = types.get(enum_name, {})
+        enum_values = enum_def.get("values", []) if isinstance(enum_def, dict) else []
+        values.extend([v for v in enum_values if isinstance(v, str)])
+
+    for token in contains_tokens:
+        for value in values:
+            if token in value:
+                return value
+
+    if allow_first_fallback and values:
+        return values[0]
+    return fallback
+
+
+def _resolve_iomm_alt1_from_header(out_dir: Path) -> str:
+    candidates = [
+        out_dir / "include" / "iomm_driver.h",
+        out_dir / "iomm_driver.h",
+        out_dir / "source" / "iomm_driver.h",
+    ]
+    priority_tokens = [
+        "IOMM_PIN_FUNCTION_ALT1",
+        "IOMM_PIN_FUNC_ALT1",
+        "IOMM_FUNC_ALT1",
+        "IOMM_PIN_FUNCTION_1",
+    ]
+    for header in candidates:
+        if not header.exists():
+            continue
+        text = header.read_text(encoding="utf-8", errors="ignore")
+        for token in priority_tokens:
+            if token in text:
+                return token
+    return ""
+
+
+def _find_fn_in_contract(module_contract: Dict[str, Any], candidates: List[str], fallback: str) -> str:
+    functions = module_contract.get("functions", {}) if isinstance(module_contract, dict) else {}
+    wrappers = {
+        w.get("name")
+        for w in module_contract.get("compatibility_wrappers", [])
+        if isinstance(w, dict) and w.get("name")
+    } if isinstance(module_contract, dict) else set()
+
+    for name in candidates:
+        if name in functions or name in wrappers:
+            return name
+    return fallback
+
+
+def _capability_fn(module_contract: Dict[str, Any], capability: str, fallback_candidates: List[str], hard_fallback: str) -> str:
+    capabilities = module_contract.get("capabilities", {}) if isinstance(module_contract, dict) else {}
+    name = capabilities.get(capability)
+    if isinstance(name, str) and name.strip():
+        return name
+    found = _find_fn_in_contract(module_contract, fallback_candidates, "")
+    if found:
+        return found
+    found = _find_fn_in_contract(module_contract, [hard_fallback], "")
+    if found:
+        return found
+    return hard_fallback
+
+
+def _contract_has_function(module_contract: Dict[str, Any], function_name: str) -> bool:
+    if not function_name:
+        return False
+    functions = module_contract.get("functions", {}) if isinstance(module_contract, dict) else {}
+    if function_name in functions:
+        return True
+    wrappers = module_contract.get("compatibility_wrappers", []) if isinstance(module_contract, dict) else []
+    for wrapper in wrappers:
+        if isinstance(wrapper, dict) and wrapper.get("name") == function_name:
+            return True
+    return False
+
+
+def _generate_bsp_validate_module(
+    out_dir: Path,
+    generation_profile: Optional[Dict[str, Any]],
+    board_data: Optional[Dict[str, Any]],
+    api_contract_manifest: Optional[Dict[str, Any]] = None,
+) -> tuple[Path, Path]:
+    """
+    Generate deterministic BSP runtime validation module.
+
+    Produces:
+      - bsp_validate.h
+      - bsp_validate.c
+    """
+    profile = generation_profile or {}
+    contract_lock_mode = str(profile.get("contract_lock_mode", "strict")).strip().lower()
+    strict_contract_lock = contract_lock_mode != "relaxed" and bool(api_contract_manifest)
+    baud = profile.get("sci", {}).get("default_baud", 9600)
+    if not isinstance(baud, int) or baud <= 0:
+        baud = 9600
+
+    sci_contract = _get_contract_module(api_contract_manifest, "SCI")
+    sci_types = sci_contract.get("types", {}) if isinstance(sci_contract, dict) else {}
+    sci_cfg_fields = {
+        f.get("name")
+        for f in (sci_types.get("sci_config_t", {}).get("fields", []) if isinstance(sci_types.get("sci_config_t", {}), dict) else [])
+        if isinstance(f, dict) and f.get("name")
+    }
+    lin_contract = _get_contract_module(api_contract_manifest, "LIN")
+    lin_types = lin_contract.get("types", {}) if isinstance(lin_contract, dict) else {}
+    lin_cfg_fields = {
+        f.get("name")
+        for f in (lin_types.get("lin_config_t", {}).get("fields", []) if isinstance(lin_types.get("lin_config_t", {}), dict) else [])
+        if isinstance(f, dict) and f.get("name")
+    }
+
+    lin_functions = lin_contract.get("functions", {}) if isinstance(lin_contract, dict) else {}
+    lin_capabilities = lin_contract.get("capabilities", {}) if isinstance(lin_contract, dict) else {}
+    sci_capabilities = sci_contract.get("capabilities", {}) if isinstance(sci_contract, dict) else {}
+    gio_contract = _get_contract_module(api_contract_manifest, "GIO")
+    iomm_contract = _get_contract_module(api_contract_manifest, "IOMM")
+    gio_capabilities = gio_contract.get("capabilities", {}) if isinstance(gio_contract, dict) else {}
+
+    lin_send_fn = _capability_fn(
+        lin_contract,
+        "tx_buffer",
+        ["LIN_Transmit", "LIN_SendData", "LIN_Send"],
+        "LIN_SendData",
+    )
+    lin_send_arity = int((lin_functions.get(lin_send_fn, {}) or {}).get("arity", 2))
+    lin_init_fn = _capability_fn(
+        lin_contract,
+        "init",
+        ["LIN_Init"],
+        "LIN_Init",
+    )
+    lin_init_arity = int((lin_functions.get(lin_init_fn, {}) or {}).get("arity", 1))
+    lin_send_byte_fn = _capability_fn(
+        lin_contract,
+        "tx_byte",
+        ["LIN_TransmitByte", "LIN_SendByte"],
+        "LIN_TransmitByte",
+    )
+    lin_receive_fn = _capability_fn(
+        lin_contract,
+        "rx_byte",
+        ["LIN_ReceiveByte"],
+        "LIN_ReceiveByte",
+    )
+    lin_receive_arity = int((lin_functions.get(lin_receive_fn, {}) or {}).get("arity", lin_capabilities.get("rx_byte_arity", 2)))
+    lin_tx_ready_fn = _capability_fn(
+        lin_contract,
+        "tx_ready",
+        ["LIN_IsTxReady", "LIN_GetTxStatus"],
+        "LIN_IsTxReady",
+    )
+    lin_rx_ready_fn = _capability_fn(
+        lin_contract,
+        "rx_ready",
+        ["LIN_IsRxReady", "LIN_GetRxStatus"],
+        "LIN_IsRxReady",
+    )
+    lin_send_available = _contract_has_function(lin_contract, lin_send_fn)
+    lin_send_byte_available = _contract_has_function(lin_contract, lin_send_byte_fn)
+    lin_receive_available = _contract_has_function(lin_contract, lin_receive_fn)
+    lin_tx_ready_available = _contract_has_function(lin_contract, lin_tx_ready_fn)
+    lin_rx_ready_available = _contract_has_function(lin_contract, lin_rx_ready_fn)
+    lin_banner_via_tx_buffer = lin_send_available and lin_send_arity >= 2 and lin_send_fn != lin_send_byte_fn
+    lin_banner_via_tx_byte = lin_send_byte_available and not lin_banner_via_tx_buffer
+
+    sci_functions = sci_contract.get("functions", {}) if isinstance(sci_contract, dict) else {}
+    sci_send_fn = _capability_fn(
+        sci_contract,
+        "tx_buffer",
+        ["SCI_SendData", "SCI_Send"],
+        "SCI_SendData",
+    )
+    sci_send_arity = int((sci_functions.get(sci_send_fn, {}) or {}).get("arity", 2))
+    sci_init_fn = _capability_fn(
+        sci_contract,
+        "init",
+        ["SCI_Init"],
+        "SCI_Init",
+    )
+    sci_init_arity = int((sci_functions.get(sci_init_fn, {}) or {}).get("arity", 1))
+    sci_send_byte_fn = _capability_fn(
+        sci_contract,
+        "tx_byte",
+        ["SCI_SendByte"],
+        "SCI_SendByte",
+    )
+    sci_receive_fn = _capability_fn(
+        sci_contract,
+        "rx_byte",
+        ["SCI_ReceiveByte"],
+        "SCI_ReceiveByte",
+    )
+    sci_tx_ready_fn = _capability_fn(
+        sci_contract,
+        "tx_ready",
+        ["SCI_IsTxReady", "SCI_GetTxStatus"],
+        "SCI_IsTxReady",
+    )
+    sci_rx_ready_fn = _capability_fn(
+        sci_contract,
+        "rx_ready",
+        ["SCI_IsRxReady", "SCI_GetRxStatus"],
+        "SCI_IsRxReady",
+    )
+    sci_send_available = _contract_has_function(sci_contract, sci_send_fn)
+    sci_send_byte_available = _contract_has_function(sci_contract, sci_send_byte_fn)
+    sci_receive_available = _contract_has_function(sci_contract, sci_receive_fn)
+    sci_tx_ready_available = _contract_has_function(sci_contract, sci_tx_ready_fn)
+    sci_rx_ready_available = _contract_has_function(sci_contract, sci_rx_ready_fn)
+
+    lin_mode_sci = _find_enum_value_any(
+        lin_contract,
+        ["lin_mode_t"],
+        "SCI",
+        "0U",
+    )
+    lin_parity_none = _find_enum_value_any(
+        lin_contract,
+        ["lin_parity_t"],
+        "NONE",
+        "0U",
+    )
+    lin_stop_1 = _find_enum_value_any(
+        lin_contract,
+        ["lin_stop_bits_t", "lin_stopbits_t"],
+        "1",
+        "0U",
+    )
+    gio_direction_output = _find_enum_value_any(
+        gio_contract,
+        ["gio_direction_t", "gio_pin_direction_t"],
+        "OUTPUT",
+        "1U",
+    )
+    gio_pull_disabled = _find_enum_value_any(
+        gio_contract,
+        ["gio_pull_mode_t", "gio_pull_t", "gio_pull_config_t"],
+        "DISABLE",
+        "0U",
+    )
+    gio_mode_push_pull = _find_enum_value_any(
+        gio_contract,
+        ["gio_drive_mode_t", "gio_drive_t", "gio_pin_mode_t"],
+        "PUSH",
+        "0U",
+    )
+    iomm_pin_function_alt1 = _find_enum_value_candidates(
+        iomm_contract,
+        ["iomm_pin_function_t"],
+        ["ALT1", "FUNCTION_1", "_1"],
+        "",
+        allow_first_fallback=not strict_contract_lock,
+    )
+    if not iomm_pin_function_alt1:
+        iomm_pin_function_alt1 = _resolve_iomm_alt1_from_header(out_dir)
+
+    strict_require_iomm_af1 = strict_contract_lock and _contract_has_function(iomm_contract, "IOMM_ConfigurePin")
+    if not iomm_pin_function_alt1:
+        if strict_require_iomm_af1:
+            raise ValueError(
+                "BSP validate generation failed: could not resolve IOMM AF1 symbol from iomm_pin_function_t "
+                "while contract_lock_mode=strict"
+            )
+        iomm_pin_function_alt1 = "1U"
+    gio_port_a = _find_enum_value_any(
+        gio_contract,
+        ["gio_port_t"],
+        "PORT_A",
+        "0U",
+    )
+    gio_port_b = _find_enum_value_any(
+        gio_contract,
+        ["gio_port_t"],
+        "PORT_B",
+        "1U",
+    )
+    gio_types = gio_contract.get("types", {}) if isinstance(gio_contract, dict) else {}
+    gio_cfg_fields = {
+        f.get("name")
+        for f in (gio_types.get("gio_pin_config_t", {}).get("fields", []) if isinstance(gio_types.get("gio_pin_config_t", {}), dict) else [])
+        if isinstance(f, dict) and f.get("name")
+    }
+    gio_config_pin_arity = int(gio_capabilities.get("configure_pin_arity", 3))
+    gio_configure_fn = _capability_fn(
+        gio_contract,
+        "configure_pin",
+        ["GIO_ConfigurePin"],
+        "GIO_ConfigurePin",
+    )
+    gio_write_fn = _capability_fn(
+        gio_contract,
+        "write_pin",
+        ["GIO_WritePin"],
+        "GIO_WritePin",
+    )
+    gio_toggle_fn = _capability_fn(
+        gio_contract,
+        "toggle_pin",
+        ["GIO_TogglePin"],
+        "GIO_TogglePin",
+    )
+    gio_configure_available = _contract_has_function(gio_contract, gio_configure_fn)
+    gio_write_available = _contract_has_function(gio_contract, gio_write_fn)
+    gio_toggle_available = _contract_has_function(gio_contract, gio_toggle_fn)
+
+    led_port_letter, led_pin = _parse_board_led_gpio(board_data)
+    lin_rx_pin, lin_tx_pin = _parse_board_lin_sci_pins(board_data)
+    led_port = gio_port_b if led_port_letter == "B" else gio_port_a
+
+    header_lines = [
+        "/**",
+        " * @file bsp_validate.h",
+        " * @brief Runtime BSP validation/smoke-test interface",
+        " */",
+        "",
+        "#ifndef BSP_VALIDATE_H",
+        "#define BSP_VALIDATE_H",
+        "",
+        "#include <stdint.h>",
+        "",
+        "void BSP_ValidateInit(void);",
+        "void BSP_ValidateStep(void);",
+        "uint32_t BSP_ValidateGetHeartbeatCount(void);",
+        "",
+        "#endif /* BSP_VALIDATE_H */",
+        "",
+    ]
+
+    source_lines = [
+        "/**",
+        " * @file bsp_validate.c",
+        " * @brief Runtime BSP validation/smoke-test implementation",
+        " */",
+        "",
+        "#include \"bsp_validate.h\"",
+        "",
+        "#include <stdint.h>",
+        "#include <stdbool.h>",
+        "#include <stddef.h>",
+        "",
+        "#include \"iomm_driver.h\"",
+        "#include \"vim.h\"",
+        "#include \"gio_driver.h\"",
+        "#include \"sci_driver.h\"",
+        "#include \"lin_driver.h\"",
+        "",
+        f"#define BSP_VALIDATE_BAUD              ({baud}U)",
+        f"#define BSP_VALIDATE_LED_PORT          ({led_port})",
+        f"#define BSP_VALIDATE_LED_PIN           ({led_pin}U)",
+        "#define BSP_VALIDATE_HEARTBEAT_TICKS   (1000U)",
+        "#define BSP_VALIDATE_TX_PERIOD_TICKS   (200U)",
+        "#define BSP_VALIDATE_BUSY_DELAY        (200U)",
+        "",
+        "static uint32_t g_validate_heartbeat_ticks = 0U;",
+        "static uint32_t g_validate_tx_period = 0U;",
+        "static uint32_t g_validate_heartbeat_count = 0U;",
+        "static bool g_validate_initialized = false;",
+        "",
+        "volatile uint32_t g_validate_sci_status = 0U;",
+        "volatile uint32_t g_validate_lin_status = 0U;",
+        "volatile uint32_t g_validate_sci_tx_ok = 0U;",
+        "volatile uint32_t g_validate_sci_tx_skip = 0U;",
+        "volatile uint32_t g_validate_lin_tx_ok = 0U;",
+        "volatile uint32_t g_validate_lin_tx_skip = 0U;",
+        "",
+        "static void bsp_validate_delay(volatile uint32_t ticks)",
+        "{",
+        "    while (ticks > 0U)",
+        "    {",
+        "        ticks--;",
+        "    }",
+        "}",
+        "",
+        "void BSP_ValidateInit(void)",
+        "{",
+        "    gio_pin_config_t led_cfg;",
+        "    sci_config_t sci_cfg;",
+        "    lin_config_t lin_cfg;",
+        "    uint32_t lin_banner_idx = 0U;",
+        "    static const uint8_t sci_banner[] = \"SCI path active (A)\\r\\n\";",
+        "    static const uint8_t lin_banner[] = \"LIN path active (B)\\r\\n\";",
+        "",
+        "    (void)IOMM_Init();",
+        f"    (void)IOMM_ConfigurePin({lin_tx_pin}U, {iomm_pin_function_alt1});",
+        f"    (void)IOMM_ConfigurePin({lin_rx_pin}U, {iomm_pin_function_alt1});",
+        "    vim_init();",
+        "    (void)GIO_Init();",
+        "",
+    ]
+
+    if "direction" in gio_cfg_fields:
+        source_lines.append(f"    led_cfg.direction = {gio_direction_output};")
+    if "pull" in gio_cfg_fields:
+        source_lines.append(f"    led_cfg.pull = {gio_pull_disabled};")
+    if "pull_mode" in gio_cfg_fields:
+        source_lines.append(f"    led_cfg.pull_mode = {gio_pull_disabled};")
+    if "mode" in gio_cfg_fields:
+        source_lines.append(f"    led_cfg.mode = {gio_mode_push_pull};")
+    if "drive" in gio_cfg_fields:
+        source_lines.append(f"    led_cfg.drive = {gio_mode_push_pull};")
+    if "drive_mode" in gio_cfg_fields:
+        source_lines.append(f"    led_cfg.drive_mode = {gio_mode_push_pull};")
+    if "port" in gio_cfg_fields:
+        source_lines.append("    led_cfg.port = BSP_VALIDATE_LED_PORT;")
+    if "pin" in gio_cfg_fields:
+        source_lines.append("    led_cfg.pin = BSP_VALIDATE_LED_PIN;")
+
+    if gio_configure_available:
+        source_lines.append(
+            f"    (void){gio_configure_fn}(BSP_VALIDATE_LED_PORT, BSP_VALIDATE_LED_PIN, &led_cfg);"
+            if gio_config_pin_arity >= 3
+            else f"    (void){gio_configure_fn}(&led_cfg);"
+        )
+    else:
+        source_lines.append("    /* GIO pin configuration API unavailable in current contract */")
+
+    if gio_write_available:
+        source_lines.append(f"    (void){gio_write_fn}(BSP_VALIDATE_LED_PORT, BSP_VALIDATE_LED_PIN, GIO_LEVEL_HIGH);")
+    else:
+        source_lines.append("    /* GIO pin write API unavailable in current contract */")
+    source_lines.append("")
+    if "baud_rate" in sci_cfg_fields:
+        source_lines.append("    sci_cfg.baud_rate = BSP_VALIDATE_BAUD;")
+    if "data_bits" in sci_cfg_fields:
+        source_lines.append("    sci_cfg.data_bits = SCI_DATABITS_8;")
+    if "parity" in sci_cfg_fields:
+        source_lines.append("    sci_cfg.parity = SCI_PARITY_NONE;")
+    if "stop_bits" in sci_cfg_fields:
+        source_lines.append("    sci_cfg.stop_bits = SCI_STOPBITS_1;")
+    if "enable_tx" in sci_cfg_fields:
+        source_lines.append("    sci_cfg.enable_tx = true;")
+    if "enable_rx" in sci_cfg_fields:
+        source_lines.append("    sci_cfg.enable_rx = true;")
+    if "enable_loopback" in sci_cfg_fields:
+        source_lines.append("    sci_cfg.enable_loopback = false;")
+    if "enable_dma_tx" in sci_cfg_fields:
+        source_lines.append("    sci_cfg.enable_dma_tx = false;")
+    if "enable_dma_rx" in sci_cfg_fields:
+        source_lines.append("    sci_cfg.enable_dma_rx = false;")
+
+    if _contract_has_function(sci_contract, sci_init_fn):
+        source_lines.append(
+            f"    g_validate_sci_status = (uint32_t){sci_init_fn}(&sci_cfg);"
+            if sci_init_arity >= 1
+            else f"    g_validate_sci_status = (uint32_t){sci_init_fn}();"
+        )
+    else:
+        source_lines.append("    /* SCI init API unavailable in current contract */")
+    source_lines.append("")
+
+    if "mode" in lin_cfg_fields:
+        source_lines.append(f"    lin_cfg.mode = {lin_mode_sci};")
+    if "baud_rate" in lin_cfg_fields:
+        source_lines.append("    lin_cfg.baud_rate = BSP_VALIDATE_BAUD;")
+
+    if "data_bits" in lin_cfg_fields:
+        lin_data_field = next(
+            (f for f in (lin_types.get("lin_config_t", {}).get("fields", []) or []) if isinstance(f, dict) and f.get("name") == "data_bits"),
+            None,
+        )
+        lin_data_type = str((lin_data_field or {}).get("type", ""))
+        if lin_data_type in lin_types and (lin_types.get(lin_data_type, {}) or {}).get("kind") == "enum":
+            lin_data_8 = _find_enum_value(lin_contract, lin_data_type, "8", "LIN_DATA_BITS_8")
+            source_lines.append(f"    lin_cfg.data_bits = {lin_data_8};")
+        else:
+            source_lines.append("    lin_cfg.data_bits = 8U;")
+    if "parity" in lin_cfg_fields:
+        source_lines.append(f"    lin_cfg.parity = {lin_parity_none};")
+    if "stop_bits" in lin_cfg_fields:
+        source_lines.append(f"    lin_cfg.stop_bits = {lin_stop_1};")
+    if "enable_loopback" in lin_cfg_fields:
+        source_lines.append("    lin_cfg.enable_loopback = false;")
+    if "enable_rx" in lin_cfg_fields:
+        source_lines.append("    lin_cfg.enable_rx = true;")
+    if "enable_tx" in lin_cfg_fields:
+        source_lines.append("    lin_cfg.enable_tx = true;")
+    if "enable_multibuffer" in lin_cfg_fields:
+        source_lines.append("    lin_cfg.enable_multibuffer = false;")
+    if "tx_dma_enable" in lin_cfg_fields:
+        source_lines.append("    lin_cfg.tx_dma_enable = false;")
+    if "rx_dma_enable" in lin_cfg_fields:
+        source_lines.append("    lin_cfg.rx_dma_enable = false;")
+    if "enable_dma_tx" in lin_cfg_fields:
+        source_lines.append("    lin_cfg.enable_dma_tx = false;")
+    if "enable_dma_rx" in lin_cfg_fields:
+        source_lines.append("    lin_cfg.enable_dma_rx = false;")
+    if "pin_config" in lin_cfg_fields:
+        pin_cfg_field = next(
+            (
+                f
+                for f in (lin_types.get("lin_config_t", {}).get("fields", []) or [])
+                if isinstance(f, dict) and f.get("name") == "pin_config"
+            ),
+            None,
+        )
+        pin_cfg_type = str((pin_cfg_field or {}).get("type", ""))
+        pin_cfg_fields = {
+            f.get("name")
+            for f in (
+                lin_types.get(pin_cfg_type, {}).get("fields", [])
+                if isinstance(lin_types.get(pin_cfg_type, {}), dict)
+                else []
+            )
+            if isinstance(f, dict) and f.get("name")
+        }
+        # Ensure basic SCI-over-LIN path is active when driver models pin electrical config.
+        if "tx_functional_mode" in pin_cfg_fields:
+            source_lines.append("    lin_cfg.pin_config.tx_functional_mode = true;")
+        if "rx_functional_mode" in pin_cfg_fields:
+            source_lines.append("    lin_cfg.pin_config.rx_functional_mode = true;")
+        if "tx_open_drain" in pin_cfg_fields:
+            source_lines.append("    lin_cfg.pin_config.tx_open_drain = false;")
+        if "rx_open_drain" in pin_cfg_fields:
+            source_lines.append("    lin_cfg.pin_config.rx_open_drain = false;")
+        if "tx_pull_enable" in pin_cfg_fields:
+            source_lines.append("    lin_cfg.pin_config.tx_pull_enable = false;")
+        if "rx_pull_enable" in pin_cfg_fields:
+            source_lines.append("    lin_cfg.pin_config.rx_pull_enable = false;")
+        if "tx_pull_select" in pin_cfg_fields:
+            source_lines.append("    lin_cfg.pin_config.tx_pull_select = true;")
+        if "rx_pull_select" in pin_cfg_fields:
+            source_lines.append("    lin_cfg.pin_config.rx_pull_select = true;")
+
+    if _contract_has_function(lin_contract, lin_init_fn):
+        source_lines.append(
+            f"    g_validate_lin_status = (uint32_t){lin_init_fn}(&lin_cfg);"
+            if lin_init_arity >= 1
+            else f"    g_validate_lin_status = (uint32_t){lin_init_fn}();"
+        )
+    else:
+        source_lines.append("    /* LIN init API unavailable in current contract */")
+    source_lines.append("")
+    if sci_send_available:
+        if sci_send_arity >= 3:
+            source_lines.append(f"    (void){sci_send_fn}(sci_banner, (uint32_t)(sizeof(sci_banner) - 1U), 100U);")
+        else:
+            source_lines.append(f"    (void){sci_send_fn}(sci_banner, (uint32_t)(sizeof(sci_banner) - 1U));")
+    if lin_banner_via_tx_buffer:
+        if lin_send_arity >= 3:
+            source_lines.append(f"    (void){lin_send_fn}(lin_banner, (uint16_t)(sizeof(lin_banner) - 1U), 100U);")
+        else:
+            source_lines.append(f"    (void){lin_send_fn}(lin_banner, (uint32_t)(sizeof(lin_banner) - 1U));")
+    elif lin_banner_via_tx_byte:
+        source_lines.extend(
+            [
+                "    lin_banner_idx = 0U;",
+                "    while (lin_banner_idx < (uint32_t)(sizeof(lin_banner) - 1U))",
+                "    {",
+                f"        if ({lin_send_byte_fn}(lin_banner[lin_banner_idx]) == LIN_STATUS_OK)",
+                "        {",
+                "            lin_banner_idx++;",
+                "        }",
+                "    }",
+            ]
+        )
+    if not lin_banner_via_tx_byte:
+        source_lines.append("    (void)lin_banner_idx;")
+    source_lines.extend(
+        [
+            "",
+            "    g_validate_heartbeat_ticks = 0U;",
+            "    g_validate_tx_period = 0U;",
+            "    g_validate_heartbeat_count = 0U;",
+            "    g_validate_initialized = true;",
+            "}",
+            "",
+            "void BSP_ValidateStep(void)",
+            "{",
+            "    uint8_t rx_byte;",
+            "",
+            "    if (!g_validate_initialized)",
+            "    {",
+            "        return;",
+            "    }",
+            "",
+        ]
+    )
+
+    if sci_rx_ready_available and sci_receive_available and sci_send_byte_available:
+        source_lines.extend(
+            [
+                f"    if ({sci_rx_ready_fn}())",
+                "    {",
+                f"        if ({sci_receive_fn}(&rx_byte) == SCI_STATUS_OK)",
+                "        {",
+                f"            (void){sci_send_byte_fn}(rx_byte);",
+                "        }",
+                "    }",
+                "",
+            ]
+        )
+
+    if lin_rx_ready_available and lin_receive_available and lin_send_byte_available:
+        rx_call = (
+            f"{lin_receive_fn}(&rx_byte, 0U)"
+            if lin_receive_arity >= 2
+            else f"{lin_receive_fn}(&rx_byte)"
+        )
+        source_lines.extend(
+            [
+                f"    if ({lin_rx_ready_fn}())",
+                "    {",
+                f"        if ({rx_call} == LIN_STATUS_OK)",
+                "        {",
+                f"            (void){lin_send_byte_fn}(rx_byte);",
+                "        }",
+                "    }",
+                "",
+            ]
+        )
+
+    source_lines.extend(
+        [
+            "    g_validate_tx_period++;",
+            "    if (g_validate_tx_period >= BSP_VALIDATE_TX_PERIOD_TICKS)",
+            "    {",
+            "        g_validate_tx_period = 0U;",
+            "",
+        ]
+    )
+
+    if sci_tx_ready_available and sci_send_byte_available:
+        source_lines.extend(
+            [
+                f"        if ({sci_tx_ready_fn}())",
+                "        {",
+                f"            (void){sci_send_byte_fn}('A');",
+                "            g_validate_sci_tx_ok++;",
+                "        }",
+                "        else",
+                "        {",
+                "            g_validate_sci_tx_skip++;",
+                "        }",
+                "",
+            ]
+        )
+
+    if lin_tx_ready_available and lin_send_byte_available:
+        source_lines.extend(
+            [
+                f"        if ({lin_tx_ready_fn}())",
+                "        {",
+                f"            (void){lin_send_byte_fn}('B');",
+                "            g_validate_lin_tx_ok++;",
+                "        }",
+                "        else",
+                "        {",
+                "            g_validate_lin_tx_skip++;",
+                "        }",
+            ]
+        )
+
+    source_lines.extend(
+        [
+            "    }",
+            "",
+            "    g_validate_heartbeat_ticks++;",
+            "    if (g_validate_heartbeat_ticks >= BSP_VALIDATE_HEARTBEAT_TICKS)",
+            "    {",
+            "        g_validate_heartbeat_ticks = 0U;",
+            "        g_validate_heartbeat_count++;",
+            (
+                f"        (void){gio_toggle_fn}(BSP_VALIDATE_LED_PORT, BSP_VALIDATE_LED_PIN);"
+                if gio_toggle_available
+                else "        /* GIO toggle unavailable in current contract */"
+            ),
+            "    }",
+            "",
+            "    bsp_validate_delay(BSP_VALIDATE_BUSY_DELAY);",
+            "}",
+            "",
+            "uint32_t BSP_ValidateGetHeartbeatCount(void)",
+            "{",
+            "    return g_validate_heartbeat_count;",
+            "}",
+            "",
+        ]
+    )
+
+    header_path = out_dir / "bsp_validate.h"
+    source_path = out_dir / "bsp_validate.c"
+
+    header_path.write_text(
+        normalize_generated_text("\n".join(header_lines), header_path),
+        encoding="utf-8",
+    )
+    source_path.write_text(
+        normalize_generated_text("\n".join(source_lines), source_path),
+        encoding="utf-8",
+    )
+    return header_path, source_path
+
+
 def generate_main_c(
     init_order: InitOrder,
     graph: DependencyGraph,
     out_dir: Path,
     include_tests: bool = False,
-    manifest: dict = None
+    manifest: dict = None,
+    generation_profile: Optional[Dict[str, Any]] = None,
+    board_data: Optional[Dict[str, Any]] = None,
+    api_contract_manifest: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """
     Generate main.c with correct initialization sequence and optional test harness.
@@ -532,6 +1387,9 @@ def generate_main_c(
         out_dir: Output directory
         include_tests: If True, generate test harness code
         manifest: BSP manifest with API catalog (required for test generation)
+        generation_profile: Optional generation profile dict
+        board_data: Optional board.yaml data for LED/pin defaults
+        api_contract_manifest: Optional normalized API contract manifest
 
     Returns:
         Path to generated main.c
@@ -540,42 +1398,59 @@ def generate_main_c(
         raise ValueError(f"Cannot generate main.c: {init_order}")
 
     lines = []
+    validation_mode = _should_generate_bsp_validation(generation_profile, manifest)
+    if validation_mode:
+        _generate_bsp_validate_module(
+            out_dir,
+            generation_profile,
+            board_data,
+            api_contract_manifest=api_contract_manifest,
+        )
 
     # Header
     lines.append("/**")
     lines.append(" * @file main.c")
-    lines.append(" * @brief Main application entry point with auto-generated initialization sequence")
+    if validation_mode:
+        lines.append(" * @brief Main entry for auto-generated BSP runtime validation mode")
+    else:
+        lines.append(" * @brief Main application entry point with auto-generated initialization sequence")
     lines.append(" *")
     lines.append(" * This file was auto-generated by the BSP Generator.")
-    lines.append(" * Initialization order is based on dependency analysis.")
+    if validation_mode:
+        lines.append(" * Runtime behavior is delegated to BSP_ValidateInit/BSP_ValidateStep.")
+    else:
+        lines.append(" * Initialization order is based on dependency analysis.")
     lines.append(" */")
     lines.append("")
     lines.append("#include <stdint.h>")
     lines.append("#include <stddef.h>")
+    if validation_mode:
+        lines.append("#include \"bsp_validate.h\"")
     lines.append("")
 
-    # Include headers for each module
-    lines.append("// Module headers")
-    for module_name in init_order.order:
-        node = graph.get_node(module_name)
-        if not node:
-            continue
+    if not validation_mode:
+        # Include headers for each module
+        lines.append("// Module headers")
+        for module_name in init_order.order:
+            node = graph.get_node(module_name)
+            if not node:
+                continue
 
-        if node.module_type == "system":
-            lines.append("#include \"system.h\"")
-        elif node.module_type == "pll":
-            lines.append("#include \"pll_driver.h\"")
-        elif node.module_type == "vim":
-            lines.append("#include \"vim.h\"")
-        else:
-            # Peripheral driver
-            header_name = f"{module_name.lower()}_driver.h"
-            lines.append(f"#include \"{header_name}\"")
+            if node.module_type == "system":
+                lines.append("#include \"system.h\"")
+            elif node.module_type == "pll":
+                lines.append("#include \"pll_driver.h\"")
+            elif node.module_type == "vim":
+                lines.append("#include \"vim.h\"")
+            else:
+                # Peripheral driver
+                header_name = f"{module_name.lower()}_driver.h"
+                lines.append(f"#include \"{header_name}\"")
 
-    lines.append("")
+        lines.append("")
 
     # Generate test harness if requested
-    if include_tests and manifest:
+    if include_tests and manifest and not validation_mode:
         from ..testing.bsp_test_generator import TestGenerator
 
         test_gen = TestGenerator()
@@ -586,13 +1461,17 @@ def generate_main_c(
     lines.append("/**")
     lines.append(" * @brief Main application entry point")
     lines.append(" *")
-    lines.append(" * Initializes all BSP modules in dependency order:")
+    if validation_mode:
+        lines.append(" * Enters generated BSP validation loop for terminal/UART smoke test.")
+    else:
+        lines.append(" * Initializes all BSP modules in dependency order:")
 
-    # Document init order
-    for i, module_name in enumerate(init_order.order, 1):
-        node = graph.get_node(module_name)
-        deps_str = ", ".join(node.dependencies) if node and node.dependencies else "none"
-        lines.append(f" * {i}. {module_name} (dependencies: {deps_str})")
+    if not validation_mode:
+        # Document init order
+        for i, module_name in enumerate(init_order.order, 1):
+            node = graph.get_node(module_name)
+            deps_str = ", ".join(node.dependencies) if node and node.dependencies else "none"
+            lines.append(f" * {i}. {module_name} (dependencies: {deps_str})")
 
     lines.append(" *")
     lines.append(" * @return Never returns (infinite loop)")
@@ -600,75 +1479,84 @@ def generate_main_c(
     lines.append("int main(void)")
     lines.append("{")
 
-    # Initialization sequence
-    lines.append("    /* ===== BSP Initialization Sequence ===== */")
-    lines.append("    /* Auto-generated based on dependency analysis */")
-    lines.append("")
+    if validation_mode:
+        lines.append("    BSP_ValidateInit();")
+        lines.append("")
+        lines.append("    while (1)")
+        lines.append("    {")
+        lines.append("        BSP_ValidateStep();")
+        lines.append("    }")
+    else:
+        # Initialization sequence
+        lines.append("    /* ===== BSP Initialization Sequence ===== */")
+        lines.append("    /* Auto-generated based on dependency analysis */")
+        lines.append("")
 
-    for module_name in init_order.order:
-        node = graph.get_node(module_name)
-        if not node:
-            continue
+        for module_name in init_order.order:
+            node = graph.get_node(module_name)
+            if not node:
+                continue
 
-        # Add comment with dependencies
-        if node.dependencies:
-            deps_str = ", ".join(node.dependencies)
-            lines.append(f"    /* Initialize {module_name} (depends on: {deps_str}) */")
-        else:
-            lines.append(f"    /* Initialize {module_name} (no dependencies) */")
-
-        init_func = node.init_function
-        if not init_func.endswith("()"):
-            init_func += "()"
-
-        # Check if this is a core system module or peripheral
-        if module_name.upper() in CORE_SYSTEM_MODULES:
-            # Core system - always call directly
-            lines.append(f"    {init_func};")
-        else:
-            # Peripheral - add EnablePins comment prompts if available
-            enable_pins_funcs = find_enable_pins_functions(manifest, module_name)
-
-            if enable_pins_funcs:
-                lines.append("")
-                lines.append(f"    /* TODO: Configure pins for {module_name} before use */")
-                lines.append(f"    /* Uncomment the appropriate EnablePins function(s): */")
-
-                for func in enable_pins_funcs:
-                    func_name = func.get('name', '')
-                    func_brief = func.get('brief', '')
-
-                    lines.append(f"    /* - {func_name}(); */")
-                    if func_brief:
-                        lines.append(f"    /*     {func_brief} */")
-
-                lines.append(f"    /* Then uncomment the init function: */")
-                lines.append(f"    /* {init_func}; */")
+            # Add comment with dependencies
+            if node.dependencies:
+                deps_str = ", ".join(node.dependencies)
+                lines.append(f"    /* Initialize {module_name} (depends on: {deps_str}) */")
             else:
-                # No EnablePins functions - just comment out init
-                lines.append(f"    /* TODO: Uncomment to enable {module_name} */")
-                lines.append(f"    /* {init_func}; */")
+                lines.append(f"    /* Initialize {module_name} (no dependencies) */")
 
+            init_func = node.init_function
+            if not init_func.endswith("()"):
+                init_func += "()"
+
+            # Check if this is a core system module or peripheral
+            if module_name.upper() in CORE_SYSTEM_MODULES:
+                # Core system - always call directly
+                lines.append(f"    {init_func};")
+            else:
+                # Peripheral - add EnablePins comment prompts if available
+                enable_pins_funcs = find_enable_pins_functions(manifest, module_name)
+
+                if enable_pins_funcs:
+                    lines.append("")
+                    lines.append(f"    /* TODO: Configure pins for {module_name} before use */")
+                    lines.append(f"    /* Uncomment the appropriate EnablePins function(s): */")
+
+                    for func in enable_pins_funcs:
+                        func_name = func.get('name', '')
+                        func_brief = func.get('brief', '')
+
+                        lines.append(f"    /* - {func_name}(); */")
+                        if func_brief:
+                            lines.append(f"    /*     {func_brief} */")
+
+                    lines.append(f"    /* Then uncomment the init function: */")
+                    lines.append(f"    /* {init_func}; */")
+                else:
+                    # No EnablePins functions - just comment out init
+                    lines.append(f"    /* TODO: Uncomment to enable {module_name} */")
+                    lines.append(f"    /* {init_func}; */")
+
+            lines.append("")
+
+        lines.append("    /* ===== Application Code ===== */")
+        lines.append("    /* TODO: Add your application logic here */")
         lines.append("")
 
-    lines.append("    /* ===== Application Code ===== */")
-    lines.append("    /* TODO: Add your application logic here */")
-    lines.append("")
+        if include_tests:
+            lines.append("    /* Run BSP tests (if enabled) */")
+            lines.append("    #ifdef BSP_RUN_TESTS")
+            lines.append("    uint32_t failures = BSP_RunTests();")
+            lines.append("    // Inspect 'failures' variable in debugger")
+            lines.append("    #endif")
+            lines.append("")
 
-    if include_tests:
-        lines.append("    /* Run BSP tests (if enabled) */")
-        lines.append("    #ifdef BSP_RUN_TESTS")
-        lines.append("    uint32_t failures = BSP_RunTests();")
-        lines.append("    // Inspect 'failures' variable in debugger")
-        lines.append("    #endif")
-        lines.append("")
+        lines.append("    /* Main loop */")
+        lines.append("    while (1)")
+        lines.append("    {")
+        lines.append("        /* Application main loop */")
+        lines.append("        /* TODO: Add periodic tasks, event handling, etc. */")
+        lines.append("    }")
 
-    lines.append("    /* Main loop */")
-    lines.append("    while (1)")
-    lines.append("    {")
-    lines.append("        /* Application main loop */")
-    lines.append("        /* TODO: Add periodic tasks, event handling, etc. */")
-    lines.append("    }")
     lines.append("")
     lines.append("    return 0; /* Never reached */")
     lines.append("}")
@@ -676,7 +1564,10 @@ def generate_main_c(
 
     # Write to file
     main_c_path = out_dir / "main.c"
-    main_c_path.write_text("\n".join(lines), encoding="utf-8")
+    main_c_path.write_text(
+        normalize_generated_text("\n".join(lines), main_c_path),
+        encoding="utf-8",
+    )
 
     logger.info(f"Generated main.c with {len(init_order.order)} init calls")
     return main_c_path

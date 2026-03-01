@@ -267,6 +267,56 @@ class TestCrossReferenceValidation:
         )
         assert errors == []
 
+    def test_board_pin_references_valid(self):
+        """Test that valid board pin references pass pinmux cross-checks."""
+        soc_data = {"soc": {"peripherals": [{"name": "SCI", "regs_ref": "SCI"}]}}
+        regs_data = {"peripherals": {"SCI": {}}}
+        irq_data = {"irqs": []}
+        bus_data = {"sources": [], "domains": []}
+        pinmux_data = {
+            "pins": [
+                {"package_pin": 38},
+                {"package_pin": 39},
+                {"package_pin": 117},
+            ]
+        }
+        board_data = {
+            "communication": {
+                "uart": {"sci": {"rx_pin": 38, "tx_pin": 39}}
+            },
+            "leds": [{"mcu_pin": 117}]
+        }
+
+        errors = validate_cross_references(
+            soc_data, regs_data, irq_data, bus_data, pinmux_data, board_data
+        )
+        assert errors == []
+
+    def test_board_pin_references_invalid(self):
+        """Test that invalid board pin references are reported."""
+        soc_data = {"soc": {"peripherals": [{"name": "SCI", "regs_ref": "SCI"}]}}
+        regs_data = {"peripherals": {"SCI": {}}}
+        irq_data = {"irqs": []}
+        bus_data = {"sources": [], "domains": []}
+        pinmux_data = {
+            "pins": [
+                {"package_pin": 38},
+                {"package_pin": 39},
+            ]
+        }
+        board_data = {
+            "communication": {
+                "uart": {"sci": {"rx_pin": 38, "tx_pin": 999}}
+            }
+        }
+
+        errors = validate_cross_references(
+            soc_data, regs_data, irq_data, bus_data, pinmux_data, board_data
+        )
+        assert len(errors) == 1
+        assert "board.communication.uart.sci.tx_pin" in errors[0]
+        assert "999" in errors[0]
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
