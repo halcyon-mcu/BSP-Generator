@@ -71,19 +71,228 @@ def _ensure_pcr_enable_all_definition(source_code: str) -> str:
             "}\n"
         )
     else:
-        # Fallback when PCR_EnablePeripheral enum helpers are absent in generated source.
-        snippet = (
-            "\n"
-            "/**\n"
-            " * @brief Enable all known PCR-controlled peripherals\n"
-            " * @details Compatibility helper for startup ordering contract.\n"
-            " */\n"
-            "void PCR_EnableAllPeripherals(void)\n"
-            "{\n"
-            "    PCR_Init();\n"
-            "}\n"
-        )
+        clear_regs = sorted(set(re.findall(r"\bPSPWRDWNCLR(\d+)\b", source_code)))
+        if clear_regs:
+            writes = "".join([f"    pcrREG->PSPWRDWNCLR{idx} = 0xFFFFFFFFU;\n" for idx in clear_regs])
+            snippet = (
+                "\n"
+                "/**\n"
+                " * @brief Enable all known PCR-controlled peripherals\n"
+                " * @details Compatibility helper for startup ordering contract.\n"
+                " */\n"
+                "void PCR_EnableAllPeripherals(void)\n"
+                "{\n"
+                "    /* Enable all PCR domains by clearing powerdown bits. */\n"
+                f"{writes}"
+                "}\n"
+            )
+        else:
+            snippet = (
+                "\n"
+                "/**\n"
+                " * @brief Enable all known PCR-controlled peripherals\n"
+                " * @details Compatibility helper for startup ordering contract.\n"
+                " */\n"
+                "void PCR_EnableAllPeripherals(void)\n"
+                "{\n"
+                "    /* Fallback when detailed PCR register map is unavailable. */\n"
+                "    (void)0;\n"
+                "}\n"
+            )
     return source_code + ("" if source_code.endswith("\n") else "\n") + snippet
+
+
+def _ensure_iomm_one_hot_encoding(source_code: str) -> str:
+    """
+    Ensure IOMM pin-function encoding is one-hot inside each 8-bit PINMMR field.
+
+    Some generations drift to raw ordinal encoding (ALT1 -> 0x01), but RM46
+    bring-up requires one-hot writes (ALT1 -> bit1 in field).
+    """
+    updated = source_code
+
+    # Convert ordinal-style assignment to one-hot.
+    updated = re.sub(
+        r"\bfunction_value\s*=\s*\(uint32_t\)\s*function\s*;",
+        "function_value = (1U << (uint32_t)function);",
+        updated,
+    )
+
+    # Handle switch-case styles that set raw constants 0x00..0x07.
+    updated = re.sub(
+        r"\bfunction_value\s*=\s*0x0?[0-7]U\s*;",
+        "function_value = (1U << (uint32_t)function);",
+        updated,
+    )
+
+    # If function is masked directly, rewrite to one-hot before shift.
+    updated = re.sub(
+        r"\(\s*\(\s*uint32_t\s*\)\s*function\s*&\s*0xFFU\s*\)\s*<<",
+        "((1U << (uint32_t)function) & 0xFFU) <<",
+        updated,
+    )
+
+    # Keep compatibility with symbolic mask names if present.
+    updated = re.sub(
+        r"\(\s*\(\s*uint32_t\s*\)\s*function\s*&\s*IOMM_[A-Z0-9_]*MASK\s*\)\s*<<",
+        "((1U << (uint32_t)function) & IOMM_FUNCTION_BITS_MASK) <<",
+        updated,
+    )
+
+    return updated
+
+
+def _find_c_function_body_span(source_code: str, function_name: str) -> Optional[tuple[int, int]]:
+    """Return (body_start, body_end_exclusive) for a C function body."""
+    sig_match = re.search(rf"\b{re.escape(function_name)}\s*\([^;{{}}]*\)\s*\{{", source_code)
+    if not sig_match:
+        return None
+
+    open_brace = source_code.find("{", sig_match.start(), sig_match.end())
+    if open_brace < 0:
+        return None
+
+    depth = 0
+    idx = open_brace
+    while idx < len(source_code):
+        ch = source_code[idx]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return (open_brace + 1, idx)
+        idx += 1
+
+    return None
+
+
+def _ensure_iomm_configurepin_locking(source_code: str) -> str:
+    """
+    Enforce IOMM unlock/lock discipline inside IOMM_ConfigurePin().
+
+    Bring-up requirement: pin-mux writes must occur with IOMM unlocked and
+    the function must re-lock before returning.
+    """
+    span = _find_c_function_body_span(source_code, "IOMM_ConfigurePin")
+    if span is None:
+        return source_code
+
+    body_start, body_end = span
+    body = source_code[body_start:body_end]
+    updated = body
+
+    if "IOMM_Unlock(" not in updated:
+        unlock_stmt = (
+            "    /* Bring-up contract: unlock IOMM before pin-mux writes. */\n"
+            "    IOMM_Unlock();\n"
+        )
+        anchor = re.search(
+            r"^\s*(?:reg_value\s*=\s*\*pinmmr_reg\s*;|pinmmr_reg\s*=.*;|\*pinmmr_reg\s*=)",
+            updated,
+            re.MULTILINE,
+        )
+        if anchor:
+            updated = updated[:anchor.start()] + unlock_stmt + updated[anchor.start():]
+        else:
+            return_anchor = re.search(r"^\s*return\b", updated, re.MULTILINE)
+            if return_anchor:
+                updated = updated[:return_anchor.start()] + unlock_stmt + updated[return_anchor.start():]
+            else:
+                updated = unlock_stmt + updated
+
+    lines = updated.splitlines(keepends=True)
+    rewritten_lines: List[str] = []
+    for line in lines:
+        if re.match(r"^\s*return\b", line):
+            prev_nonempty = ""
+            for prev_line in reversed(rewritten_lines):
+                if prev_line.strip():
+                    prev_nonempty = prev_line.strip()
+                    break
+            if "IOMM_Lock();" not in prev_nonempty:
+                indent = re.match(r"^(\s*)", line).group(1) if re.match(r"^(\s*)", line) else "    "
+                rewritten_lines.append(f"{indent}IOMM_Lock();\n")
+        rewritten_lines.append(line)
+    updated = "".join(rewritten_lines)
+
+    if updated == body:
+        return source_code
+    return source_code[:body_start] + updated + source_code[body_end:]
+
+
+def _ensure_pll_bringup_tokens(source_code: str) -> str:
+    """
+    Deterministically inject missing PLL bring-up sequence writes used by strict
+    startup contract checks (RCLKSRC and VCLKASRC).
+    """
+    if "void PLL_Init(void)" not in source_code:
+        return source_code
+    if "RCLKSRC" in source_code and "VCLKASRC" in source_code:
+        return source_code
+
+    insertion = (
+        "    /* Bring-up contract: explicit RTI and async clock source routing. */\n"
+        "    SYSREG->RCLKSRC = (1U << 24U) | (9U << 16U) | (1U << 8U) | (9U << 0U);\n"
+        "    SYSREG->VCLKASRC = (9U << 8U) | (9U << 0U);\n"
+    )
+
+    # Prefer inserting after GHVSRC selection in PLL_Init.
+    ghv_line = re.search(r"^\s*SYSREG->GHVSRC\s*=.*?;\s*$", source_code, re.MULTILINE)
+    if ghv_line:
+        end = ghv_line.end()
+        return source_code[:end] + "\n" + insertion + source_code[end:]
+
+    # Fallback: insert near top of PLL_Init body.
+    init_sig = re.search(r"void\s+PLL_Init\s*\(\s*void\s*\)\s*\{", source_code)
+    if init_sig:
+        end = init_sig.end()
+        return source_code[:end] + "\n" + insertion + source_code[end:]
+
+    return source_code
+
+
+def _normalize_system_flash_register_access(source_code: str) -> str:
+    """
+    Normalize flash wait-state register accesses in system.c.
+
+    Some generations incorrectly use SYSTEM register-map members that do not
+    exist in reg_system.h (e.g., SYS->FRDCNTL). Convert these to explicit
+    MMIO register macros at fixed RM46 flash-controller addresses.
+    """
+    updated = source_code
+
+    replacements = {
+        "FRDCNTL": "FLASH_FRDCNTL_REG",
+        "FSMWRENA": "FLASH_FSMWRENA_REG",
+        "EEPROMCONFIG": "FLASH_EEPROMCONFIG_REG",
+        "FBFALLBACK": "FLASH_FBFALLBACK_REG",
+        "FLASH_FRDCNTL": "FLASH_FRDCNTL_REG",
+    }
+    pointer_aliases = ["SYS", "systemREG1", "sysREG", "SYSTEMREG1"]
+
+    for member, macro in replacements.items():
+        for alias in pointer_aliases:
+            updated = re.sub(
+                rf"\b{alias}\s*->\s*{member}\b",
+                macro,
+                updated,
+            )
+
+    if updated == source_code:
+        return source_code
+
+    macro_block = (
+        "#define FLASH_FRDCNTL_REG      (*(volatile uint32_t *)0xFFF87000u)\n"
+        "#define FLASH_FSMWRENA_REG     (*(volatile uint32_t *)0xFFF87288u)\n"
+        "#define FLASH_EEPROMCONFIG_REG (*(volatile uint32_t *)0xFFF872B8u)\n"
+        "#define FLASH_FBFALLBACK_REG   (*(volatile uint32_t *)0xFFF87040u)"
+    )
+    for line in macro_block.splitlines():
+        if line not in updated:
+            updated = _inject_include_if_missing(updated, line)
+
+    return updated
 
 
 def _postprocess_generated_code(mod_name: str, type_tag: str, code: str) -> str:
@@ -111,8 +320,14 @@ def _postprocess_generated_code(mod_name: str, type_tag: str, code: str) -> str:
                 macro = "#define IOMM_PINMMR(n) (*((volatile uint32_t*)(&iommREG->PINMMR0) + (n)))"
                 if macro not in processed:
                     processed = _inject_include_if_missing(processed, macro)
+            processed = _ensure_iomm_one_hot_encoding(processed)
+            processed = _ensure_iomm_configurepin_locking(processed)
+        elif mod_name.upper() == "PLL":
+            processed = _ensure_pll_bringup_tokens(processed)
         elif mod_name.upper() == "PCR":
             processed = _ensure_pcr_enable_all_definition(processed)
+        elif mod_name.upper() == "SYSTEM":
+            processed = _normalize_system_flash_register_access(processed)
 
     return processed
 

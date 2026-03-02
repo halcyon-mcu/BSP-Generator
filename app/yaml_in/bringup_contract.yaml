@@ -2,6 +2,7 @@ ir_schema_version: 1.0.0
 target_board: LAUNCHXL2-TMS57012-RM46
 serial:
   primary_path: LIN_SCI_MODE
+  primary_tx_only: LIN
   baud_default: 9600
   required_pins:
     - pin: 38
@@ -20,14 +21,60 @@ iomm:
   unlock_sequence:
     - "0x83E70B13"
     - "0x95A4F1E0"
+  require_unlock_for_pin_config: true
+  require_lock_after_pin_config: true
+  configurepin_self_managed_locking: true
 pll:
+  init_profile: rm46_hal_aligned
+  supported_profiles:
+  supported_profiles:
+    - rm46_hal_aligned
+    - rm46_trm_dynamic
+    - rm46_trm_dynamic_with_hal_fallback
   required_sequence:
-    - CSDISSET
-    - CSVSTAT
-    - GHVSRC
-    - RCLKSRC
-    - VCLKASRC
-    - CLKCNTL
+    - disable/set source bits
+    - write PLLCTL1/PLLCTL2(/PLLCTL3 if used)
+    - poll CSVSTAT
+    # CRITICAL: CLKCNTL (VCLKR/VCLK2R dividers) MUST be set BEFORE GHVSRC source switch.
+    # If CLKCNTL is written after GHVSRC, VCLK runs at full HCLK (220MHz) which exceeds
+    # the 110MHz peripheral bus maximum and causes hardware faults.
+    - write CLKCNTL
+    - write GHVSRC
+    - write RCLKSRC
+    - write VCLKASRC
+    - set PENA
+  frequency_decode:
+    allow_hal_encoded_pllmul: true
+    hal_literal_hclk_hz: 220000000
+    required_behavior:
+      supports_hal_encoded_pllmul_literal: true
+      uses_hal_literal_hclk_override: true
+      uses_uint64_intermediate_math: true
+      derives_active_source_from_ghvsrc: true
+      uses_trm_field_decoding: false
+      uses_trm_enable_disable_sequence: false
+    required_tokens:
+      - "0xA400"
+      - "uint64_t"
+flash:
+  required_registers:
+    FLASH_FRDCNTL_REG:
+      address: "0xFFF87000"
+      required_write_tokens:
+        - "0x00000311"
+    FLASH_FBFALLBACK_REG:
+      address: "0xFFF87040"
+      required_write_tokens:
+        - "0x00000000"
+    FLASH_FSMWRENA_REG:
+      address: "0xFFF87288"
+      required_write_tokens:
+        - "0x00000005"
+        - "0x0000000A"
+    FLASH_EEPROMCONFIG_REG:
+      address: "0xFFF872B8"
+      required_write_tokens:
+        - "0x00030002"
 startup:
   required_order:
     - PCR_Init

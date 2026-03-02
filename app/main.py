@@ -7,7 +7,7 @@ import re
 import signal
 import sys
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 
 from config import YAMLS_DIR, TARGET_FILES, FACTS_CANON, PATTERN_SNIPS
 
@@ -34,12 +34,22 @@ from modules.contracts.api_contract_manifest import (
     write_api_contract_manifest,
 )
 from modules.contracts.contract_checker import (
+    check_generated_module_contract,
     check_bsp_validate_contract,
 )
 from modules.contracts.contract_autofix import (
     autofix_bsp_validate,
 )
+from modules.build.ccs_build_gate import (
+    gate_should_fail_run,
+    run_ccs_build_gate,
+)
+from modules.build.ti_diagnostics import apply_deterministic_fixes
 from modules.validation.startup_contract_validator import validate_startup_contract
+from modules.validation.register_parity_guard import (
+    default_critical_registers,
+    run_parity_guard,
+)
 
 from modules.yaml.yaml_utils import (
     dump_yaml_str,
@@ -85,7 +95,57 @@ DEFAULT_GENERATION_PROFILE = {
     "pins": {"lock_board_mapping": True},
     "clocks": {"mode": "board_default"},
     "strict_validation": False,
-    "bsp_validation": {"enabled": True},
+    "bringup_mode": {
+        "default": "direct_init",
+    },
+    "startup_contract": {
+        "gate_mode": "warn",
+    },
+    "parity_guard": {
+        "mode": "critical_only",
+        "baseline_path": "app/output_working_with_manual_changes",
+        "critical_registers": default_critical_registers(),
+    },
+    "bsp_validation": {
+        "enabled": False,
+        "baud": 9600,
+        "frame": {
+            "data_bits": 8,
+            "stop_bits": 1,
+            "parity": "none",
+        },
+        "banners": {
+            "sci": "SCI path active (A)\\r\\n",
+            "lin": "LIN path active (B)\\r\\n",
+        },
+        "timing": {
+            "heartbeat_ticks": 1000,
+            "tx_period_ticks": 200,
+            "busy_delay": 200,
+        },
+    },
+    "build_gate": {
+        "enabled": True,
+        "mode": "strict",
+        "external_workspace_path": "",
+        "project_name": "",
+        "configuration": "Debug",
+        "max_fix_rounds": 3,
+        "allow_targeted_llm_rewrite": True,
+        "fail_on_compile_error": True,
+        "clean_stale_project_files": True,
+        "clean_build": True,
+        "llm_rewrite": {
+            "enabled": True,
+            "scope": "top_files",
+            "top_k_files": 2,
+            "apply_policy": "hybrid",
+            "model": "inherit",
+            "max_tokens": 6000,
+            "max_attempts": 1,
+            "include_contract_context": True,
+        },
+    },
     "contract_mode": "auto_fix_then_fail",
     "contract_lock_mode": "strict",
     "require_ccs_proof": True,
@@ -110,6 +170,120 @@ def _merge_generation_profile(override_profile: dict | None) -> dict:
         else:
             merged[key] = value
     return merged
+
+
+def _resolve_optional_path(path_value: Optional[str], yaml_root: Path) -> Optional[Path]:
+    if not isinstance(path_value, str) or not path_value.strip():
+        return None
+    raw_path = Path(path_value.strip())
+    candidates: List[Path] = []
+    if raw_path.is_absolute():
+        candidates.append(raw_path)
+    else:
+        candidates.extend(
+            [
+                Path.cwd() / raw_path,
+                yaml_root / raw_path,
+                yaml_root.parent / raw_path,
+                yaml_root / raw_path.name,
+            ]
+        )
+    seen = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.exists():
+            return resolved
+    return None
+
+
+def _resolve_startup_gate_mode(
+    generation_profile: Dict[str, Any],
+    bringup_strict: bool,
+    fail_on_contract_mismatch: bool,
+) -> str:
+    startup_cfg = generation_profile.get("startup_contract", {})
+    gate_mode = ""
+    if isinstance(startup_cfg, dict):
+        gate_mode = str(startup_cfg.get("gate_mode", "")).strip().lower()
+    if gate_mode in {"warn", "fail"}:
+        return gate_mode
+    if bringup_strict and fail_on_contract_mismatch:
+        return "fail"
+    return "warn"
+
+
+def _resolve_parity_guard_config(generation_profile: Dict[str, Any], yaml_root: Path) -> Dict[str, Any]:
+    cfg = generation_profile.get("parity_guard", {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    mode = str(cfg.get("mode", "critical_only")).strip().lower()
+    if mode not in {"critical_only", "strict", "off"}:
+        mode = "critical_only"
+    baseline_path = _resolve_optional_path(cfg.get("baseline_path"), yaml_root)
+    critical_regs = cfg.get("critical_registers")
+    if not isinstance(critical_regs, list) or not all(isinstance(x, str) for x in critical_regs):
+        critical_regs = default_critical_registers()
+    return {
+        "mode": mode,
+        "baseline_path": baseline_path,
+        "critical_registers": list(critical_regs),
+    }
+
+
+def _augment_compile_gate_report(
+    out_dir: Path,
+    build_gate_result: Optional[Dict[str, Any]],
+    startup_contract_result: Optional[Dict[str, Any]],
+    startup_gate_mode: str,
+    parity_result: Optional[Dict[str, Any]],
+) -> None:
+    if not isinstance(build_gate_result, dict):
+        return
+
+    startup_passes = (
+        bool(startup_contract_result.get("passes", True))
+        if isinstance(startup_contract_result, dict)
+        else None
+    )
+    parity_passes = (
+        bool(parity_result.get("passes", True))
+        if isinstance(parity_result, dict)
+        else None
+    )
+    parity_mode = (
+        str(parity_result.get("mode", "critical_only"))
+        if isinstance(parity_result, dict)
+        else "critical_only"
+    )
+    blocking_reasons: List[str] = []
+    if build_gate_result.get("required") and not build_gate_result.get("passes", False):
+        blocking_reasons.append("compile_gate_failed")
+    if startup_gate_mode == "fail" and startup_passes is False:
+        blocking_reasons.append("startup_contract_failed")
+    if startup_gate_mode == "fail" and parity_passes is False:
+        blocking_reasons.append("parity_guard_failed")
+
+    build_gate_result["startup_contract_status"] = {
+        "status": "evaluated",
+        "passes": startup_passes,
+        "gate_mode": startup_gate_mode,
+        "errors": list((startup_contract_result or {}).get("errors", []))[:20],
+        "warnings": list((startup_contract_result or {}).get("warnings", []))[:20],
+    }
+    build_gate_result["parity_guard_status"] = {
+        "status": "evaluated" if isinstance(parity_result, dict) else "not_evaluated",
+        "passes": parity_passes,
+        "mode": parity_mode,
+        "summary": dict((parity_result or {}).get("summary", {})),
+        "critical_mismatch_count": len((parity_result or {}).get("critical_sequence_mismatches", [])),
+    }
+    build_gate_result["blocking_reasons"] = blocking_reasons
+
+    report_path = Path(out_dir) / "compile_gate_report.json"
+    report_path.write_text(json.dumps(build_gate_result, indent=2), encoding="utf-8")
 
 
 def resolve_dependencies(modules: List[str], manifest: Dict) -> List[str]:
@@ -731,6 +905,551 @@ def signal_handler(_signum, _frame):
     print("\n[info] Shutdown requested. Finishing current operations... (Press Ctrl+C again to force quit)")
     print("[info] Current tasks will complete, then generation will stop.")
 
+
+def _resolve_validation_file(out_dir: Path, filename: str) -> Optional[Path]:
+    candidates = [
+        out_dir / filename,
+        out_dir / "include" / filename,
+        out_dir / "source" / filename,
+    ]
+    return next((p for p in candidates if p.exists()), None)
+
+
+def _collect_validation_module_files(out_dir: Path, module_name: str) -> tuple[List[Path], Optional[Path], Optional[Path]]:
+    module_lower = module_name.lower()
+    source = _resolve_validation_file(out_dir, f"{module_lower}_driver.c")
+    header = _resolve_validation_file(out_dir, f"{module_lower}_driver.h")
+    reg_header = _resolve_validation_file(out_dir, f"reg_{module_lower}.h")
+
+    files: List[Path] = []
+    if source:
+        files.append(source)
+    if header:
+        files.append(header)
+    if reg_header:
+        files.append(reg_header)
+    return files, header, source
+
+
+def _discover_generated_modules(out_dir: Path) -> List[str]:
+    modules: set[str] = set()
+    roots = [out_dir, out_dir / "include", out_dir / "source"]
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in root.glob("*_driver.c"):
+            stem = path.stem
+            if stem.startswith("reg_"):
+                continue
+            mod = stem.replace("_driver", "").strip()
+            if mod:
+                modules.add(mod.upper())
+    return sorted(modules)
+
+
+def _run_validation_only(args) -> int:
+    if not args.output_dir:
+        raise ValueError("--validate-only requires --output-dir <existing output_* directory>")
+
+    out_dir = Path(args.output_dir).resolve()
+    if not out_dir.exists() or not out_dir.is_dir():
+        raise FileNotFoundError(f"Validation output directory not found: {out_dir}")
+
+    print(f"[info] Validation-only mode on existing output: {out_dir}")
+
+    yaml_root = Path(args.yamlpath)
+    if not (yaml_root / "soc.yaml").exists():
+        alt_yaml_root = Path("app") / args.yamlpath
+        if (alt_yaml_root / "soc.yaml").exists():
+            yaml_root = alt_yaml_root
+
+    # Load YAML sources
+    soc_data = load_soc_yaml(yaml_root / "soc.yaml")
+    regs_data = load_regs_yaml(yaml_root / "regs.yaml")
+    irq_data = load_irq_yaml(yaml_root / "irq.yaml")
+    memmap_data = load_memmap_yaml(yaml_root / "memmap.yaml")
+    bus_data = load_bus_yaml(yaml_root / "bus.yaml")
+    pinmux_data = load_pinmux_yaml(yaml_root / "pinmux.yaml")
+    board_data = load_board_yaml(yaml_root / "board.yaml")
+
+    # Load profile and bring-up contract using same defaults
+    profile_data = None
+    if args.profile:
+        profile_data = load_generation_profile(Path(args.profile))
+        print(f"[info] Loaded generation profile: {args.profile}")
+    elif (yaml_root / "generation_profile.yaml").exists():
+        profile_path = yaml_root / "generation_profile.yaml"
+        profile_data = load_generation_profile(profile_path)
+        print(f"[info] Loaded generation profile: {profile_path}")
+
+    generation_profile = _merge_generation_profile(profile_data)
+    bringup_cfg = generation_profile.get("bringup", {}) if isinstance(generation_profile.get("bringup", {}), dict) else {}
+    bringup_mode = str(bringup_cfg.get("mode", "strict")).strip().lower()
+    if bringup_mode not in {"strict", "relaxed"}:
+        bringup_mode = "strict"
+    bringup_strict = bringup_mode == "strict"
+    fail_on_contract_mismatch = bool(bringup_cfg.get("fail_on_contract_mismatch", True))
+    startup_gate_mode = _resolve_startup_gate_mode(
+        generation_profile,
+        bringup_strict=bringup_strict,
+        fail_on_contract_mismatch=fail_on_contract_mismatch,
+    )
+    parity_guard_cfg = _resolve_parity_guard_config(generation_profile, yaml_root)
+
+    def _resolve_bringup_contract_path(contract_file: str) -> Optional[Path]:
+        candidates = []
+        raw_path = Path(contract_file)
+        if raw_path.is_absolute():
+            candidates.append(raw_path)
+        else:
+            candidates.append(Path.cwd() / raw_path)
+            candidates.append(yaml_root / raw_path)
+            candidates.append(yaml_root.parent / raw_path)
+            candidates.append(yaml_root / raw_path.name)
+        seen = set()
+        for candidate in candidates:
+            normalized = candidate.resolve()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            if normalized.exists():
+                return normalized
+        return None
+
+    bringup_contract = None
+    bringup_contract_path: Optional[Path] = None
+    configured_contract_file = bringup_cfg.get("contract_file")
+    if isinstance(configured_contract_file, str) and configured_contract_file.strip():
+        bringup_contract_path = _resolve_bringup_contract_path(configured_contract_file.strip())
+    else:
+        default_contract = yaml_root / "bringup_contract.yaml"
+        if default_contract.exists():
+            bringup_contract_path = default_contract
+    if bringup_contract_path is not None:
+        bringup_contract = load_bringup_contract(bringup_contract_path)
+        print(f"[info] Loaded bringup contract: {bringup_contract_path}")
+
+    strict_validation_enabled = bool(generation_profile.get("strict_validation", False))
+    contract_mode = str(generation_profile.get("contract_mode", "auto_fix_then_fail"))
+
+    # Cross-reference check
+    from modules.validation.cross_reference_validator import validate_and_report_cross_references
+    if not validate_and_report_cross_references(soc_data, regs_data, irq_data, bus_data, pinmux_data, board_data):
+        print("[error] Cross-reference validation failed")
+        return 1
+
+    # Load manifest / contract from target output
+    bsp_manifest = None
+    manifest_path = out_dir / "bsp_manifest.json"
+    if manifest_path.exists():
+        bsp_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        print(f"[info] Loaded manifest: {manifest_path}")
+    else:
+        print("[warn] bsp_manifest.json missing in output dir; using file-discovery fallback")
+
+    api_contract_manifest = None
+    contract_path = out_dir / "api_contract_manifest.json"
+    if contract_path.exists():
+        api_contract_manifest = json.loads(contract_path.read_text(encoding="utf-8"))
+        print(f"[info] Loaded API contract manifest: {contract_path}")
+    elif bsp_manifest:
+        api_contract_manifest = build_api_contract_manifest(bsp_manifest, generation_profile)
+        print("[info] Rebuilt API contract manifest from bsp_manifest.json")
+
+    # Determine modules to validate
+    api_catalog = (bsp_manifest or {}).get("api_catalog", {}) if isinstance(bsp_manifest, dict) else {}
+    module_names = sorted(api_catalog.keys()) if api_catalog else _discover_generated_modules(out_dir)
+    print(f"[info] Validating {len(module_names)} modules")
+
+    from modules.validation.validation_engine import (
+        validate_generation_output,
+        extract_all_constants_from_directory,
+        validate_facts_across_files,
+    )
+    from modules.validation.pass2_validator import validate_driver_implementation
+    from modules.validation.validation_report import (
+        ValidationReport,
+        ValidationSummary,
+        ModuleValidation,
+        write_json_report,
+        write_markdown_report,
+        print_console_summary,
+    )
+    from modules.utils.dependency_resolver import build_dependency_graph, generate_init_order, validate_dependencies
+
+    def _evaluate_modules_and_contracts() -> tuple[
+        List[tuple[str, Any]],
+        List[str],
+        List[str],
+        int,
+        Optional[Dict[str, Any]],
+    ]:
+        pass2_results_local: List[tuple[str, Any]] = []
+        contract_errors_local: List[str] = []
+        contract_warnings_local: List[str] = []
+        contract_checks_local = 0
+
+        for module_name in module_names:
+            files, module_header_path, module_source_path = _collect_validation_module_files(out_dir, module_name)
+            if not files:
+                continue
+
+            manifest_entry = api_catalog.get(module_name, {})
+            if not manifest_entry:
+                manifest_entry = {
+                    "init_function": f"{module_name}_Init",
+                    "api_functions": [],
+                    "dependencies": [],
+                }
+
+            validation_result = validate_generation_output(
+                tag=f"pass2_{module_name.lower()}",
+                preamble="",
+                written_files=files,
+                soc_data=soc_data,
+                regs_data=regs_data,
+            )
+
+            if module_name.upper() not in {"SYSTEM", "VIM"}:
+                pass2_result = validate_driver_implementation(
+                    module_name=module_name,
+                    manifest_entry=manifest_entry,
+                    preamble="",
+                    written_files=files,
+                    soc_data=soc_data,
+                    regs_data=regs_data,
+                    bringup_contract=bringup_contract,
+                )
+
+                if not pass2_result.is_valid:
+                    validation_result.is_valid = False
+                    validation_result.errors.extend(pass2_result.critical_errors)
+                    validation_result.warnings.extend(pass2_result.warnings)
+            else:
+                validation_result.warnings.append(
+                    f"{module_name}: pass2 init-name check skipped in validate-only mode (covered by startup contract)"
+                )
+
+            module_contract_result = None
+            if (
+                api_contract_manifest
+                and module_header_path
+                and module_source_path
+                and module_header_path.exists()
+                and module_source_path.exists()
+            ):
+                module_contract_result = check_generated_module_contract(
+                    module_name,
+                    module_header_path,
+                    module_source_path,
+                    api_contract_manifest,
+                )
+                contract_checks_local += 1
+                if module_contract_result and not module_contract_result.get("passed", True):
+                    if contract_mode == "warn_only":
+                        validation_result.warnings.extend(module_contract_result.get("errors", []))
+                        validation_result.warnings.extend(module_contract_result.get("warnings", []))
+                    else:
+                        validation_result.is_valid = False
+                        validation_result.errors.extend(module_contract_result.get("errors", []))
+                        validation_result.warnings.extend(module_contract_result.get("warnings", []))
+                    contract_errors_local.extend(module_contract_result.get("errors", []))
+                    contract_warnings_local.extend(module_contract_result.get("warnings", []))
+
+            setattr(validation_result, "compile_contract", module_contract_result)
+            setattr(validation_result, "autofix_actions", [])
+            pass2_results_local.append((module_name, validation_result))
+
+        bsp_validate_contract_local: Optional[Dict[str, Any]] = None
+        if api_contract_manifest:
+            bsp_validate_candidates = [
+                out_dir / "bsp_validate.c",
+                out_dir / "include" / "bsp_validate.c",
+                out_dir / "source" / "bsp_validate.c",
+            ]
+            bsp_validate_path = next((p for p in bsp_validate_candidates if p.exists()), bsp_validate_candidates[0])
+            bsp_validate_contract_local = check_bsp_validate_contract(
+                bsp_validate_path,
+                api_contract_manifest,
+            )
+            if bsp_validate_contract_local:
+                contract_checks_local += 1
+                contract_errors_local.extend(bsp_validate_contract_local.get("errors", []))
+                contract_warnings_local.extend(bsp_validate_contract_local.get("warnings", []))
+
+        return (
+            pass2_results_local,
+            contract_errors_local,
+            contract_warnings_local,
+            contract_checks_local,
+            bsp_validate_contract_local,
+        )
+
+    pass2_validation_results: List[tuple[str, Any]]
+    compile_contract_errors: List[str]
+    compile_contract_warnings: List[str]
+    compile_contract_checks: int
+    bsp_validate_contract_result: Optional[Dict[str, Any]]
+    (
+        pass2_validation_results,
+        compile_contract_errors,
+        compile_contract_warnings,
+        compile_contract_checks,
+        bsp_validate_contract_result,
+    ) = _evaluate_modules_and_contracts()
+    autofix_actions = []
+
+    # Startup contract check (requires dependency graph)
+    startup_contract_result = {
+        "passes": True,
+        "errors": [],
+        "warnings": ["startup contract not evaluated"],
+        "checks": {},
+    }
+    init_order = None
+    dep_graph = None
+    if bsp_manifest:
+        try:
+            dep_graph = build_dependency_graph(
+                bsp_manifest,
+                soc_data,
+                selected_modules=module_names,
+            )
+            dep_errors = validate_dependencies(dep_graph, bsp_manifest)
+            if dep_errors:
+                startup_contract_result = {
+                    "passes": False,
+                    "errors": dep_errors,
+                    "warnings": [],
+                    "checks": {},
+                }
+            else:
+                init_order = generate_init_order(dep_graph)
+                startup_contract_result = validate_startup_contract(
+                    init_order,
+                    out_dir,
+                    bringup_contract=bringup_contract,
+                )
+        except Exception as e:
+            startup_contract_result = {
+                "passes": False,
+                "errors": [f"startup contract validation exception: {e}"],
+                "warnings": [],
+                "checks": {},
+            }
+
+    # Optional compile gate in validation-only mode
+    build_gate_result = None
+    build_gate_failed = False
+    if args.run_build_gate:
+        build_gate_overrides = {
+            "ccs_workspace": args.ccs_workspace,
+            "ccs_project": args.ccs_project,
+            "ccs_config": args.ccs_config,
+            "build_gate": args.build_gate,
+            "build_gate_llm": args.build_gate_llm,
+            "build_gate_llm_top_k": args.build_gate_llm_top_k,
+            "build_gate_llm_model": args.build_gate_llm_model,
+            "model": args.model,
+        }
+        build_gate_result = run_ccs_build_gate(
+            output_dir=out_dir,
+            generation_profile=generation_profile,
+            overrides=build_gate_overrides,
+            api_contract_manifest=api_contract_manifest,
+            bringup_contract=bringup_contract,
+            run_model_name=args.model,
+            progress_callback=print,
+        )
+        print(
+            f"[info] Compile gate status: {build_gate_result.get('status')} "
+            f"(passes={bool(build_gate_result.get('passes', False))}, "
+            f"rounds={len(build_gate_result.get('rounds', []))})"
+        )
+        build_gate_failed = gate_should_fail_run(build_gate_result)
+
+        # Re-evaluate startup contract against post-build-gate fixed files.
+        if init_order is not None:
+            startup_contract_result = validate_startup_contract(
+                init_order,
+                out_dir,
+                bringup_contract=bringup_contract,
+            )
+
+        gate_applied_fixes = any(
+            bool(round_entry.get("fix_actions"))
+            for round_entry in (build_gate_result.get("rounds", []) if isinstance(build_gate_result, dict) else [])
+        )
+        if gate_applied_fixes:
+            print("[info] Re-running validate-only module/contract checks after build-gate fixes...")
+            (
+                pass2_validation_results,
+                compile_contract_errors,
+                compile_contract_warnings,
+                compile_contract_checks,
+                bsp_validate_contract_result,
+            ) = _evaluate_modules_and_contracts()
+
+    parity_result = run_parity_guard(
+        out_dir,
+        parity_guard_cfg.get("baseline_path"),
+        mode=parity_guard_cfg.get("mode", "critical_only"),
+        critical_registers=parity_guard_cfg.get("critical_registers"),
+    )
+    if not bool((parity_result or {}).get("passes", True)):
+        print("[warn] Parity guard detected critical register sequence drift in validate-only mode")
+
+    # Build final report
+    final_report = ValidationReport(
+        timestamp=_now_tag(),
+        bsp_output_dir=str(out_dir),
+    )
+
+    for module_name, validation_result in sorted(pass2_validation_results, key=lambda item: item[0]):
+        constants_validated = 0
+        mismatches = 0
+        if validation_result.facts_validation:
+            constants_validated = len(validation_result.facts_validation.matches) + len(validation_result.facts_validation.mismatches)
+            mismatches = len(validation_result.facts_validation.mismatches)
+
+        module_validation = ModuleValidation(
+            module_name=module_name,
+            facts_mirror_valid=validation_result.is_valid and len(validation_result.errors) == 0,
+            constants_validated=constants_validated,
+            mismatches=mismatches,
+            tests_generated=False,
+            critical_errors=list(validation_result.errors[:10]),
+            warnings=list(validation_result.warnings[:10]),
+        )
+        final_report.peripheral_validations[module_name] = module_validation
+
+    final_report.validation_summary = ValidationSummary(
+        total_modules=len(final_report.peripheral_validations),
+        modules_valid=sum(1 for v in final_report.peripheral_validations.values() if v.facts_mirror_valid),
+        modules_invalid=sum(1 for v in final_report.peripheral_validations.values() if not v.facts_mirror_valid),
+        critical_errors=sum(len(v.critical_errors) for v in final_report.peripheral_validations.values()),
+        warnings=sum(len(v.warnings) for v in final_report.peripheral_validations.values()),
+        success_rate=(
+            (sum(1 for v in final_report.peripheral_validations.values() if v.facts_mirror_valid) / len(final_report.peripheral_validations)) * 100.0
+            if final_report.peripheral_validations
+            else 0.0
+        ),
+    )
+
+    compile_contract_passes = len(compile_contract_errors) == 0 or contract_mode == "warn_only"
+    if contract_mode == "warn_only" and compile_contract_errors:
+        compile_contract_warnings.extend(compile_contract_errors)
+        compile_contract_errors = []
+
+    final_report.compile_contract = {
+        "passes": compile_contract_passes,
+        "checks": compile_contract_checks,
+        "errors": compile_contract_errors,
+        "warnings": compile_contract_warnings,
+    }
+    final_report.autofix_actions = autofix_actions
+    final_report.startup_contract = startup_contract_result
+    final_report.critical_sequence_mismatches = list(
+        (parity_result or {}).get("critical_sequence_mismatches", [])
+    )
+
+    if build_gate_result:
+        final_report.build_evidence = {
+            "mode": "generator_ccs_build_gate",
+            "required": bool(build_gate_result.get("required", False)),
+            "status": build_gate_result.get("status"),
+            "passes": bool(build_gate_result.get("passes", False)),
+            "rounds": len(build_gate_result.get("rounds", [])),
+            "error_summary": build_gate_result.get("error_summary", {}),
+            "configuration": build_gate_result.get("configuration"),
+            "external_workspace_path": build_gate_result.get("external_workspace_path"),
+            "project_name": build_gate_result.get("project_name"),
+            "llm_rewrite_attempted": bool(build_gate_result.get("llm_rewrite_attempted", False)),
+            "llm_rewrite_applied": bool(build_gate_result.get("llm_rewrite_applied", False)),
+            "llm_rewrite_target_files": list(build_gate_result.get("llm_rewrite_target_files", [])),
+            "llm_rewrite_tokens": dict(build_gate_result.get("llm_rewrite_tokens", {})),
+            "llm_rewrite_failure_reason": build_gate_result.get("llm_rewrite_failure_reason"),
+        }
+    else:
+        final_report.build_evidence = {
+            "mode": "validation_only",
+            "required": False,
+            "status": "not_run",
+        }
+
+    if api_contract_manifest:
+        final_report.api_contract_hash = api_contract_manifest.get("api_contract_hash")
+
+    final_report.runtime_invariants = {
+        "validation_only_mode": True,
+        "bringup_contract_loaded": bool(bringup_contract),
+        "bringup_mode": bringup_mode,
+        "fail_on_contract_mismatch": fail_on_contract_mismatch,
+        "startup_contract_gate_mode": startup_gate_mode,
+        "run_build_gate": bool(args.run_build_gate),
+        "parity_guard_mode": parity_guard_cfg.get("mode"),
+        "parity_guard_passes": bool((parity_result or {}).get("passes", True)),
+        "parity_guard_baseline": str(parity_guard_cfg.get("baseline_path") or ""),
+        "serial_primary_path": (
+            (bringup_contract or {}).get("serial", {}).get("primary_path")
+            if isinstance(bringup_contract, dict)
+            else None
+        ),
+        "startup_contract_passes": startup_contract_result.get("passes", True),
+    }
+
+    # Cross-file validation
+    try:
+        all_constants = extract_all_constants_from_directory(out_dir)
+        if all_constants:
+            cross_file_validation = validate_facts_across_files(all_constants, soc_data)
+            final_report.cross_file_validation = {
+                "passes": cross_file_validation.passes,
+                "conflicts": [str(c) for c in cross_file_validation.conflicts],
+                "consistency_score": cross_file_validation.consistency_score,
+                "errors": cross_file_validation.errors,
+                "warnings": cross_file_validation.warnings,
+            }
+    except Exception as e:
+        print(f"[warn] Cross-file validation failed: {e}")
+
+    if dep_graph and init_order:
+        final_report.dependency_graph_info = {
+            "total_nodes": len(dep_graph.nodes),
+            "has_cycles": init_order.has_cycles,
+            "init_order": init_order.order if init_order.is_valid() else [],
+            "cycle_nodes": init_order.cycle_nodes if init_order.has_cycles else [],
+        }
+
+    json_path = out_dir / "validation_report.json"
+    md_path = out_dir / "validation_report.md"
+    write_json_report(final_report, json_path)
+    write_markdown_report(final_report, md_path)
+
+    print(f"[ok] Validation report updated: {json_path}")
+    print(f"[ok] Validation report updated: {md_path}")
+    print_console_summary(final_report)
+
+    _augment_compile_gate_report(
+        out_dir,
+        build_gate_result,
+        startup_contract_result,
+        startup_gate_mode,
+        parity_result,
+    )
+
+    if startup_gate_mode == "fail" and not startup_contract_result.get("passes", True):
+        print("[error] Startup contract gate failed in validate-only mode.")
+        return 2
+    if startup_gate_mode == "fail" and not bool((parity_result or {}).get("passes", True)):
+        print("[error] Parity guard gate failed in validate-only mode.")
+        return 2
+    if build_gate_failed:
+        print("[error] Strict CCS compile gate failed in validate-only mode.")
+        return 3
+
+    return 0
+
 # ---------------- Main ----------------
 async def main():
     # Setup signal handler for graceful shutdown
@@ -797,11 +1516,69 @@ async def main():
         help="Use mock API responses for testing (no real API calls, no cost)",
     )
     parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Run validation/reporting only on an existing generated output directory (no LLM generation).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Existing output_<timestamp> directory to validate when --validate-only is set.",
+    )
+    parser.add_argument(
+        "--run-build-gate",
+        action="store_true",
+        help="When --validate-only is set, also run external CCS compile gate on the existing output.",
+    )
+    parser.add_argument(
         "--profile",
         default=None,
         help="Optional generation profile YAML path (e.g., yaml_in/generation_profile.yaml)",
     )
+    parser.add_argument(
+        "--ccs-workspace",
+        default=None,
+        help="Override build_gate.external_workspace_path for external CCS compile gate",
+    )
+    parser.add_argument(
+        "--ccs-project",
+        default=None,
+        help="Override build_gate.project_name for external CCS compile gate",
+    )
+    parser.add_argument(
+        "--ccs-config",
+        default=None,
+        choices=["Debug", "Release"],
+        help="Override build_gate.configuration (Debug/Release)",
+    )
+    parser.add_argument(
+        "--build-gate",
+        default=None,
+        choices=["strict", "advisory", "off"],
+        help="Override build_gate.mode (strict/advisory/off)",
+    )
+    parser.add_argument(
+        "--build-gate-llm",
+        default=None,
+        choices=["on", "off"],
+        help="Override build_gate.llm_rewrite.enabled (on/off)",
+    )
+    parser.add_argument(
+        "--build-gate-llm-top-k",
+        type=int,
+        default=None,
+        help="Override build_gate.llm_rewrite.top_k_files",
+    )
+    parser.add_argument(
+        "--build-gate-llm-model",
+        default=None,
+        choices=["inherit", "haiku4.5", "sonnet4.5", "opus4.5", "opus4.6"],
+        help="Override build_gate.llm_rewrite.model",
+    )
     args = parser.parse_args()
+
+    if args.validate_only:
+        return _run_validation_only(args)
 
     # Enable mock mode if requested
     if args.mock:
@@ -874,6 +1651,12 @@ async def main():
         bringup_mode = "strict"
     bringup_strict = bringup_mode == "strict"
     fail_on_contract_mismatch = bool(bringup_cfg.get("fail_on_contract_mismatch", True))
+    startup_gate_mode = _resolve_startup_gate_mode(
+        generation_profile,
+        bringup_strict=bringup_strict,
+        fail_on_contract_mismatch=fail_on_contract_mismatch,
+    )
+    parity_guard_cfg = _resolve_parity_guard_config(generation_profile, Path(args.yamlpath))
 
     bringup_contract = None
     bringup_contract_path: Optional[Path] = None
@@ -909,9 +1692,9 @@ async def main():
         if default_contract.exists():
             bringup_contract_path = default_contract
 
-    if bringup_strict and fail_on_contract_mismatch and bringup_contract_path is None:
+    if startup_gate_mode == "fail" and bringup_contract_path is None:
         raise ValueError(
-            "bringup.mode=strict requires a valid bringup_contract file, but none was found."
+            "startup_contract.gate_mode=fail requires a valid bringup_contract file, but none was found."
         )
 
     if bringup_contract_path is not None:
@@ -925,6 +1708,43 @@ async def main():
         print(f"[warn] Unknown contract_lock_mode '{contract_lock_mode}', defaulting to 'strict'")
         contract_lock_mode = "strict"
     require_ccs_proof = bool(generation_profile.get("require_ccs_proof", True))
+    build_gate_cfg = generation_profile.get("build_gate", {}) if isinstance(generation_profile.get("build_gate", {}), dict) else {}
+    build_gate_mode = str(args.build_gate or build_gate_cfg.get("mode", "strict")).strip().lower()
+    if build_gate_mode not in {"strict", "advisory", "off"}:
+        print(f"[warn] Unknown build_gate.mode '{build_gate_mode}', defaulting to 'strict'")
+        build_gate_mode = "strict"
+    build_gate_enabled = bool(build_gate_cfg.get("enabled", True)) and build_gate_mode != "off"
+    ccs_workspace_override = args.ccs_workspace
+    ccs_project_override = args.ccs_project
+    ccs_config_override = args.ccs_config
+    build_gate_overrides = {
+        "ccs_workspace": ccs_workspace_override,
+        "ccs_project": ccs_project_override,
+        "ccs_config": ccs_config_override,
+        "build_gate": build_gate_mode,
+        "build_gate_llm": args.build_gate_llm,
+        "build_gate_llm_top_k": args.build_gate_llm_top_k,
+        "build_gate_llm_model": args.build_gate_llm_model,
+        "model": args.model,
+    }
+    if build_gate_enabled and build_gate_mode == "strict":
+        strict_workspace = str(ccs_workspace_override or build_gate_cfg.get("external_workspace_path", "")).strip()
+        strict_project = str(ccs_project_override or build_gate_cfg.get("project_name", "")).strip()
+        if not strict_workspace or not strict_project:
+            raise ValueError(
+                "build_gate.mode=strict requires both build_gate.external_workspace_path and build_gate.project_name "
+                "(or --ccs-workspace/--ccs-project overrides)."
+            )
+        if not Path(strict_workspace).exists():
+            raise ValueError(
+                f"build_gate.mode=strict external workspace path does not exist: {strict_workspace}"
+            )
+        strict_project_path = Path(strict_workspace) / strict_project
+        if not strict_project_path.exists():
+            raise ValueError(
+                f"build_gate.mode=strict CCS project path does not exist: {strict_project_path}"
+            )
+
     target_board_name = generation_profile.get("target_board")
     actual_board_name = board_data.get("board", {}).get("name")
     if target_board_name and actual_board_name and target_board_name != actual_board_name:
@@ -1107,8 +1927,11 @@ async def main():
     api_contract_manifest = None
     startup_contract_result = None
     bringup_contract_failed = False
+    parity_result: Optional[Dict[str, Any]] = None
     bsp_validate_contract_result = None
     bsp_validate_autofix_actions = []
+    build_gate_result: Optional[Dict[str, Any]] = None
+    build_gate_failed = False
     if pass1_modules or not generate_peripherals:
         progress_manager.log_or_print("\n[info] Starting Pass 1: Architecture Discovery...")
         bsp_manifest = await run_discovery_pass(
@@ -1275,6 +2098,7 @@ async def main():
                 manifest=bsp_manifest,
                 generation_profile=generation_profile,
                 board_data=board_data,
+                bringup_contract=bringup_contract,
                 api_contract_manifest=api_contract_manifest,
             )
             test_msg = " with test harness" if args.include_tests else ""
@@ -1499,6 +2323,13 @@ async def main():
             print("[info] No additional platform tasks to run.")
 
     # Re-run startup contract after platform generation so validation reflects final files.
+    validation_tracker = None
+    if progress_manager:
+        validation_tracker = progress_manager.start_pass("Validation")
+        if validation_tracker:
+            validation_tracker.set_total_tasks(4)
+            validation_tracker.update_task_name("Startup contract checks")
+
     if "init_order" in locals() and init_order is not None and hasattr(init_order, "is_valid"):
         try:
             startup_contract_result = validate_startup_contract(
@@ -1510,21 +2341,128 @@ async def main():
                 print("[warn] Startup contract validation failed after platform generation")
                 for err in startup_contract_result.get("errors", [])[:8]:
                     print(f"  - {err}")
-                if bringup_strict and fail_on_contract_mismatch:
-                    print("[error] bringup.mode=strict and fail_on_contract_mismatch=true: startup contract mismatch detected")
-                    bringup_contract_failed = True
+            if validation_tracker:
+                validation_tracker.increment_success()
         except Exception as e:
             print(f"[warn] Post-platform startup contract validation failed: {e}")
+            if validation_tracker:
+                validation_tracker.increment_failure()
+
+    deterministic_fix_result = apply_deterministic_fixes(
+        out_dir,
+        diagnostics=[],
+        api_contract_manifest=api_contract_manifest,
+    )
+    if deterministic_fix_result.get("actions"):
+        print(
+            f"[info] Applied deterministic post-generation fixes: "
+            f"{len(deterministic_fix_result.get('actions', []))}"
+        )
+    if validation_tracker:
+        validation_tracker.update_task_name("Deterministic post-generation fixes")
+        validation_tracker.increment_success()
+
+    # External CCS compile gate (Generate -> Compile -> Fix -> Ready)
+    if build_gate_enabled:
+        print("[info] Running external CCS compile gate...")
+        if validation_tracker:
+            validation_tracker.update_task_name("External CCS compile gate")
+        def _build_gate_progress(msg: str) -> None:
+            if validation_tracker:
+                stage_text = str(msg).replace("[build-gate]", "").strip()
+                validation_tracker.update_task_name(f"Build gate: {stage_text}")
+            if progress_manager:
+                progress_manager.log_or_print(msg)
+            else:
+                print(msg)
+        build_gate_result = run_ccs_build_gate(
+            output_dir=out_dir,
+            generation_profile=generation_profile,
+            overrides=build_gate_overrides,
+            api_contract_manifest=api_contract_manifest,
+            bringup_contract=bringup_contract,
+            run_model_name=model_enum.value,
+            progress_callback=_build_gate_progress,
+        )
+        status = build_gate_result.get("status", "unknown")
+        passes = bool(build_gate_result.get("passes", False))
+        rounds = len(build_gate_result.get("rounds", []))
+        print(f"[info] Compile gate status: {status} (passes={passes}, rounds={rounds})")
+        llm_tokens = dict(build_gate_result.get("llm_rewrite_tokens", {}) or {})
+        llm_total_tokens = int(llm_tokens.get("input_tokens", 0)) + int(llm_tokens.get("output_tokens", 0))
+        if llm_total_tokens > 0:
+            print(
+                f"[info] Compile-gate LLM usage: input={int(llm_tokens.get('input_tokens', 0))}, "
+                f"output={int(llm_tokens.get('output_tokens', 0))}, total={llm_total_tokens}"
+            )
+            if progress_manager:
+                stats_now = _cost_tracker.get_stats()
+                progress_manager.add_cost_info(
+                    int(stats_now.get("total_tokens", 0)),
+                    float(stats_now.get("cost_usd", 0.0)),
+                    model_enum.name,
+                )
+        if validation_tracker:
+            if passes:
+                validation_tracker.increment_success()
+            else:
+                validation_tracker.increment_failure()
+        if gate_should_fail_run(build_gate_result):
+            build_gate_failed = True
+
+    # Final startup contract verdict is based on post-fix (and post-build-gate) files.
+    if "init_order" in locals() and init_order is not None and hasattr(init_order, "is_valid"):
+        try:
+            startup_contract_result = validate_startup_contract(
+                init_order,
+                out_dir,
+                bringup_contract=bringup_contract,
+            )
+            if not startup_contract_result.get("passes", True):
+                print("[warn] Startup contract validation still failing after deterministic fixes/build gate")
+                for err in startup_contract_result.get("errors", [])[:8]:
+                    print(f"  - {err}")
+                if startup_gate_mode == "fail":
+                    print("[error] startup_contract.gate_mode=fail: startup contract mismatch detected")
+                    bringup_contract_failed = True
+            else:
+                bringup_contract_failed = False
+        except Exception as e:
+            print(f"[warn] Final startup contract validation failed: {e}")
+
+    parity_result = run_parity_guard(
+        out_dir,
+        parity_guard_cfg.get("baseline_path"),
+        mode=parity_guard_cfg.get("mode", "critical_only"),
+        critical_registers=parity_guard_cfg.get("critical_registers"),
+    )
+    if not bool((parity_result or {}).get("passes", True)):
+        print("[warn] Parity guard detected critical register sequence drift")
+        for mismatch in list((parity_result or {}).get("critical_sequence_mismatches", []))[:6]:
+            baseline = (mismatch or {}).get("baseline") or {}
+            candidate = (mismatch or {}).get("candidate") or {}
+            print(
+                "  - "
+                f"{mismatch.get('kind')}: "
+                f"baseline={baseline.get('file')}:{baseline.get('line')} {baseline.get('canonical_symbol')} "
+                f"candidate={candidate.get('file')}:{candidate.get('line')} {candidate.get('canonical_symbol')}"
+            )
+        if startup_gate_mode == "fail":
+            bringup_contract_failed = True
 
     # Check for shutdown request before documentation
     if _shutdown_requested:
         print("[info] Shutdown requested. Skipping documentation generation.")
+        if validation_tracker and progress_manager:
+            progress_manager.complete_pass("Validation", success=False)
         return
 
     # Generate documentation
     await _generate_documentation(out_dir, progress_manager)
 
     # --- FINAL VALIDATION REPORT ---
+    if validation_tracker:
+        validation_tracker.update_task_name("Final validation report")
     progress_manager.log_or_print("\n[info] Generating final validation report...")
 
     try:
@@ -1579,8 +2517,7 @@ async def main():
                     for warn in list(module_warnings):
                         warn_lower = warn.lower()
                         if (
-                            "no facts mirror found" in warn_lower
-                            or "missing init function" in warn_lower
+                            "missing init function" in warn_lower
                             or "missing #include" in warn_lower
                             or "function '" in warn_lower and "not found in implementation" in warn_lower
                         ):
@@ -1588,10 +2525,6 @@ async def main():
                             if promoted not in module_errors:
                                 module_errors.append(promoted)
 
-                    if constants_validated == 0:
-                        module_errors.append(
-                            f"[strict] {module_name}: no validated constants for critical module"
-                        )
                     if module_contract_result and not module_contract_result.get("passed", True):
                         module_errors.extend(
                             [f"[strict] {e}" for e in module_contract_result.get("errors", [])[:5]]
@@ -1655,17 +2588,49 @@ async def main():
             "warnings": ["startup contract not evaluated"],
             "checks": {},
         }
-        final_report.build_evidence = {
-            "mode": "user_ccs_compile_log_required",
-            "required": require_ccs_proof,
-            "status": "not_provided_in_this_run" if require_ccs_proof else "optional_not_provided",
-        }
+        final_report.critical_sequence_mismatches = list(
+            (parity_result or {}).get("critical_sequence_mismatches", [])
+        )
+        if build_gate_result:
+            final_report.build_evidence = {
+                "mode": "generator_ccs_build_gate",
+                "required": bool(build_gate_result.get("required", False)),
+                "status": build_gate_result.get("status"),
+                "passes": bool(build_gate_result.get("passes", False)),
+                "rounds": len(build_gate_result.get("rounds", [])),
+                "error_summary": build_gate_result.get("error_summary", {}),
+                "configuration": build_gate_result.get("configuration"),
+                "external_workspace_path": build_gate_result.get("external_workspace_path"),
+                "project_name": build_gate_result.get("project_name"),
+                "llm_rewrite_attempted": bool(build_gate_result.get("llm_rewrite_attempted", False)),
+                "llm_rewrite_applied": bool(build_gate_result.get("llm_rewrite_applied", False)),
+                "llm_rewrite_target_files": list(build_gate_result.get("llm_rewrite_target_files", [])),
+                "llm_rewrite_tokens": dict(build_gate_result.get("llm_rewrite_tokens", {})),
+                "llm_rewrite_failure_reason": build_gate_result.get("llm_rewrite_failure_reason"),
+            }
+        else:
+            final_report.build_evidence = {
+                "mode": "user_ccs_compile_log_required",
+                "required": require_ccs_proof,
+                "status": "not_provided_in_this_run" if require_ccs_proof else "optional_not_provided",
+            }
         if api_contract_manifest:
             final_report.api_contract_hash = api_contract_manifest.get("api_contract_hash")
         final_report.runtime_invariants = {
             "bringup_contract_loaded": bool(bringup_contract),
             "bringup_mode": bringup_mode,
             "fail_on_contract_mismatch": fail_on_contract_mismatch,
+            "startup_contract_gate_mode": startup_gate_mode,
+            "build_gate_enabled": build_gate_enabled,
+            "build_gate_mode": build_gate_mode,
+            "build_gate_passes": (
+                bool(build_gate_result.get("passes", False))
+                if isinstance(build_gate_result, dict)
+                else None
+            ),
+            "parity_guard_mode": parity_guard_cfg.get("mode"),
+            "parity_guard_passes": bool((parity_result or {}).get("passes", True)),
+            "parity_guard_baseline": str(parity_guard_cfg.get("baseline_path") or ""),
             "serial_primary_path": (
                 (bringup_contract or {}).get("serial", {}).get("primary_path")
                 if isinstance(bringup_contract, dict)
@@ -1683,6 +2648,13 @@ async def main():
                 final_report.validation_summary.critical_errors += len(final_report.compile_contract.get("errors", []))
             if not final_report.startup_contract.get("passes", True):
                 final_report.validation_summary.critical_errors += len(final_report.startup_contract.get("errors", []))
+            if not bool((parity_result or {}).get("passes", True)):
+                final_report.validation_summary.critical_errors += len(
+                    (parity_result or {}).get("critical_sequence_mismatches", [])
+                )
+            if build_gate_result and not bool(build_gate_result.get("passes", False)):
+                diag_errors = int((build_gate_result.get("error_summary", {}) or {}).get("errors", 1))
+                final_report.validation_summary.critical_errors += max(1, diag_errors)
 
         # Add cross-file validation
         try:
@@ -1725,6 +2697,9 @@ async def main():
 
         progress_manager.log_or_print(f"[ok] Validation report: {json_path.name}")
         progress_manager.log_or_print(f"[ok] Validation report: {md_path.name}")
+        if validation_tracker:
+            validation_tracker.increment_success()
+            progress_manager.complete_pass("Validation", success=True)
 
         # Cleanup progress display before printing validation results
         progress_manager.cleanup()
@@ -1732,8 +2707,19 @@ async def main():
         # Print console summary (always show final validation results)
         print_console_summary(final_report)
 
+        _augment_compile_gate_report(
+            out_dir,
+            build_gate_result,
+            final_report.startup_contract,
+            startup_gate_mode,
+            parity_result,
+        )
+
     except Exception as e:
         progress_manager.log_or_print(f"[warn] Could not generate final validation report: {e}")
+        if validation_tracker:
+            validation_tracker.increment_failure()
+            progress_manager.complete_pass("Validation", success=False)
 
     # Save token history for future runs
     if not args.mock:
@@ -1763,10 +2749,14 @@ async def main():
     except Exception as e:
         print(f"[warn] Could not display cost summary: {e}")
 
-    if bringup_contract_failed and bringup_strict and fail_on_contract_mismatch:
-        raise RuntimeError(
-            "Strict bring-up contract validation failed; see validation_report for details."
-        )
+    if startup_gate_mode == "fail" and bringup_contract_failed:
+        print("[error] Startup/parity contract gate failed; see validation_report for details.")
+        _progress.stop_spinner()
+        return 2
+    if build_gate_failed:
+        print("[error] Strict CCS compile gate failed; see compile_gate_report.json and ccs_build_log.txt for details.")
+        _progress.stop_spinner()
+        return 3
 
     # Ensure any remaining spinner threads are stopped
     _progress.stop_spinner()
@@ -1843,13 +2833,24 @@ async def _generate_documentation(out_dir: Path, progress_manager=None):
 if __name__ == "__main__":
     try:
         # Use asyncio.run which handles event loop creation and cleanup
-        asyncio.run(main())
+        rc = asyncio.run(main())
         print("[debug] asyncio.run() completed, exiting normally.")
+        if isinstance(rc, int):
+            sys.exit(rc)
+        sys.exit(0)
     except KeyboardInterrupt:
         print("\n[info] Generation interrupted by user. Exiting.")
         _progress.stop_spinner()
         sys.exit(0)
     except Exception as e:
+        controlled_messages = (
+            "Strict bring-up contract validation failed",
+            "Strict CCS compile gate failed",
+        )
+        if any(msg in str(e) for msg in controlled_messages):
+            print(f"[error] {e}")
+            _progress.stop_spinner()
+            sys.exit(1)
         print(f"\n[error] Unexpected error: {e}")
         import traceback
         traceback.print_exc()

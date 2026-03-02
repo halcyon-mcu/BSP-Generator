@@ -616,6 +616,16 @@ def _should_generate_bsp_validation(
     if isinstance(bsp_validation_cfg, dict) and "enabled" in bsp_validation_cfg:
         return bool(bsp_validation_cfg.get("enabled"))
 
+    # New policy: direct init is default unless explicitly switched to validation mode.
+    bringup_mode_cfg = profile.get("bringup_mode", {})
+    default_mode = "direct_init"
+    if isinstance(bringup_mode_cfg, dict):
+        mode_value = str(bringup_mode_cfg.get("default", "direct_init")).strip().lower()
+        if mode_value in {"direct_init", "validation"}:
+            default_mode = mode_value
+    if default_mode != "validation":
+        return False
+
     target = str(profile.get("target_board", "")).upper()
     if "RM46" not in target:
         return False
@@ -764,6 +774,7 @@ def _generate_bsp_validate_module(
     out_dir: Path,
     generation_profile: Optional[Dict[str, Any]],
     board_data: Optional[Dict[str, Any]],
+    bringup_contract: Optional[Dict[str, Any]] = None,
     api_contract_manifest: Optional[Dict[str, Any]] = None,
 ) -> tuple[Path, Path]:
     """
@@ -776,9 +787,68 @@ def _generate_bsp_validate_module(
     profile = generation_profile or {}
     contract_lock_mode = str(profile.get("contract_lock_mode", "strict")).strip().lower()
     strict_contract_lock = contract_lock_mode != "relaxed" and bool(api_contract_manifest)
-    baud = profile.get("sci", {}).get("default_baud", 9600)
+    bsp_validation_cfg = profile.get("bsp_validation", {}) if isinstance(profile.get("bsp_validation", {}), dict) else {}
+    bringup_cfg = bringup_contract if isinstance(bringup_contract, dict) else {}
+    serial_cfg = bringup_cfg.get("serial", {}) if isinstance(bringup_cfg.get("serial", {}), dict) else {}
+    contract_primary_path = str(serial_cfg.get("primary_path", "")).strip().upper()
+    contract_primary_tx_only = str(serial_cfg.get("primary_tx_only", "")).strip().upper()
+    profile_primary_serial_path = str(bsp_validation_cfg.get("primary_serial_path", "")).strip().lower()
+
+    if profile_primary_serial_path in {"lin_only", "sci_only", "dual"}:
+        primary_serial_path = profile_primary_serial_path
+    elif contract_primary_tx_only == "LIN":
+        primary_serial_path = "lin_only"
+    elif contract_primary_tx_only == "SCI":
+        primary_serial_path = "sci_only"
+    elif contract_primary_tx_only == "BOTH":
+        primary_serial_path = "dual"
+    elif contract_primary_path == "LIN_SCI_MODE":
+        primary_serial_path = "lin_only"
+    else:
+        primary_serial_path = "dual"
+
+    emit_lin_primary_tx = primary_serial_path in {"lin_only", "dual"}
+    emit_sci_primary_tx = primary_serial_path in {"sci_only", "dual"}
+    emit_sci_init = emit_sci_primary_tx
+    emit_sci_echo = emit_sci_primary_tx
+    baud = bsp_validation_cfg.get("baud", profile.get("sci", {}).get("default_baud", 9600))
     if not isinstance(baud, int) or baud <= 0:
         baud = 9600
+    frame_cfg = bsp_validation_cfg.get("frame", {}) if isinstance(bsp_validation_cfg.get("frame", {}), dict) else {}
+    frame_data_bits = frame_cfg.get("data_bits", 8)
+    if not isinstance(frame_data_bits, int) or frame_data_bits < 5 or frame_data_bits > 9:
+        frame_data_bits = 8
+    frame_stop_bits = frame_cfg.get("stop_bits", 1)
+    if not isinstance(frame_stop_bits, int) or frame_stop_bits not in (1, 2):
+        frame_stop_bits = 1
+    frame_parity = str(frame_cfg.get("parity", "none")).strip().lower()
+    if frame_parity not in {"none", "even", "odd"}:
+        frame_parity = "none"
+    timing_cfg = bsp_validation_cfg.get("timing", {}) if isinstance(bsp_validation_cfg.get("timing", {}), dict) else {}
+    force_sci_init = bool(bsp_validation_cfg.get("force_sci_init", False))
+    force_sci_tx = bool(bsp_validation_cfg.get("force_sci_tx", False))
+    heartbeat_ticks = timing_cfg.get("heartbeat_ticks", 1000)
+    tx_period_ticks = timing_cfg.get("tx_period_ticks", 200)
+    busy_delay = timing_cfg.get("busy_delay", 200)
+    if not isinstance(heartbeat_ticks, int) or heartbeat_ticks <= 0:
+        heartbeat_ticks = 1000
+    if not isinstance(tx_period_ticks, int) or tx_period_ticks <= 0:
+        tx_period_ticks = 200
+    if not isinstance(busy_delay, int) or busy_delay < 0:
+        busy_delay = 200
+    banners_cfg = bsp_validation_cfg.get("banners", {}) if isinstance(bsp_validation_cfg.get("banners", {}), dict) else {}
+    sci_banner_text = str(banners_cfg.get("sci", "SCI path active (A)\\r\\n"))
+    lin_banner_text = str(banners_cfg.get("lin", "LIN path active (B)\\r\\n"))
+
+    def _c_string_literal(raw: str) -> str:
+        # Normalize user-provided escaped sequences (e.g. "\\r\\n") into C escapes.
+        normalized = (
+            raw.replace("\\r", "\r")
+            .replace("\\n", "\n")
+            .replace("\\t", "\t")
+        )
+        escaped = normalized.replace("\\", "\\\\").replace("\"", "\\\"")
+        return escaped.replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
 
     sci_contract = _get_contract_module(api_contract_manifest, "SCI")
     sci_types = sci_contract.get("types", {}) if isinstance(sci_contract, dict) else {}
@@ -832,13 +902,13 @@ def _generate_bsp_validate_module(
     lin_tx_ready_fn = _capability_fn(
         lin_contract,
         "tx_ready",
-        ["LIN_IsTxReady", "LIN_GetTxStatus"],
+        ["LIN_IsTxReady", "LIN_GetTxReady", "LIN_GetTxStatus"],
         "LIN_IsTxReady",
     )
     lin_rx_ready_fn = _capability_fn(
         lin_contract,
         "rx_ready",
-        ["LIN_IsRxReady", "LIN_GetRxStatus"],
+        ["LIN_IsRxReady", "LIN_GetRxReady", "LIN_GetRxStatus"],
         "LIN_IsRxReady",
     )
     lin_send_available = _contract_has_function(lin_contract, lin_send_fn)
@@ -846,14 +916,14 @@ def _generate_bsp_validate_module(
     lin_receive_available = _contract_has_function(lin_contract, lin_receive_fn)
     lin_tx_ready_available = _contract_has_function(lin_contract, lin_tx_ready_fn)
     lin_rx_ready_available = _contract_has_function(lin_contract, lin_rx_ready_fn)
-    lin_banner_via_tx_buffer = lin_send_available and lin_send_arity >= 2 and lin_send_fn != lin_send_byte_fn
-    lin_banner_via_tx_byte = lin_send_byte_available and not lin_banner_via_tx_buffer
+    lin_banner_via_tx_buffer = emit_lin_primary_tx and lin_send_available and lin_send_arity >= 2 and lin_send_fn != lin_send_byte_fn
+    lin_banner_via_tx_byte = emit_lin_primary_tx and lin_send_byte_available
 
     sci_functions = sci_contract.get("functions", {}) if isinstance(sci_contract, dict) else {}
     sci_send_fn = _capability_fn(
         sci_contract,
         "tx_buffer",
-        ["SCI_SendData", "SCI_Send"],
+        ["SCI_SendData", "SCI_Send", "SCI_Write"],
         "SCI_SendData",
     )
     sci_send_arity = int((sci_functions.get(sci_send_fn, {}) or {}).get("arity", 2))
@@ -867,32 +937,37 @@ def _generate_bsp_validate_module(
     sci_send_byte_fn = _capability_fn(
         sci_contract,
         "tx_byte",
-        ["SCI_SendByte"],
+        ["SCI_SendByte", "SCI_WriteByte"],
         "SCI_SendByte",
     )
     sci_receive_fn = _capability_fn(
         sci_contract,
         "rx_byte",
-        ["SCI_ReceiveByte"],
+        ["SCI_ReceiveByte", "SCI_ReadByte"],
         "SCI_ReceiveByte",
     )
     sci_tx_ready_fn = _capability_fn(
         sci_contract,
         "tx_ready",
-        ["SCI_IsTxReady", "SCI_GetTxStatus"],
+        ["SCI_IsTxReady", "SCI_GetTxReady", "SCI_GetTxStatus"],
         "SCI_IsTxReady",
     )
     sci_rx_ready_fn = _capability_fn(
         sci_contract,
         "rx_ready",
-        ["SCI_IsRxReady", "SCI_GetRxStatus"],
+        ["SCI_IsRxReady", "SCI_GetRxReady", "SCI_GetRxStatus"],
         "SCI_IsRxReady",
     )
-    sci_send_available = _contract_has_function(sci_contract, sci_send_fn)
-    sci_send_byte_available = _contract_has_function(sci_contract, sci_send_byte_fn)
-    sci_receive_available = _contract_has_function(sci_contract, sci_receive_fn)
-    sci_tx_ready_available = _contract_has_function(sci_contract, sci_tx_ready_fn)
-    sci_rx_ready_available = _contract_has_function(sci_contract, sci_rx_ready_fn)
+    if force_sci_init:
+        emit_sci_init = True
+    if force_sci_tx:
+        emit_sci_primary_tx = True
+        emit_sci_echo = True
+    sci_send_available = emit_sci_primary_tx and _contract_has_function(sci_contract, sci_send_fn)
+    sci_send_byte_available = emit_sci_primary_tx and _contract_has_function(sci_contract, sci_send_byte_fn)
+    sci_receive_available = emit_sci_primary_tx and _contract_has_function(sci_contract, sci_receive_fn)
+    sci_tx_ready_available = emit_sci_primary_tx and _contract_has_function(sci_contract, sci_tx_ready_fn)
+    sci_rx_ready_available = emit_sci_primary_tx and _contract_has_function(sci_contract, sci_rx_ready_fn)
 
     lin_mode_sci = _find_enum_value_any(
         lin_contract,
@@ -900,17 +975,42 @@ def _generate_bsp_validate_module(
         "SCI",
         "0U",
     )
-    lin_parity_none = _find_enum_value_any(
+    parity_token = "NONE" if frame_parity == "none" else ("EVEN" if frame_parity == "even" else "ODD")
+    lin_parity_value = _find_enum_value_any(
         lin_contract,
         ["lin_parity_t"],
-        "NONE",
+        parity_token,
         "0U",
     )
-    lin_stop_1 = _find_enum_value_any(
+    lin_stop_value = _find_enum_value_any(
         lin_contract,
         ["lin_stop_bits_t", "lin_stopbits_t"],
-        "1",
+        str(frame_stop_bits),
         "0U",
+    )
+    lin_dma_disabled_value = _find_enum_value_any(
+        lin_contract,
+        ["lin_dma_mode_t"],
+        "DISABLED",
+        "0U",
+    )
+    sci_data_bits_value = _find_enum_value_any(
+        sci_contract,
+        ["sci_data_bits_t", "sci_databits_t"],
+        str(frame_data_bits),
+        "SCI_DATABITS_8",
+    )
+    sci_parity_value = _find_enum_value_any(
+        sci_contract,
+        ["sci_parity_t"],
+        parity_token,
+        "SCI_PARITY_NONE",
+    )
+    sci_stop_bits_value = _find_enum_value_any(
+        sci_contract,
+        ["sci_stop_bits_t", "sci_stopbits_t"],
+        str(frame_stop_bits),
+        "SCI_STOPBITS_1",
     )
     gio_direction_output = _find_enum_value_any(
         gio_contract,
@@ -939,6 +1039,31 @@ def _generate_bsp_validate_module(
     )
     if not iomm_pin_function_alt1:
         iomm_pin_function_alt1 = _resolve_iomm_alt1_from_header(out_dir)
+
+    iomm_init_fn = _capability_fn(
+        iomm_contract,
+        "init",
+        ["IOMM_Init"],
+        "IOMM_Init",
+    )
+    iomm_configure_pin_fn = _capability_fn(
+        iomm_contract,
+        "configure_pin",
+        ["IOMM_ConfigurePin"],
+        "IOMM_ConfigurePin",
+    )
+    iomm_unlock_fn = _capability_fn(
+        iomm_contract,
+        "unlock",
+        ["IOMM_Unlock"],
+        "IOMM_Unlock",
+    )
+    iomm_lock_fn = _capability_fn(
+        iomm_contract,
+        "lock",
+        ["IOMM_Lock"],
+        "IOMM_Lock",
+    )
 
     strict_require_iomm_af1 = strict_contract_lock and _contract_has_function(iomm_contract, "IOMM_ConfigurePin")
     if not iomm_pin_function_alt1:
@@ -993,6 +1118,40 @@ def _generate_bsp_validate_module(
     lin_rx_pin, lin_tx_pin = _parse_board_lin_sci_pins(board_data)
     led_port = gio_port_b if led_port_letter == "B" else gio_port_a
 
+    # Optional contract-driven direct pinmux writes (HAL-style RMW over 5-bit function field).
+    # This is used as an authoritative bring-up path for RM46 serial pins.
+    contract_pinmux_entries: List[Dict[str, int | str]] = []
+    for entry in serial_cfg.get("required_pins", []) if isinstance(serial_cfg.get("required_pins", []), list) else []:
+        if not isinstance(entry, dict):
+            continue
+        register_name = str(entry.get("register", "")).strip()
+        bit_val = entry.get("bit")
+        af_val = entry.get("af")
+        if not register_name or not isinstance(bit_val, int) or not isinstance(af_val, int):
+            continue
+        if af_val < 0:
+            continue
+        match = re.fullmatch(r"PINMMR(\d+)", register_name, flags=re.IGNORECASE)
+        if not match:
+            continue
+        field_start = bit_val - af_val
+        if field_start < 0 or field_start > 27:
+            continue
+        contract_pinmux_entries.append(
+            {
+                "register": f"PINMMR{int(match.group(1))}",
+                "field_start": field_start,
+                "target_bit": bit_val,
+                "pin": int(entry.get("pin", 0)),
+            }
+        )
+    use_direct_iomm_pinmux = (
+        emit_lin_primary_tx
+        and bool(contract_pinmux_entries)
+        and _contract_has_function(iomm_contract, iomm_unlock_fn)
+        and _contract_has_function(iomm_contract, iomm_lock_fn)
+    )
+
     header_lines = [
         "/**",
         " * @file bsp_validate.h",
@@ -1033,9 +1192,10 @@ def _generate_bsp_validate_module(
         f"#define BSP_VALIDATE_BAUD              ({baud}U)",
         f"#define BSP_VALIDATE_LED_PORT          ({led_port})",
         f"#define BSP_VALIDATE_LED_PIN           ({led_pin}U)",
-        "#define BSP_VALIDATE_HEARTBEAT_TICKS   (1000U)",
-        "#define BSP_VALIDATE_TX_PERIOD_TICKS   (200U)",
-        "#define BSP_VALIDATE_BUSY_DELAY        (200U)",
+        f"#define BSP_VALIDATE_HEARTBEAT_TICKS   ({heartbeat_ticks}U)",
+        f"#define BSP_VALIDATE_TX_PERIOD_TICKS   ({tx_period_ticks}U)",
+        f"#define BSP_VALIDATE_BUSY_DELAY        ({busy_delay}U)",
+        "#define BSP_VALIDATE_TX_RETRY_LIMIT    (4096U)",
         "",
         "static uint32_t g_validate_heartbeat_ticks = 0U;",
         "static uint32_t g_validate_tx_period = 0U;",
@@ -1057,22 +1217,114 @@ def _generate_bsp_validate_module(
         "    }",
         "}",
         "",
+    ]
+
+    if lin_banner_via_tx_byte:
+        source_lines.extend(
+            [
+                "static bool bsp_validate_lin_send_byte_retry(uint8_t value)",
+                "{",
+                "    uint32_t retries = 0U;",
+                "    while (retries < BSP_VALIDATE_TX_RETRY_LIMIT)",
+                "    {",
+            ]
+        )
+        if lin_tx_ready_available:
+            source_lines.extend(
+                [
+                    f"        if ({lin_tx_ready_fn}())",
+                    "        {",
+                    f"            if ({lin_send_byte_fn}(value) == LIN_STATUS_OK)",
+                    "            {",
+                    "                return true;",
+                    "            }",
+                    "            g_validate_lin_tx_skip++;",
+                    "        }",
+                    "        else",
+                    "        {",
+                    "            g_validate_lin_tx_skip++;",
+                    "        }",
+                ]
+            )
+        else:
+            source_lines.extend(
+                [
+                    f"        if ({lin_send_byte_fn}(value) == LIN_STATUS_OK)",
+                    "        {",
+                    "            return true;",
+                    "        }",
+                    "        g_validate_lin_tx_skip++;",
+                ]
+            )
+        source_lines.extend(
+            [
+                "        retries++;",
+                "    }",
+                "    return false;",
+                "}",
+                "",
+            ]
+        )
+
+    source_lines.extend(
+        [
         "void BSP_ValidateInit(void)",
         "{",
-        "    gio_pin_config_t led_cfg;",
-        "    sci_config_t sci_cfg;",
-        "    lin_config_t lin_cfg;",
+        "    gio_pin_config_t led_cfg = {0};",
+    ]
+    )
+    if emit_sci_init:
+        source_lines.append("    sci_config_t sci_cfg = {0};")
+    source_lines.extend(
+        [
+        "    lin_config_t lin_cfg = {0};",
         "    uint32_t lin_banner_idx = 0U;",
-        "    static const uint8_t sci_banner[] = \"SCI path active (A)\\r\\n\";",
-        "    static const uint8_t lin_banner[] = \"LIN path active (B)\\r\\n\";",
+    ]
+    )
+    if use_direct_iomm_pinmux:
+        source_lines.extend(
+            [
+                "    volatile IOMM_REG_MAP_t* iomm_regs = (volatile IOMM_REG_MAP_t*)0xFFFFEA00U;",
+                "    uint32_t pinmmr_value = 0U;",
+            ]
+        )
+    if emit_sci_primary_tx:
+        source_lines.append(f"    static const uint8_t sci_banner[] = \"{_c_string_literal(sci_banner_text)}\";")
+    if emit_lin_primary_tx:
+        source_lines.append(f"    static const uint8_t lin_banner[] = \"{_c_string_literal(lin_banner_text)}\";")
+    source_lines.extend(
+        [
         "",
-        "    (void)IOMM_Init();",
-        f"    (void)IOMM_ConfigurePin({lin_tx_pin}U, {iomm_pin_function_alt1});",
-        f"    (void)IOMM_ConfigurePin({lin_rx_pin}U, {iomm_pin_function_alt1});",
+        f"    (void){iomm_init_fn}();",
+    ])
+    if use_direct_iomm_pinmux:
+        source_lines.append(f"    {iomm_unlock_fn}();")
+        for pinmux_entry in contract_pinmux_entries:
+            register_name = str(pinmux_entry.get("register", ""))
+            field_start = int(pinmux_entry.get("field_start", 0))
+            target_bit = int(pinmux_entry.get("target_bit", field_start))
+            source_lines.extend(
+                [
+                    f"    pinmmr_value = iomm_regs->{register_name};",
+                    f"    pinmmr_value &= ~(0x1FU << {field_start}U);",
+                    f"    pinmmr_value |= (1U << {target_bit}U);",
+                    f"    iomm_regs->{register_name} = pinmmr_value;",
+                ]
+            )
+        source_lines.append(f"    {iomm_lock_fn}();")
+    else:
+        source_lines.extend(
+            [
+                f"    (void){iomm_configure_pin_fn}({lin_tx_pin}U, {iomm_pin_function_alt1});",
+                f"    (void){iomm_configure_pin_fn}({lin_rx_pin}U, {iomm_pin_function_alt1});",
+            ]
+        )
+    source_lines.extend(
+        [
         "    vim_init();",
         "    (void)GIO_Init();",
         "",
-    ]
+    ])
 
     if "direction" in gio_cfg_fields:
         source_lines.append(f"    led_cfg.direction = {gio_direction_output};")
@@ -1105,55 +1357,82 @@ def _generate_bsp_validate_module(
     else:
         source_lines.append("    /* GIO pin write API unavailable in current contract */")
     source_lines.append("")
-    if "baud_rate" in sci_cfg_fields:
-        source_lines.append("    sci_cfg.baud_rate = BSP_VALIDATE_BAUD;")
-    if "data_bits" in sci_cfg_fields:
-        source_lines.append("    sci_cfg.data_bits = SCI_DATABITS_8;")
-    if "parity" in sci_cfg_fields:
-        source_lines.append("    sci_cfg.parity = SCI_PARITY_NONE;")
-    if "stop_bits" in sci_cfg_fields:
-        source_lines.append("    sci_cfg.stop_bits = SCI_STOPBITS_1;")
-    if "enable_tx" in sci_cfg_fields:
-        source_lines.append("    sci_cfg.enable_tx = true;")
-    if "enable_rx" in sci_cfg_fields:
-        source_lines.append("    sci_cfg.enable_rx = true;")
-    if "enable_loopback" in sci_cfg_fields:
-        source_lines.append("    sci_cfg.enable_loopback = false;")
-    if "enable_dma_tx" in sci_cfg_fields:
-        source_lines.append("    sci_cfg.enable_dma_tx = false;")
-    if "enable_dma_rx" in sci_cfg_fields:
-        source_lines.append("    sci_cfg.enable_dma_rx = false;")
+    if emit_sci_init:
+        if "baud_rate" in sci_cfg_fields:
+            source_lines.append("    sci_cfg.baud_rate = BSP_VALIDATE_BAUD;")
+        if "data_bits" in sci_cfg_fields:
+            source_lines.append(f"    sci_cfg.data_bits = {sci_data_bits_value};")
+        if "parity" in sci_cfg_fields:
+            source_lines.append(f"    sci_cfg.parity = {sci_parity_value};")
+        if "stop_bits" in sci_cfg_fields:
+            source_lines.append(f"    sci_cfg.stop_bits = {sci_stop_bits_value};")
+        if "enable_tx" in sci_cfg_fields:
+            source_lines.append("    sci_cfg.enable_tx = true;")
+        if "enable_rx" in sci_cfg_fields:
+            source_lines.append("    sci_cfg.enable_rx = true;")
+        if "enable_loopback" in sci_cfg_fields:
+            source_lines.append("    sci_cfg.enable_loopback = false;")
+        if "enable_dma_tx" in sci_cfg_fields:
+            source_lines.append("    sci_cfg.enable_dma_tx = false;")
+        if "enable_dma_rx" in sci_cfg_fields:
+            source_lines.append("    sci_cfg.enable_dma_rx = false;")
 
-    if _contract_has_function(sci_contract, sci_init_fn):
-        source_lines.append(
-            f"    g_validate_sci_status = (uint32_t){sci_init_fn}(&sci_cfg);"
-            if sci_init_arity >= 1
-            else f"    g_validate_sci_status = (uint32_t){sci_init_fn}();"
-        )
-    else:
-        source_lines.append("    /* SCI init API unavailable in current contract */")
-    source_lines.append("")
+        if _contract_has_function(sci_contract, sci_init_fn):
+            source_lines.append(
+                f"    g_validate_sci_status = (uint32_t){sci_init_fn}(&sci_cfg);"
+                if sci_init_arity >= 1
+                else f"    g_validate_sci_status = (uint32_t){sci_init_fn}();"
+            )
+        else:
+            source_lines.append("    /* SCI init API unavailable in current contract */")
+        source_lines.append("")
 
     if "mode" in lin_cfg_fields:
         source_lines.append(f"    lin_cfg.mode = {lin_mode_sci};")
     if "baud_rate" in lin_cfg_fields:
         source_lines.append("    lin_cfg.baud_rate = BSP_VALIDATE_BAUD;")
 
-    if "data_bits" in lin_cfg_fields:
+    if "data_length" in lin_cfg_fields:
+        lin_data_field = next(
+            (
+                f
+                for f in (lin_types.get("lin_config_t", {}).get("fields", []) or [])
+                if isinstance(f, dict) and f.get("name") == "data_length"
+            ),
+            None,
+        )
+        lin_data_type = str((lin_data_field or {}).get("type", ""))
+        if lin_data_type in lin_types and (lin_types.get(lin_data_type, {}) or {}).get("kind") == "enum":
+            lin_data_length_value = _find_enum_value(
+                lin_contract,
+                lin_data_type,
+                str(frame_data_bits),
+                "LIN_DATA_LENGTH_8",
+            )
+            source_lines.append(f"    lin_cfg.data_length = {lin_data_length_value};")
+        else:
+            frame_length_value = frame_data_bits - 1 if frame_data_bits > 0 else 7
+            source_lines.append(f"    lin_cfg.data_length = {frame_length_value}U;")
+    elif "data_bits" in lin_cfg_fields:
         lin_data_field = next(
             (f for f in (lin_types.get("lin_config_t", {}).get("fields", []) or []) if isinstance(f, dict) and f.get("name") == "data_bits"),
             None,
         )
         lin_data_type = str((lin_data_field or {}).get("type", ""))
         if lin_data_type in lin_types and (lin_types.get(lin_data_type, {}) or {}).get("kind") == "enum":
-            lin_data_8 = _find_enum_value(lin_contract, lin_data_type, "8", "LIN_DATA_BITS_8")
-            source_lines.append(f"    lin_cfg.data_bits = {lin_data_8};")
+            lin_data_bits_value = _find_enum_value(
+                lin_contract,
+                lin_data_type,
+                str(frame_data_bits),
+                "LIN_DATA_BITS_8",
+            )
+            source_lines.append(f"    lin_cfg.data_bits = {lin_data_bits_value};")
         else:
-            source_lines.append("    lin_cfg.data_bits = 8U;")
+            source_lines.append(f"    lin_cfg.data_bits = {frame_data_bits}U;")
     if "parity" in lin_cfg_fields:
-        source_lines.append(f"    lin_cfg.parity = {lin_parity_none};")
+        source_lines.append(f"    lin_cfg.parity = {lin_parity_value};")
     if "stop_bits" in lin_cfg_fields:
-        source_lines.append(f"    lin_cfg.stop_bits = {lin_stop_1};")
+        source_lines.append(f"    lin_cfg.stop_bits = {lin_stop_value};")
     if "enable_loopback" in lin_cfg_fields:
         source_lines.append("    lin_cfg.enable_loopback = false;")
     if "enable_rx" in lin_cfg_fields:
@@ -1162,6 +1441,8 @@ def _generate_bsp_validate_module(
         source_lines.append("    lin_cfg.enable_tx = true;")
     if "enable_multibuffer" in lin_cfg_fields:
         source_lines.append("    lin_cfg.enable_multibuffer = false;")
+    if "dma_mode" in lin_cfg_fields:
+        source_lines.append(f"    lin_cfg.dma_mode = {lin_dma_disabled_value};")
     if "tx_dma_enable" in lin_cfg_fields:
         source_lines.append("    lin_cfg.tx_dma_enable = false;")
     if "rx_dma_enable" in lin_cfg_fields:
@@ -1170,6 +1451,12 @@ def _generate_bsp_validate_module(
         source_lines.append("    lin_cfg.enable_dma_tx = false;")
     if "enable_dma_rx" in lin_cfg_fields:
         source_lines.append("    lin_cfg.enable_dma_rx = false;")
+    if "rx_callback" in lin_cfg_fields:
+        source_lines.append("    lin_cfg.rx_callback = NULL;")
+    if "tx_callback" in lin_cfg_fields:
+        source_lines.append("    lin_cfg.tx_callback = NULL;")
+    if "error_callback" in lin_cfg_fields:
+        source_lines.append("    lin_cfg.error_callback = NULL;")
     if "pin_config" in lin_cfg_fields:
         pin_cfg_field = next(
             (
@@ -1190,22 +1477,36 @@ def _generate_bsp_validate_module(
             if isinstance(f, dict) and f.get("name")
         }
         # Ensure basic SCI-over-LIN path is active when driver models pin electrical config.
+        # Support both legacy and newer field naming variants to prevent terminal-output regressions.
         if "tx_functional_mode" in pin_cfg_fields:
             source_lines.append("    lin_cfg.pin_config.tx_functional_mode = true;")
         if "rx_functional_mode" in pin_cfg_fields:
             source_lines.append("    lin_cfg.pin_config.rx_functional_mode = true;")
+        if "tx_func_mode" in pin_cfg_fields:
+            source_lines.append("    lin_cfg.pin_config.tx_func_mode = true;")
+        if "rx_func_mode" in pin_cfg_fields:
+            source_lines.append("    lin_cfg.pin_config.rx_func_mode = true;")
+
         if "tx_open_drain" in pin_cfg_fields:
             source_lines.append("    lin_cfg.pin_config.tx_open_drain = false;")
         if "rx_open_drain" in pin_cfg_fields:
             source_lines.append("    lin_cfg.pin_config.rx_open_drain = false;")
+        if "open_drain" in pin_cfg_fields:
+            source_lines.append("    lin_cfg.pin_config.open_drain = false;")
+
         if "tx_pull_enable" in pin_cfg_fields:
             source_lines.append("    lin_cfg.pin_config.tx_pull_enable = false;")
         if "rx_pull_enable" in pin_cfg_fields:
             source_lines.append("    lin_cfg.pin_config.rx_pull_enable = false;")
+        if "pull_enable" in pin_cfg_fields:
+            source_lines.append("    lin_cfg.pin_config.pull_enable = false;")
+
         if "tx_pull_select" in pin_cfg_fields:
             source_lines.append("    lin_cfg.pin_config.tx_pull_select = true;")
         if "rx_pull_select" in pin_cfg_fields:
             source_lines.append("    lin_cfg.pin_config.rx_pull_select = true;")
+        if "pull_select" in pin_cfg_fields:
+            source_lines.append("    lin_cfg.pin_config.pull_select = true;")
 
     if _contract_has_function(lin_contract, lin_init_fn):
         source_lines.append(
@@ -1221,24 +1522,32 @@ def _generate_bsp_validate_module(
             source_lines.append(f"    (void){sci_send_fn}(sci_banner, (uint32_t)(sizeof(sci_banner) - 1U), 100U);")
         else:
             source_lines.append(f"    (void){sci_send_fn}(sci_banner, (uint32_t)(sizeof(sci_banner) - 1U));")
-    if lin_banner_via_tx_buffer:
-        if lin_send_arity >= 3:
-            source_lines.append(f"    (void){lin_send_fn}(lin_banner, (uint16_t)(sizeof(lin_banner) - 1U), 100U);")
-        else:
-            source_lines.append(f"    (void){lin_send_fn}(lin_banner, (uint32_t)(sizeof(lin_banner) - 1U));")
-    elif lin_banner_via_tx_byte:
+    if lin_banner_via_tx_byte:
         source_lines.extend(
             [
                 "    lin_banner_idx = 0U;",
                 "    while (lin_banner_idx < (uint32_t)(sizeof(lin_banner) - 1U))",
                 "    {",
-                f"        if ({lin_send_byte_fn}(lin_banner[lin_banner_idx]) == LIN_STATUS_OK)",
+                "        if (bsp_validate_lin_send_byte_retry(lin_banner[lin_banner_idx]))",
                 "        {",
                 "            lin_banner_idx++;",
                 "        }",
+                "        else",
+                "        {",
+                "            break;",
+                "        }",
+                "    }",
+                "    if (lin_banner_idx < (uint32_t)(sizeof(lin_banner) - 1U))",
+                "    {",
+                "        g_validate_lin_tx_skip++;",
                 "    }",
             ]
         )
+    elif lin_banner_via_tx_buffer:
+        if lin_send_arity >= 3:
+            source_lines.append(f"    (void){lin_send_fn}(lin_banner, (uint16_t)(sizeof(lin_banner) - 1U), 100U);")
+        else:
+            source_lines.append(f"    (void){lin_send_fn}(lin_banner, (uint32_t)(sizeof(lin_banner) - 1U));")
     if not lin_banner_via_tx_byte:
         source_lines.append("    (void)lin_banner_idx;")
     source_lines.extend(
@@ -1262,7 +1571,7 @@ def _generate_bsp_validate_module(
         ]
     )
 
-    if sci_rx_ready_available and sci_receive_available and sci_send_byte_available:
+    if emit_sci_echo and sci_rx_ready_available and sci_receive_available and sci_send_byte_available:
         source_lines.extend(
             [
                 f"    if ({sci_rx_ready_fn}())",
@@ -1276,24 +1585,35 @@ def _generate_bsp_validate_module(
             ]
         )
 
-    if lin_rx_ready_available and lin_receive_available and lin_send_byte_available:
+    if lin_receive_available and lin_send_byte_available:
         rx_call = (
             f"{lin_receive_fn}(&rx_byte, 0U)"
             if lin_receive_arity >= 2
             else f"{lin_receive_fn}(&rx_byte)"
         )
-        source_lines.extend(
-            [
-                f"    if ({lin_rx_ready_fn}())",
-                "    {",
-                f"        if ({rx_call} == LIN_STATUS_OK)",
-                "        {",
-                f"            (void){lin_send_byte_fn}(rx_byte);",
-                "        }",
-                "    }",
-                "",
-            ]
-        )
+        if lin_rx_ready_available:
+            source_lines.extend(
+                [
+                    f"    if ({lin_rx_ready_fn}())",
+                    "    {",
+                    f"        if ({rx_call} == LIN_STATUS_OK)",
+                    "        {",
+                    f"            (void){lin_send_byte_fn}(rx_byte);",
+                    "        }",
+                    "    }",
+                    "",
+                ]
+            )
+        else:
+            source_lines.extend(
+                [
+                    f"    if ({rx_call} == LIN_STATUS_OK)",
+                    "    {",
+                    f"        (void){lin_send_byte_fn}(rx_byte);",
+                    "    }",
+                    "",
+                ]
+            )
 
     source_lines.extend(
         [
@@ -1305,7 +1625,7 @@ def _generate_bsp_validate_module(
         ]
     )
 
-    if sci_tx_ready_available and sci_send_byte_available:
+    if emit_sci_primary_tx and sci_tx_ready_available and sci_send_byte_available:
         source_lines.extend(
             [
                 f"        if ({sci_tx_ready_fn}())",
@@ -1321,20 +1641,34 @@ def _generate_bsp_validate_module(
             ]
         )
 
-    if lin_tx_ready_available and lin_send_byte_available:
-        source_lines.extend(
-            [
-                f"        if ({lin_tx_ready_fn}())",
-                "        {",
-                f"            (void){lin_send_byte_fn}('B');",
-                "            g_validate_lin_tx_ok++;",
-                "        }",
-                "        else",
-                "        {",
-                "            g_validate_lin_tx_skip++;",
-                "        }",
-            ]
-        )
+    if emit_lin_primary_tx and lin_send_byte_available:
+        if lin_tx_ready_available:
+            source_lines.extend(
+                [
+                    f"        if ({lin_tx_ready_fn}())",
+                    "        {",
+                    f"            (void){lin_send_byte_fn}('B');",
+                    "            g_validate_lin_tx_ok++;",
+                    "        }",
+                    "        else",
+                    "        {",
+                    "            g_validate_lin_tx_skip++;",
+                    "        }",
+                ]
+            )
+        else:
+            source_lines.extend(
+                [
+                    f"        if ({lin_send_byte_fn}('B') == LIN_STATUS_OK)",
+                    "        {",
+                    "            g_validate_lin_tx_ok++;",
+                    "        }",
+                    "        else",
+                    "        {",
+                    "            g_validate_lin_tx_skip++;",
+                    "        }",
+                ]
+            )
 
     source_lines.extend(
         [
@@ -1385,6 +1719,7 @@ def generate_main_c(
     manifest: dict = None,
     generation_profile: Optional[Dict[str, Any]] = None,
     board_data: Optional[Dict[str, Any]] = None,
+    bringup_contract: Optional[Dict[str, Any]] = None,
     api_contract_manifest: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """
@@ -1413,6 +1748,7 @@ def generate_main_c(
             out_dir,
             generation_profile,
             board_data,
+            bringup_contract=bringup_contract,
             api_contract_manifest=api_contract_manifest,
         )
 

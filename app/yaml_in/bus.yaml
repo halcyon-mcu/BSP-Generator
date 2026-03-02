@@ -50,6 +50,28 @@ sources:
       expected_output_hz: 160000000  # PLLCLK = 16MHz × 120 / 6 / 2 = 160MHz
       # GCLK/HCLK = 160MHz (CPU and system clock)
       # VCLK = 160MHz / 2 = 80MHz (peripheral clock)
+    rm46_bringup_profile: pll1_hal_encoded
+    pll1_encoding:
+      pllmul_register_encoding: hal_encoded
+      pllmul_hal_literal: "0xA400"
+      pllmul_effective_nf: 120
+      hal_literal_hclk_hz: 220000000
+      refclkdiv_register_value: 5
+      plldiv_register_value: 1
+      odpll_register_value: 1
+      trm_dynamic_defaults:
+        use_register_field_programming: true
+        requires_disable_before_reprogram: true
+        requires_csvstat_valid_poll: true
+        requires_glbstat_slip_clear: true
+        csvstat_required_mask: "0x00000042"
+      notes:
+        - "PLLMUL can be encoded using HAL literal 0xA400 in proven working path."
+        - "Frequency decode must convert encoded literal to effective NF before math unless a HAL literal HCLK override is provided."
+    source_ids:
+      ghvsrc_pll1_source_id: 1
+      rclksrc_sys_source_id: 9
+      vclkasrc_sys_source_id: 9
 - name: PLL2
   type: pll
   parent: OSCIN
@@ -626,6 +648,13 @@ x-ext:
           CSDIS: "0x0000008C"
           CDDIS: "0x00000020"
           CSVSTAT_REQUIRED_MASK: "0x00000042"
+        pll_frequency_decode:
+          allow_hal_encoded_pllmul: true
+          hal_encoded_pllmul:
+            encoded_value: "0xA400"
+            effective_multiplier: 120
+          expected_effective_hclk_hz: 80000000
+          expected_effective_vclk_hz: 80000000
       clock_domains:
       - name: GCLK
         domain_number: 0

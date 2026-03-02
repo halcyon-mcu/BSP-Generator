@@ -56,6 +56,7 @@ class ValidationReport:
     build_evidence: Optional[Dict[str, Any]] = None
     api_contract_hash: Optional[str] = None
     runtime_invariants: Optional[Dict[str, Any]] = None
+    critical_sequence_mismatches: List[Dict[str, Any]] = field(default_factory=list)
 
     def is_successful(self) -> bool:
         if self.compile_contract and not self.compile_contract.get("passes", True):
@@ -80,6 +81,7 @@ class ValidationReport:
             "build_evidence": self.build_evidence,
             "api_contract_hash": self.api_contract_hash,
             "runtime_invariants": self.runtime_invariants,
+            "critical_sequence_mismatches": self.critical_sequence_mismatches,
         }
 
 
@@ -229,6 +231,32 @@ def write_markdown_report(report: ValidationReport, output_path: Path) -> Path:
 
     if report.runtime_invariants:
         lines.append("## Runtime Invariants")
+        lines.append("")
+
+    if report.critical_sequence_mismatches:
+        lines.append("## Critical Sequence Mismatches")
+        lines.append("")
+        for item in report.critical_sequence_mismatches[:200]:
+            kind = item.get("kind")
+            baseline = item.get("baseline") or {}
+            candidate = item.get("candidate") or {}
+            btxt = (
+                f"{baseline.get('file')}:{baseline.get('line')} "
+                f"{baseline.get('canonical_symbol')} {baseline.get('op')}"
+                if baseline
+                else "<missing>"
+            )
+            ctxt = (
+                f"{candidate.get('file')}:{candidate.get('line')} "
+                f"{candidate.get('canonical_symbol')} {candidate.get('op')}"
+                if candidate
+                else "<missing>"
+            )
+            lines.append(f"- **{kind}** baseline=`{btxt}` candidate=`{ctxt}`")
+        if len(report.critical_sequence_mismatches) > 200:
+            lines.append(
+                f"- ... truncated {len(report.critical_sequence_mismatches) - 200} additional mismatches"
+            )
         lines.append("")
         for key, value in report.runtime_invariants.items():
             lines.append(f"- **{key}:** {value}")

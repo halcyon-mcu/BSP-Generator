@@ -83,6 +83,57 @@ def test_api_contract_manifest_derives_ready_capabilities_from_get_status_names(
     assert any(w["name"] == "SCI_IsRxReady" for w in sci["compatibility_wrappers"])
 
 
+def test_api_contract_manifest_derives_sci_write_read_capabilities_and_wrappers():
+    bsp_manifest = {
+        "api_catalog": {
+            "SCI": {
+                "functions": [
+                    {"prototype": "sci_status_t SCI_Write(const uint8_t* data, uint32_t length);"},
+                    {"prototype": "sci_status_t SCI_WriteByte(uint8_t data);"},
+                    {"prototype": "sci_status_t SCI_ReadByte(uint8_t* data);"},
+                    {"prototype": "bool SCI_IsTxReady(void);"},
+                    {"prototype": "bool SCI_IsRxReady(void);"},
+                ],
+                "types": [],
+            }
+        }
+    }
+    profile = {"target_board": "RM46"}
+
+    contract = build_api_contract_manifest(bsp_manifest, profile)
+    sci = contract["modules"]["SCI"]
+
+    assert sci["capabilities"]["tx_buffer"] == "SCI_Write"
+    assert sci["capabilities"]["tx_byte"] == "SCI_WriteByte"
+    assert sci["capabilities"]["rx_byte"] == "SCI_ReadByte"
+    assert any(w["name"] == "SCI_SendData" and w["target"] == "SCI_Write" for w in sci["compatibility_wrappers"])
+    assert any(w["name"] == "SCI_SendByte" and w["target"] == "SCI_WriteByte" for w in sci["compatibility_wrappers"])
+    assert any(w["name"] == "SCI_ReceiveByte" and w["target"] == "SCI_ReadByte" for w in sci["compatibility_wrappers"])
+
+
+def test_api_contract_manifest_derives_ready_capabilities_from_get_ready_names():
+    bsp_manifest = {
+        "api_catalog": {
+            "LIN": {
+                "functions": [
+                    {"prototype": "bool LIN_GetTxReady(void);"},
+                    {"prototype": "bool LIN_GetRxReady(void);"},
+                    {"prototype": "lin_status_t LIN_SendByte(uint8_t data);"},
+                ],
+                "types": [],
+            }
+        }
+    }
+    profile = {"target_board": "RM46"}
+
+    contract = build_api_contract_manifest(bsp_manifest, profile)
+    lin = contract["modules"]["LIN"]
+    assert lin["capabilities"]["tx_ready"] == "LIN_GetTxReady"
+    assert lin["capabilities"]["rx_ready"] == "LIN_GetRxReady"
+    assert any(w["name"] == "LIN_IsTxReady" for w in lin["compatibility_wrappers"])
+    assert any(w["name"] == "LIN_IsRxReady" for w in lin["compatibility_wrappers"])
+
+
 def test_api_contract_manifest_does_not_map_tx_buffer_to_sendbyte():
     bsp_manifest = {
         "api_catalog": {

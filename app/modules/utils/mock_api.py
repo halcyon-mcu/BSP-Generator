@@ -259,3 +259,31 @@ async def mock_invoke_model(model, max_tokens: int, messages: list) -> Dict[str,
         output_tokens = random.randint(500, 2000)
 
     return create_mock_bedrock_response(content, input_tokens, output_tokens)
+
+
+def mock_invoke_model_sync(model, max_tokens: int, messages: list) -> Dict[str, Any]:
+    """
+    Synchronous mock variant used by sync compile-gate LLM repair flow.
+    """
+    # Reuse the async behavior via lightweight inline logic to avoid event-loop coupling.
+    user_message = ""
+    for msg in messages:
+        if msg.get("role") == "user":
+            user_message = msg.get("content", "").lower()
+            break
+
+    module_name = _extract_module_name(user_message)
+    if "public driver header file" in user_message or "generate the c header file" in user_message:
+        content = generate_mock_driver_header_response(module_name)
+        input_tokens = random.randint(7000, 12000)
+        output_tokens = random.randint(1200, 2500)
+    elif "driver implementation file" in user_message or "generate the c source file" in user_message:
+        content = generate_mock_driver_response(module_name)
+        input_tokens = random.randint(10000, 20000)
+        output_tokens = random.randint(2000, 5000)
+    else:
+        content = f"Mock sync response for testing. Request size={len(user_message)} chars."
+        input_tokens = random.randint(3000, 8000)
+        output_tokens = random.randint(600, 2000)
+
+    return create_mock_bedrock_response(content, input_tokens, output_tokens)

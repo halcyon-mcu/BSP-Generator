@@ -749,6 +749,11 @@ class UnifiedProgressManager:
                 padding = self.terminal_width - 3 - v.visible_length(task_info)
                 lines.append(v.box['v'] + ' ' + task_info + ' ' * padding + v.box['v'])
 
+                if tracker.current_task_name:
+                    step_line = f"Step: {tracker.current_task_name}"
+                    padding = self.terminal_width - 3 - v.visible_length(step_line)
+                    lines.append(v.box['v'] + ' ' + step_line + ' ' * padding + v.box['v'])
+
                 # Progress bar for current pass
                 if tracker.total_tasks > 0:
                     pass_progress = tracker.get_progress()

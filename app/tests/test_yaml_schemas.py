@@ -289,7 +289,28 @@ class TestBringupContractSchema:
                 }
             },
             "iomm": {"unlock_sequence": ["0x83E70B13", "0x95A4F1E0"]},
-            "pll": {"required_sequence": ["CSDISSET", "CSVSTAT", "GHVSRC"]},
+            "pll": {
+                "init_profile": "rm46_hal_aligned",
+                "required_sequence": [
+                    "disable/set source bits",
+                    "write PLLCTL1/PLLCTL2(/PLLCTL3 if used)",
+                    "poll CSVSTAT",
+                    "write GHVSRC",
+                    "write RCLKSRC",
+                    "write VCLKASRC",
+                    "write CLKCNTL",
+                    "set PENA",
+                ],
+                "frequency_decode": {
+                    "allow_hal_encoded_pllmul": True,
+                    "required_behavior": {
+                        "supports_hal_encoded_pllmul_literal": True,
+                        "uses_uint64_intermediate_math": True,
+                        "derives_active_source_from_ghvsrc": True,
+                    },
+                    "required_tokens": ["0xA400", "uint64_t"],
+                },
+            },
             "startup": {"required_order": ["PCR_Init", "PCR_EnableAllPeripherals", "flash_waitstates", "PLL_Init"]},
         }
         is_valid, errors = validate_yaml_schema(data, BringupContractYAML)

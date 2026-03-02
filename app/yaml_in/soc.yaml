@@ -1431,45 +1431,57 @@ soc:
     clock_ref: VCLK
     x-ext:
       init:
-      - reg: ''
+      - reg: CSDISSET
         op: set_bits
-        value: '0x00000000'
-      - reg: OTP_ADDRESS
+        value: '0x00000042'
+      - reg: GLBSTAT
         op: write
-        value: '0xF00801B4'
-      - reg: LPOMONCTL
-        op: write
-        value: '0x00000000'
-      - reg: CSVSTAT
-        op: write
-        value: '0x00000000'
+        value: '0x00000301'
       - reg: PLLCTL1
         op: write
-        value: '0x00000000'
+        value: '0x3F05A400'
       - reg: PLLCTL2
         op: write
-        value: '0x00000000'
-      - reg: CSDISCLR
-        op: set_bits
-        value: '0x00000002'
-      - reg: CSVSTAT
-        op: write
-        value: '0x00000000'
-      - reg: CSVSTAT
-        op: write
-        value: '0x00000000'
-      - reg: ''
-        op: write
-        value: '0x00000000'
-      - reg: ''
-        op: write
-        value: '0x00000000'
+        value: '0x3FC0723D'
       - reg: PLLCTL3
         op: write
-        value: '0x00000000'
-      - reg: CSDISCLR
+        value: '0x3F05A400'
+      - reg: CSDIS
+        op: write
+        value: '0x0000008C'
+      - reg: CDDIS
+        op: write
+        value: '0x00000020'
+      - reg: GHVSRC
+        op: write
+        value: '0x00000001'
+      - reg: RCLKSRC
+        op: write
+        value: '0x01090109'
+      - reg: VCLKASRC
+        op: write
+        value: '0x00000909'
+      - reg: CLKCNTL
+        op: write
+        value: '(SYSREG->CLKCNTL & 0xF0FFFFFFU) | (1U << 24U)'
+      - reg: CLKCNTL
+        op: write
+        value: '(SYSREG->CLKCNTL & 0xFFF0FFFFU) | (1U << 16U)'
+      - reg: CLK2CNTRL
+        op: write
+        value: '(SYSREG2->CLK2CNTRL & 0xFFFFF0F0U) | (1U << 8U) | (1U << 0U)'
+      - reg: VCLKACON1
+        op: write
+        value: '0x00020002'
+      - reg: PLLCTL1
+        op: clear_bits
+        value: '0x1F000000'
+      - reg: PLLCTL3
+        op: clear_bits
+        value: '0x1F000000'
+      - reg: CLKCNTL
         op: set_bits
-        value: '0x00000040'
+        value: '0x00000100'
       x-source:
         pdf: 10_Oscillator_and_PLL.pdf
         pages:
@@ -1931,6 +1943,12 @@ soc:
     clock_ref: VCLK
     x-ext:
       init:
+      - reg: CLKCNTL
+        op: set_bits
+        value: '0x00000100'
+      - reg: CLKCNTL
+        op: write
+        value: '0x00010000'
       - reg: MINITGCR
         op: set_bits
         value: '0x0000000A'
@@ -1943,6 +1961,9 @@ soc:
       - reg: MINITGCR
         op: clear_bits
         value: '0x00000005'
+      - reg: CSVSTAT
+        op: write
+        value: '0x00000000'
       base_address:
         base: '0xFFFFFF00'
         size: '0x100'

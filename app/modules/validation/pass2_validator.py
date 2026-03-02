@@ -46,6 +46,327 @@ def _extract_definitions(content: str) -> Dict[str, int]:
     return out
 
 
+def _extract_function_body(content: str, function_name: str) -> Optional[str]:
+    """Extract a function body by name using brace matching."""
+    sig = re.search(rf"\b{re.escape(function_name)}\s*\([^;{{}}]*\)\s*\{{", content)
+    if not sig:
+        return None
+
+    open_brace = content.find("{", sig.start(), sig.end())
+    if open_brace < 0:
+        return None
+
+    depth = 0
+    idx = open_brace
+    while idx < len(content):
+        ch = content[idx]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return content[open_brace + 1:idx]
+        idx += 1
+    return None
+
+
+def _all_returns_guarded_by_lock(function_body: str) -> bool:
+    """
+    Return True when each explicit return statement has IOMM_Lock() directly
+    before it (ignoring blank/comment-only lines).
+    """
+    lines = function_body.splitlines()
+    for i, line in enumerate(lines):
+        if not re.match(r"^\s*return\b", line):
+            continue
+
+        j = i - 1
+        while j >= 0:
+            prev = lines[j].strip()
+            if not prev or prev.startswith("/*") or prev.startswith("*") or prev.startswith("//"):
+                j -= 1
+                continue
+            if "IOMM_Lock();" in prev:
+                break
+            return False
+        if j < 0:
+            return False
+    return True
+
+
+def _find_first_pattern_index(content: str, patterns: List[str], start_idx: int = 0) -> int:
+    """Return earliest match index across regex patterns, or -1 if not found."""
+    best = -1
+    search_blob = content[start_idx:] if start_idx > 0 else content
+    for pattern in patterns:
+        match = re.search(pattern, search_blob, re.IGNORECASE)
+        if not match:
+            continue
+        idx = (start_idx + match.start()) if start_idx > 0 else match.start()
+        if best < 0 or idx < best:
+            best = idx
+    return best
+
+
+def _pll_sequence_patterns(checkpoint: str) -> List[str]:
+    """Map contract checkpoint text to robust token patterns."""
+    cp = (checkpoint or "").strip().lower()
+
+    aliases = {
+        "disable/set source bits": [
+            r"\bCSDISSET\b",
+            r"\bCSDISCLR\b",
+            r"\bCSDIS\s*=",
+        ],
+        "write pllctl1/pllctl2(/pllctl3 if used)": [
+            r"\bPLLCTL1\b",
+            r"\bPLLCTL2\b",
+        ],
+        "poll csvstat": [r"\bCSVSTAT\b", r"\bwait_for_pll(?:[12])?_lock\s*\("],
+        "write ghvsrc": [r"\bGHVSRC\b"],
+        "write rclksrc": [r"\bRCLKSRC\b"],
+        "write vclkasrc": [r"\bVCLKASRC\b"],
+        "write clkcntl": [r"\bCLKCNTL\b"],
+        "set pena": [r"\bPENA\b", r"\bSYSTEM_CLKCNTL_PENA\b"],
+    }
+
+    if cp in aliases:
+        return aliases[cp]
+
+    # Backward-compatible path: token-style checkpoints from older contracts.
+    token = re.escape((checkpoint or "").strip())
+    if token:
+        return [token]
+    return []
+
+
+def _macro_alias_names_for_literal(content: str, literal_hex: str) -> List[str]:
+    token = re.escape(literal_hex)
+    pattern = re.compile(
+        rf"#define\s+([A-Za-z_][A-Za-z0-9_]*)\s+\(*\s*{token}U?\s*\)*\b",
+        re.IGNORECASE,
+    )
+    return [m.group(1) for m in pattern.finditer(content)]
+
+
+def _contains_literal_or_alias(content: str, literal_hex: str, aliases: Optional[List[str]] = None) -> bool:
+    aliases = aliases or []
+    if re.search(re.escape(literal_hex), content, re.IGNORECASE):
+        return True
+    for alias in aliases:
+        if alias and re.search(rf"\b{re.escape(alias)}\b", content):
+            return True
+    for macro_alias in _macro_alias_names_for_literal(content, literal_hex):
+        if re.search(rf"\b{re.escape(macro_alias)}\b", content):
+            return True
+    return False
+
+
+def _has_hal_decode_guard(content: str) -> bool:
+    if not _contains_literal_or_alias(content, "0xA400"):
+        return False
+    direct_cmp = re.search(
+        r"\b[A-Za-z_][A-Za-z0-9_]*\s*==\s*\(*\s*0xA400U?\s*\)*",
+        content,
+        re.IGNORECASE,
+    )
+    if direct_cmp is not None:
+        return True
+    alias_names = _macro_alias_names_for_literal(content, "0xA400")
+    for alias in alias_names:
+        if re.search(
+            rf"\b[A-Za-z_][A-Za-z0-9_]*\s*==\s*{re.escape(alias)}\b",
+            content,
+            re.IGNORECASE,
+        ):
+            return True
+    return False
+
+
+def _function_or_called_helper_mentions_token(
+    content: str,
+    function_name: str,
+    token: str,
+    max_depth: int = 2,
+) -> bool:
+    root_body = _extract_function_body(content, function_name)
+    if not root_body:
+        return False
+    if token in root_body:
+        return True
+
+    ignore_calls = {
+        "if", "for", "while", "switch", "return", "sizeof",
+        "uint32_t", "uint64_t", "int", "void", "static",
+    }
+
+    seen = {function_name}
+    queue: List[tuple[str, int]] = [(function_name, 0)]
+    while queue:
+        current_fn, depth = queue.pop(0)
+        if depth >= max_depth:
+            continue
+        current_body = _extract_function_body(content, current_fn)
+        if not current_body:
+            continue
+        for match in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", current_body):
+            callee = match.group(1)
+            if callee in ignore_calls or callee in seen:
+                continue
+            seen.add(callee)
+            callee_body = _extract_function_body(content, callee)
+            if not callee_body:
+                continue
+            if token in callee_body:
+                return True
+            queue.append((callee, depth + 1))
+    return False
+
+
+def _validate_pll_required_sequence(
+    file_name: str,
+    pll_init_body: str,
+    required_sequence: List[str],
+) -> List[str]:
+    """Validate required PLL sequence token/checkpoint presence and ordering."""
+    errors: List[str] = []
+    if not pll_init_body or not isinstance(required_sequence, list):
+        return errors
+
+    cursor = 0
+    for checkpoint in required_sequence:
+        if not isinstance(checkpoint, str) or not checkpoint.strip():
+            continue
+
+        patterns = _pll_sequence_patterns(checkpoint)
+        if not patterns:
+            continue
+
+        # Special handling for combined checkpoint that requires both PLLCTL1 and PLLCTL2.
+        normalized_checkpoint = checkpoint.strip().lower()
+        if normalized_checkpoint == "write pllctl1/pllctl2(/pllctl3 if used)":
+            pllctl1_idx = _find_first_pattern_index(pll_init_body, [r"\bPLLCTL1\b"], cursor)
+            pllctl2_idx = _find_first_pattern_index(pll_init_body, [r"\bPLLCTL2\b"], cursor)
+            if pllctl1_idx < 0 or pllctl2_idx < 0:
+                errors.append(
+                    f"{file_name}: Missing required PLL sequence checkpoint '{checkpoint}' (need both PLLCTL1 and PLLCTL2 writes)."
+                )
+                continue
+            first_idx = min(pllctl1_idx, pllctl2_idx)
+            if first_idx < cursor:
+                errors.append(
+                    f"{file_name}: PLL sequence ordering violation at checkpoint '{checkpoint}'."
+                )
+            cursor = max(pllctl1_idx, pllctl2_idx) + 1
+            continue
+
+        idx = _find_first_pattern_index(pll_init_body, patterns, cursor)
+        if idx < 0:
+            errors.append(
+                f"{file_name}: Missing required PLL sequence checkpoint '{checkpoint}' from bring-up contract."
+            )
+            continue
+        if idx < cursor:
+            errors.append(
+                f"{file_name}: PLL sequence ordering violation at checkpoint '{checkpoint}'."
+            )
+            continue
+        cursor = idx + 1
+
+    return errors
+
+
+def _is_trm_dynamic_profile(profile_name: str) -> bool:
+    profile = (profile_name or "").strip().lower()
+    return profile in {"rm46_trm_dynamic", "rm46_trm_dynamic_with_hal_fallback"}
+
+
+def _validate_trm_dynamic_pll_behavior(
+    file_name: str,
+    pll_init_body: Optional[str],
+    pll_getfreq_body: Optional[str],
+    require_enable_disable_sequence: bool,
+) -> List[str]:
+    """
+    Validate TRM-oriented dynamic PLL programming behavior.
+
+    This avoids HAL-literal lock-in by requiring field-based decode/programming
+    paths and GHVSRC-aware runtime selection.
+    """
+    errors: List[str] = []
+    init_blob = pll_init_body or ""
+    freq_blob = pll_getfreq_body or ""
+
+    if not init_blob:
+        errors.append(f"{file_name}: Missing PLL_Init() body for TRM dynamic profile validation.")
+        return errors
+    if not freq_blob:
+        errors.append(f"{file_name}: Missing PLL_GetFrequency() body for TRM dynamic profile validation.")
+        return errors
+
+    # PLLCTL writes should be expressed as field/mask composition in dynamic mode.
+    pllctl1_field_style = re.search(
+        r"PLLCTL1\s*=\s*[^;\n]*(<<|SYSTEM_PLLCTL1_|PLLCTL1_)",
+        init_blob,
+        re.IGNORECASE,
+    ) is not None
+    pllctl2_field_style = re.search(
+        r"PLLCTL2\s*=\s*[^;\n]*(<<|SYSTEM_PLLCTL2_|PLLCTL2_)",
+        init_blob,
+        re.IGNORECASE,
+    ) is not None
+    if not pllctl1_field_style:
+        errors.append(
+            f"{file_name}: TRM dynamic profile expects PLLCTL1 field-composed programming (mask/shift form)."
+        )
+    if not pllctl2_field_style:
+        errors.append(
+            f"{file_name}: TRM dynamic profile expects PLLCTL2 field-composed programming (mask/shift form)."
+        )
+
+    # Frequency decode must read raw register fields and convert to effective divisors.
+    has_pllctl_reads = "PLLCTL1" in freq_blob and "PLLCTL2" in freq_blob
+    has_raw_extract = re.search(r"\b(nf_raw|nr_raw|plldiv_raw|odpll_raw)\b", freq_blob) is not None
+    has_nr_convert = re.search(r"nr[_a-zA-Z0-9]*\s*\+\s*1U", freq_blob) is not None
+    has_r_convert = (
+        re.search(r"1U\s*<<\s*plldiv[_a-zA-Z0-9]*", freq_blob) is not None
+        or re.search(r"plldiv[_a-zA-Z0-9]*\s*\+\s*1U", freq_blob) is not None
+    )
+    has_od_convert = re.search(r"odpll[_a-zA-Z0-9]*\s*\+\s*1U", freq_blob) is not None
+    if not has_pllctl_reads or not has_raw_extract:
+        errors.append(
+            f"{file_name}: TRM dynamic profile requires PLL_GetFrequency() to extract PLL fields from PLLCTL1/PLLCTL2."
+        )
+    if not has_nr_convert:
+        errors.append(f"{file_name}: Missing NR conversion (register encoding to effective divider) in PLL_GetFrequency().")
+    if not has_r_convert:
+        errors.append(f"{file_name}: Missing PLLDIV/R conversion logic in PLL_GetFrequency().")
+    if not has_od_convert:
+        errors.append(f"{file_name}: Missing ODPLL conversion logic in PLL_GetFrequency().")
+
+    if require_enable_disable_sequence:
+        if "CSDISSET" not in init_blob and "CSDIS =" not in init_blob:
+            errors.append(
+                f"{file_name}: TRM dynamic profile requires disable-before-reprogram sequence (CSDISSET/CSDIS)."
+            )
+        if "CSDISCLR" not in init_blob:
+            errors.append(
+                f"{file_name}: TRM dynamic profile requires explicit source enable via CSDISCLR after programming."
+            )
+        has_csvstat_path = (
+            "CSVSTAT" in init_blob
+            or "wait_for_pll_lock(" in init_blob
+            or "wait_for_pll1_lock(" in init_blob
+            or "wait_for_pll2_lock(" in init_blob
+        )
+        if not has_csvstat_path:
+            errors.append(
+                f"{file_name}: TRM dynamic profile requires CSVSTAT valid polling before clock handoff."
+            )
+
+    return errors
+
+
 def validate_driver_implementation(
     module_name: str,
     manifest_entry: Dict,
@@ -311,14 +632,25 @@ def validate_driver_implementation(
             except Exception:
                 pass
 
-    # Check 10: PLL-specific build-readiness checks
+    # Check 10: PLL-specific build-readiness checks (behavior-first, tokens second)
     if module_name.upper() == "PLL":
+        pll_contract_cfg = bringup_contract.get("pll", {}) if isinstance(bringup_contract, dict) else {}
+        pll_init_profile = (
+            str(pll_contract_cfg.get("init_profile", "")).strip().lower()
+            if isinstance(pll_contract_cfg, dict)
+            else ""
+        )
+        freq_decode_cfg = pll_contract_cfg.get("frequency_decode", {}) if isinstance(pll_contract_cfg, dict) else {}
+        required_sequence = pll_contract_cfg.get("required_sequence", []) if isinstance(pll_contract_cfg, dict) else []
+
         for file_path in driver_c_files:
             try:
                 content = file_path.read_text(encoding='utf-8', errors='ignore')
+                pll_getfreq_body = _extract_function_body(content, "PLL_GetFrequency")
+                pll_init_body = _extract_function_body(content, "PLL_Init")
 
-                if 'PLL_GetFrequency' in content:
-                    if 'GHVSRC' not in content:
+                if pll_getfreq_body:
+                    if not _function_or_called_helper_mentions_token(content, "PLL_GetFrequency", "GHVSRC"):
                         errors.append(
                             f"{file_path.name}: PLL_GetFrequency() does not reference GHVSRC. "
                             "Frequency must account for active clock source selection."
@@ -330,6 +662,129 @@ def validate_driver_implementation(
                         f"{file_path.name}: Contains hardcoded HCLK-like constant. "
                         "Prefer runtime derivation from PLL/GHVSRC registers."
                     )
+
+                if isinstance(required_sequence, list) and required_sequence:
+                    target_blob = pll_init_body if isinstance(pll_init_body, str) and pll_init_body else content
+                    errors.extend(_validate_pll_required_sequence(file_path.name, target_blob, required_sequence))
+
+                if pll_init_profile == "rm46_hal_aligned":
+                    target_blob = pll_init_body if isinstance(pll_init_body, str) and pll_init_body else content
+                    required_hal_tokens = ["GLBSTAT", "PLLCTL1", "PLLCTL2", "CSDIS", "CDDIS", "GHVSRC", "RCLKSRC", "VCLKASRC", "CLKCNTL", "PENA"]
+                    missing_hal = [tok for tok in required_hal_tokens if tok not in target_blob]
+                    if missing_hal:
+                        errors.append(
+                            f"{file_path.name}: Missing rm46_hal_aligned PLL init tokens: "
+                            + ", ".join(missing_hal)
+                        )
+                    if not _contains_literal_or_alias(target_blob, "0x00000301", ["HAL_ALIGNED_GLBSTAT_CLEAR_VALUE", "RM46_GLBSTAT_CLEAR_MASK"]):
+                        errors.append(
+                            f"{file_path.name}: Missing rm46_hal_aligned GLBSTAT clear checkpoint (0x00000301 or alias)."
+                        )
+                    if not _contains_literal_or_alias(target_blob, "0x0000008C", ["HAL_ALIGNED_CSDIS_VALUE", "RM46_PLL_CSDIS_SNAPSHOT"]):
+                        errors.append(
+                            f"{file_path.name}: Missing rm46_hal_aligned CSDIS snapshot/checkpoint (0x0000008C or alias)."
+                        )
+                    if not _contains_literal_or_alias(target_blob, "0x00000020", ["HAL_ALIGNED_CDDIS_VALUE", "RM46_PLL_CDDIS_SNAPSHOT"]):
+                        errors.append(
+                            f"{file_path.name}: Missing rm46_hal_aligned CDDIS snapshot/checkpoint (0x00000020 or alias)."
+                        )
+                    has_csvstat_poll = (
+                        "CSVSTAT" in target_blob
+                        or "wait_for_pll_lock(" in target_blob
+                        or "wait_for_pll1_lock(" in target_blob
+                        or "wait_for_pll2_lock(" in target_blob
+                    )
+                    if not has_csvstat_poll:
+                        errors.append(
+                            f"{file_path.name}: Missing rm46_hal_aligned PLL lock/CSVSTAT polling path."
+                        )
+
+                if _is_trm_dynamic_profile(pll_init_profile) and not (
+                    isinstance(freq_decode_cfg, dict) and bool(freq_decode_cfg)
+                ):
+                    errors.extend(
+                        _validate_trm_dynamic_pll_behavior(
+                            file_path.name,
+                            pll_init_body,
+                            pll_getfreq_body,
+                            require_enable_disable_sequence=True,
+                        )
+                    )
+
+                if isinstance(freq_decode_cfg, dict) and freq_decode_cfg:
+                    required_behavior = freq_decode_cfg.get("required_behavior", {})
+                    if not isinstance(required_behavior, dict):
+                        required_behavior = {}
+
+                    require_trm_field_decoding = _is_trm_dynamic_profile(pll_init_profile)
+                    require_trm_enable_disable = _is_trm_dynamic_profile(pll_init_profile)
+
+                    if require_trm_field_decoding or require_trm_enable_disable:
+                        errors.extend(
+                            _validate_trm_dynamic_pll_behavior(
+                                file_path.name,
+                                pll_init_body,
+                                pll_getfreq_body,
+                                require_enable_disable_sequence=require_trm_enable_disable,
+                            )
+                        )
+
+                    allow_hal_encoded = bool(freq_decode_cfg.get("allow_hal_encoded_pllmul", False))
+                    if allow_hal_encoded and "supports_hal_encoded_pllmul_literal" not in required_behavior:
+                        required_behavior["supports_hal_encoded_pllmul_literal"] = True
+
+                    if bool(required_behavior.get("supports_hal_encoded_pllmul_literal", False)):
+                        if not _has_hal_decode_guard(content):
+                            errors.append(
+                                f"{file_path.name}: Missing HAL-encoded PLLMUL literal/decode guard required by bring-up contract."
+                            )
+
+                    if bool(required_behavior.get("uses_hal_literal_hclk_override", False)):
+                        hal_hclk = _parse_contract_int(freq_decode_cfg.get("hal_literal_hclk_hz"))
+                        if hal_hclk is None:
+                            errors.append(
+                                f"{file_path.name}: bring-up contract requires HAL literal HCLK override, but hal_literal_hclk_hz is missing/invalid."
+                            )
+                        else:
+                            hal_hclk_hex = f"0x{hal_hclk:X}"
+                            has_hclk_literal = (
+                                str(hal_hclk) in content
+                                or hal_hclk_hex.lower() in content.lower()
+                            )
+                            if not has_hclk_literal:
+                                errors.append(
+                                    f"{file_path.name}: Missing HAL literal HCLK override value {hal_hclk} required by bring-up contract."
+                                )
+
+                    if bool(required_behavior.get("uses_uint64_intermediate_math", False)):
+                        has_uint64 = (
+                            "uint64_t" in content
+                            or re.search(r"\(\s*uint64_t\s*\)", content) is not None
+                        )
+                        if not has_uint64:
+                            errors.append(
+                                f"{file_path.name}: Missing uint64_t intermediate math in PLL frequency path required by bring-up contract."
+                            )
+
+                    if bool(required_behavior.get("derives_active_source_from_ghvsrc", False)):
+                        if not _function_or_called_helper_mentions_token(content, "PLL_GetFrequency", "GHVSRC"):
+                            errors.append(
+                                f"{file_path.name}: Missing GHVSRC-driven active-source derivation in PLL_GetFrequency() required by bring-up contract."
+                            )
+
+                    # Keep required token checks as secondary hints (warning-level).
+                    required_decode_tokens = freq_decode_cfg.get("required_tokens", [])
+                    if isinstance(required_decode_tokens, list):
+                        missing = [
+                            token
+                            for token in required_decode_tokens
+                            if isinstance(token, str) and token and token not in content
+                        ]
+                        if missing:
+                            warnings.append(
+                                f"{file_path.name}: Missing optional PLL frequency-decode tokens: "
+                                + ", ".join(missing)
+                            )
             except Exception:
                 pass
 
@@ -362,11 +817,31 @@ def validate_driver_implementation(
                         re.search(rf'1U?\s*<<\s*{bit}U?', content) is not None
                         for bit in expected_bits
                     )
-                    if not has_hex_mode and not has_bit_mode:
+                    has_macro_mode = False
+                    for assign in re.finditer(r'SCIPIO0\s*[\|\&]?=\s*([^;]+);', content):
+                        rhs = assign.group(1)
+                        macro_tokens = re.findall(r'\b[A-Za-z_]\w*SCIPIO0\w*\b', rhs)
+                        if macro_tokens and any(op in rhs for op in ('|', '&', '~', '<<')):
+                            has_macro_mode = True
+                            break
+                    if not has_hex_mode and not has_bit_mode and not has_macro_mode:
                         errors.append(
                             f"{file_path.name}: LIN_Init() does not configure SCIPIO0 for SCI TX/RX "
                             f"(expected 0x{expected_scipio0:08X})."
                         )
+
+                # Hard guard: when LIN is configured in SCI mode, SCIPIO0 TX/RX functional bits
+                # must not be gated on optional pin_config booleans.
+                scipio0_conditional = re.search(
+                    r"SCIPIO0\s*=\s*[^;]*(tx_functional_mode|rx_functional_mode|tx_func_mode|rx_func_mode)[^;]*;",
+                    content,
+                    re.IGNORECASE,
+                ) is not None
+                if scipio0_conditional:
+                    errors.append(
+                        f"{file_path.name}: LIN SCI mode must force SCIPIO0 TX/RX functional bits unconditionally; "
+                        "do not gate SCIPIO0 on pin_config functional-mode booleans."
+                    )
 
                 lin_rx_def = re.search(r'LIN_ReceiveByte\s*\(([^)]*)\)\s*\{', content)
                 lin_rx_arity = _count_params(lin_rx_def.group(1)) if lin_rx_def else -1
@@ -394,6 +869,20 @@ def validate_driver_implementation(
                     errors.append(
                         f"{file_path.name}: LIN_ReceiveByte() references timeout_ms but signature has no timeout parameter."
                     )
+
+                # TX loop must not fail because RX is empty; this truncates startup banners to first byte.
+                lin_tx_body = _extract_function_body(content, "LIN_Transmit")
+                if lin_tx_body:
+                    bad_status_gate = (
+                        "LIN_GetStatus(" in lin_tx_body
+                        and "LIN_STATUS_TX_EMPTY" in lin_tx_body
+                        and "LIN_STATUS_RX_EMPTY" not in lin_tx_body
+                    )
+                    if bad_status_gate:
+                        errors.append(
+                            f"{file_path.name}: LIN_Transmit() treats RX-empty state as TX failure. "
+                            "Allow RX_EMPTY in transmit loop or check only TX-relevant error flags."
+                        )
             except Exception:
                 pass
 
@@ -403,6 +892,13 @@ def validate_driver_implementation(
         serial_cfg = bringup_contract.get("serial", {})
         required_pins = serial_cfg.get("required_pins", []) if isinstance(serial_cfg, dict) else []
         unlock_seq = iomm_cfg.get("unlock_sequence", []) if isinstance(iomm_cfg, dict) else []
+        require_unlock_for_pin_config = True
+        require_lock_after_pin_config = True
+        configurepin_self_managed_locking = True
+        if isinstance(iomm_cfg, dict):
+            require_unlock_for_pin_config = bool(iomm_cfg.get("require_unlock_for_pin_config", True))
+            require_lock_after_pin_config = bool(iomm_cfg.get("require_lock_after_pin_config", True))
+            configurepin_self_managed_locking = bool(iomm_cfg.get("configurepin_self_managed_locking", True))
         for file_path in driver_c_files:
             try:
                 content = file_path.read_text(encoding='utf-8', errors='ignore')
@@ -439,26 +935,105 @@ def validate_driver_implementation(
                             warnings.append(
                                 f"{file_path.name}: Register token '{reg_name}' not present; ensure mapping uses equivalent resolved index."
                             )
+
+                # Enforce one-hot AF encoding in IOMM_ConfigurePin path.
+                has_one_hot_encode = (
+                    re.search(r"\b[A-Za-z_][A-Za-z0-9_]*\s*=\s*\(\s*1U\s*<<\s*\(uint32_t\)\s*[^)]+\)\s*;", content) is not None
+                    or re.search(r"\(\s*1U\s*<<\s*\(uint32_t\)\s*[^)]+\)\s*&\s*0xFFU", content) is not None
+                    or re.search(r"1U\s*<<\s*\(uint32_t\)\s*configs\s*\[[^\]]+\]\s*\.\s*function", content) is not None
+                )
+                if not has_one_hot_encode:
+                    errors.append(
+                        f"{file_path.name}: IOMM_ConfigurePin() must use one-hot AF encoding "
+                        "(e.g., function_value = (1U << (uint32_t)function))."
+                    )
+
+                if configurepin_self_managed_locking:
+                    configurepin_body = _extract_function_body(content, "IOMM_ConfigurePin")
+                    if configurepin_body is None:
+                        errors.append(
+                            f"{file_path.name}: Missing IOMM_ConfigurePin() implementation required for bring-up locking checks."
+                        )
+                    else:
+                        if require_unlock_for_pin_config:
+                            unlock_idx = configurepin_body.find("IOMM_Unlock(")
+                            if unlock_idx < 0:
+                                errors.append(
+                                    f"{file_path.name}: IOMM_ConfigurePin() must call IOMM_Unlock() before pin-mux writes."
+                                )
+                            else:
+                                first_pin_write_idx = len(configurepin_body)
+                                for token in ("reg_value = *pinmmr_reg", "*pinmmr_reg =", "IOMM_PINMMR("):
+                                    idx = configurepin_body.find(token)
+                                    if idx >= 0 and idx < first_pin_write_idx:
+                                        first_pin_write_idx = idx
+                                if first_pin_write_idx != len(configurepin_body) and unlock_idx > first_pin_write_idx:
+                                    errors.append(
+                                        f"{file_path.name}: IOMM_Unlock() must occur before first PINMMR access in IOMM_ConfigurePin()."
+                                    )
+
+                        if require_lock_after_pin_config:
+                            if "IOMM_Lock();" not in configurepin_body:
+                                errors.append(
+                                    f"{file_path.name}: IOMM_ConfigurePin() must call IOMM_Lock() before returning."
+                                )
+                            elif not _all_returns_guarded_by_lock(configurepin_body):
+                                errors.append(
+                                    f"{file_path.name}: Every return path in IOMM_ConfigurePin() must be guarded by IOMM_Lock()."
+                                )
+
+                # Validate required pin mapping table entries against bring-up contract.
+                # Accept either exact required bit (direct-bit mapping) or 8-bit field base
+                # when one-hot encoding is used.
+                pin_map_entries = {}
+                for match in re.finditer(
+                    r"\{\s*\.package_pin\s*=\s*(\d+)\s*,\s*\.pinmmr_reg\s*=\s*(\d+)\s*,\s*\.bit_position\s*=\s*(\d+)\s*\}",
+                    content,
+                ):
+                    pin_map_entries[int(match.group(1))] = (int(match.group(2)), int(match.group(3)))
+
+                if not pin_map_entries:
+                    warnings.append(
+                        f"{file_path.name}: Could not parse designated pin mapping entries; "
+                        "required-pin mapping checks were reduced to token-level validation."
+                    )
+                    continue
+
+                for pin_entry in required_pins:
+                    if not isinstance(pin_entry, dict):
+                        continue
+                    pin_num = pin_entry.get("pin")
+                    reg_name = pin_entry.get("register")
+                    req_bit = pin_entry.get("bit")
+                    if not isinstance(pin_num, int):
+                        continue
+                    if pin_num not in pin_map_entries:
+                        errors.append(
+                            f"{file_path.name}: Missing required pin mapping table entry for package pin {pin_num}."
+                        )
+                        continue
+
+                    map_reg_idx, map_bit = pin_map_entries[pin_num]
+                    reg_match = re.match(r"PINMMR(\d+)$", str(reg_name or "").strip(), re.IGNORECASE)
+                    if reg_match:
+                        req_reg_idx = int(reg_match.group(1))
+                        if map_reg_idx != req_reg_idx:
+                            errors.append(
+                                f"{file_path.name}: Pin {pin_num} mapped to PINMMR{map_reg_idx}, "
+                                f"expected PINMMR{req_reg_idx}."
+                            )
+
+                    if isinstance(req_bit, int):
+                        field_base = req_bit - (req_bit % 8)
+                        if map_bit not in (req_bit, field_base):
+                            errors.append(
+                                f"{file_path.name}: Pin {pin_num} bit_position {map_bit} does not match required "
+                                f"bit {req_bit} (or field base {field_base} for one-hot encoding)."
+                            )
             except Exception:
                 pass
 
-    # Check 13: PLL required sequence token presence from bring-up contract
-    if module_name.upper() == "PLL" and isinstance(bringup_contract, dict):
-        pll_cfg = bringup_contract.get("pll", {})
-        required_sequence = pll_cfg.get("required_sequence", []) if isinstance(pll_cfg, dict) else []
-        if required_sequence:
-            for file_path in driver_c_files:
-                try:
-                    content = file_path.read_text(encoding='utf-8', errors='ignore')
-                    for token in required_sequence:
-                        if not isinstance(token, str) or not token.strip():
-                            continue
-                        if token not in content:
-                            errors.append(
-                                f"{file_path.name}: Missing required PLL sequence token '{token}' from bring-up contract."
-                            )
-                except Exception:
-                    pass
+    # Check 13: Reserved for additional module checks.
 
     is_valid = len(errors) == 0 and not has_todos
 

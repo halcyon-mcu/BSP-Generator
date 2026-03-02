@@ -1,0 +1,75 @@
+status,file,function,symbol,reg,address,operation,working_count,output_20260301_232357_count,example_working,example_output_20260301_232357
+OnlyInWorking,main.c,main,(volatile*),*,0xFFFFFF48,read,1,0,g_dbg_ghvsrc = (*((volatile uint32_t *)0xFFFFFF48U)) & 0xFU;,
+OnlyInTarget,pll_driver.c,<global>,SYSREG,CSVSTAT,0xFFFFFF54,read,0,1,,while ((timeout > 0U) && ((SYSREG->CSVSTAT & csvstat_mask) == 0U))
+OnlyInWorking,pll_driver.c,PLL_CalculateHCLKFrequency,SYSREG,PLLCTL1,0xFFFFFF70,read,1,0,pllctl1 = SYSREG->PLLCTL1;,
+OnlyInWorking,pll_driver.c,PLL_CalculateHCLKFrequency,SYSREG,PLLCTL2,0xFFFFFF74,read,1,0,pllctl2 = SYSREG->PLLCTL2;,
+OnlyInWorking,pll_driver.c,PLL_ClearClockStatus,SYSREG,CSVSTAT,0xFFFFFF54,write,1,0,SYSREG->CSVSTAT = 0x00000000U;,
+OnlyInTarget,pll_driver.c,PLL_ClearSlipStatus,SYSREG,GLBSTAT,0xFFFFFFEC,write,0,1,,SYSREG->GLBSTAT = 0x00000301u;
+OnlyInWorking,pll_driver.c,PLL_ConfigureClock,SYSREG,CLKCNTL,0xFFFFFFD0,read,2,0,reg_value = SYSREG->CLKCNTL;,
+OnlyInWorking,pll_driver.c,PLL_ConfigureClock,SYSREG,CLKCNTL,0xFFFFFFD0,write,2,0,SYSREG->CLKCNTL = reg_value;,
+OnlyInWorking,pll_driver.c,PLL_ConfigureClock,SYSREG2,CLK2CNTRL,0xFFFFE13C,read,2,0,reg_value = SYSREG2->CLK2CNTRL;,
+OnlyInWorking,pll_driver.c,PLL_ConfigureClock,SYSREG2,CLK2CNTRL,0xFFFFE13C,write,2,0,SYSREG2->CLK2CNTRL = reg_value;,
+OnlyInWorking,pll_driver.c,PLL_ConfigureClock,SYSREG2,VCLKACON1,0xFFFFE140,read,2,0,reg_value = SYSREG2->VCLKACON1;,
+OnlyInWorking,pll_driver.c,PLL_ConfigureClock,SYSREG2,VCLKACON1,0xFFFFE140,write,2,0,SYSREG2->VCLKACON1 = reg_value;,
+OnlyInTarget,pll_driver.c,PLL_ConfigurePLL,SYSREG,CSDISCLR,0xFFFFFF38,write,0,1,,SYSREG->CSDISCLR = SYSTEM_CSDISCLR_CLRCLKSR1OFF;
+OnlyInTarget,pll_driver.c,PLL_ConfigurePLL,SYSREG,CSDISSET,0xFFFFFF34,write,0,1,,SYSREG->CSDISSET = SYSTEM_CSDISSET_SETCLKSR1OFF;
+OnlyInWorking,pll_driver.c,PLL_ConfigurePLL,SYSREG2,PLLCTL3,0xFFFFE100,write,1,0,SYSREG2->PLLCTL3 = pllctl3_value;,
+CountMismatch,pll_driver.c,PLL_DisableClock,SYSREG,CSDISSET,0xFFFFFF34,write,5,4,SYSREG->CSDISSET = SYSTEM_CSDISSET_SETCLKSR0OFF;,SYSREG->CSDISSET = SYSTEM_CSDISSET_SETCLKSR1OFF;
+OnlyInTarget,pll_driver.c,PLL_DisableClockMonitor,SYSREG,CLKTEST,0xFFFFFF8C,rmw,0,1,,SYSREG->CLKTEST &= ~(SYSTEM_CLKTEST_RANGEDETENASSEL | SYSTEM_CLKTEST_RANGEDETCTRL);
+OnlyInWorking,pll_driver.c,PLL_DisableClockMonitor,SYSREG,LPOMONCTL,0xFFFFFF88,write,1,0,SYSREG->LPOMONCTL = 0x00000000U;,
+CountMismatch,pll_driver.c,PLL_DisablePLL,SYSREG,CSDISSET,0xFFFFFF34,write,2,1,SYSREG->CSDISSET = SYSTEM_CSDISSET_SETCLKSR1OFF;,SYSREG->CSDISSET = SYSTEM_CSDISSET_SETCLKSR1OFF;
+OnlyInTarget,pll_driver.c,PLL_EnableClockMonitor,SYSREG,CLKTEST,0xFFFFFF8C,rmw,0,1,,SYSREG->CLKTEST |= SYSTEM_CLKTEST_RANGEDETENASSEL | SYSTEM_CLKTEST_RANGEDETCTRL;
+OnlyInWorking,pll_driver.c,PLL_EnableClockMonitor,SYSREG,LPOMONCTL,0xFFFFFF88,write,1,0,SYSREG->LPOMONCTL = SYSTEM_LPOMONCTL_BIAS_ENABLE | SYSTEM_LPOMONCTL_OSCFRQCONFIGCNT;,
+CountMismatch,pll_driver.c,PLL_EnablePLL,SYSREG,CSDISCLR,0xFFFFFF38,write,2,1,SYSREG->CSDISCLR = SYSTEM_CSDISCLR_CLRCLKSR1OFF;,SYSREG->CSDISCLR = SYSTEM_CSDISCLR_CLRCLKSR1OFF;
+OnlyInWorking,pll_driver.c,PLL_EnablePLL,SYSREG,CSVSTAT,0xFFFFFF54,read,2,0,csvstat = SYSREG->CSVSTAT;,
+OnlyInTarget,pll_driver.c,PLL_GetClockSource,SYSREG,RCLKSRC,0xFFFFFF50,read,0,1,,source_id = (SYSREG->RCLKSRC & SYSTEM_RCLKSRC_RTI1SRC_MASK) >> SYSTEM_RCLKSRC_RTI1SRC_SHIFT;
+OnlyInTarget,pll_driver.c,PLL_GetClockSource,SYSREG,VCLKASRC,0xFFFFFF4C,read,0,1,,source_id = (SYSREG->VCLKASRC & SYSTEM_VCLKASRC_VCLKA1S_MASK) >> SYSTEM_VCLKASRC_VCLKA1S_SHIFT;
+OnlyInTarget,pll_driver.c,PLL_GetDivider,SYSREG,CLKCNTL,0xFFFFFFD0,read,0,2,,return (uint8_t)((SYSREG->CLKCNTL & SYSTEM_CLKCNTL_VCLKR_MASK) >> SYSTEM_CLKCNTL_VCLKR_SHIFT);
+OnlyInTarget,pll_driver.c,PLL_GetDivider,SYSREG2,CLK2CNTRL,0xFFFFE13C,read,0,2,,return (uint8_t)((SYSREG2->CLK2CNTRL & SYSTEM2_CLK2CNTRL_VCLK3R_MASK) >> SYSTEM2_CLK2CNTRL_VCLK3R_SHIFT);
+CountMismatch,pll_driver.c,PLL_GetFrequency,SYSREG,CLKCNTL,0xFFFFFFD0,read,3,4,vclkr = (SYSREG->CLKCNTL & SYSTEM_CLKCNTL_VCLKR_MASK) >> SYSTEM_CLKCNTL_VCLKR_SHIFT;,vclkr = (SYSREG->CLKCNTL & SYSTEM_CLKCNTL_VCLKR_MASK) >> SYSTEM_CLKCNTL_VCLKR_SHIFT;
+OnlyInWorking,pll_driver.c,PLL_GetFrequency,SYSREG,GHVSRC,0xFFFFFF48,read,1,0,ghvsrc_sel = (SYSREG->GHVSRC & SYSTEM_GHVSRC_GHVSRC_MASK) >> SYSTEM_GHVSRC_GHVSRC_SHIFT;,
+OnlyInWorking,pll_driver.c,PLL_GetPLLFrequency,SYSREG2,PLLCTL3,0xFFFFE100,read,1,0,pllctl3 = SYSREG2->PLLCTL3;,
+OnlyInTarget,pll_driver.c,PLL_GetPLLStatus,SYSREG,CSVSTAT,0xFFFFFF54,read,0,1,,csvstat = SYSREG->CSVSTAT;
+OnlyInTarget,pll_driver.c,PLL_GetPLLStatus,SYSREG,GLBSTAT,0xFFFFFFEC,read,0,1,,glbstat = SYSREG->GLBSTAT;
+OnlyInTarget,pll_driver.c,PLL_Init,SYSREG,CDDISCLR,0xFFFFFF44,write,0,1,,SYSREG->CDDISCLR = SYSTEM_CDDISCLR_CLRGCLKOFF |
+CountMismatch,pll_driver.c,PLL_Init,SYSREG,CLKCNTL,0xFFFFFFD0,write,4,2,SYSREG->CLKCNTL = (SYSREG->CLKCNTL & 0xF0FFFFFFU) | (1U << 24U);,SYSREG->CLKCNTL = (SYSREG->CLKCNTL & 0xF0F0FFFFu) | (1u << 24u) | (1u << 16u);
+OnlyInWorking,pll_driver.c,PLL_Init,SYSREG,CSDIS,0xFFFFFF30,read,4,0,g_pll_wait1_last_csdis = SYSREG->CSDIS;,
+OnlyInWorking,pll_driver.c,PLL_Init,SYSREG,CSDIS,0xFFFFFF30,rmw,1,0,SYSREG->CSDIS |= csdis_target;,
+OnlyInTarget,pll_driver.c,PLL_Init,SYSREG,CSDISCLR,0xFFFFFF38,write,0,2,,SYSREG->CSDISCLR = SYSTEM_CSDISCLR_CLRCLKSR1OFF;
+OnlyInWorking,pll_driver.c,PLL_Init,SYSREG,CSVSTAT,0xFFFFFF54,read,3,0,sys_csvstat = SYSREG->CSVSTAT;,
+CountMismatch,pll_driver.c,PLL_Init,SYSREG,GHVSRC,0xFFFFFF48,write,1,2,SYSREG->GHVSRC = (0U << 24U) | (0U << 16U) | (1U << 0U);,SYSREG->GHVSRC = (SYSREG->GHVSRC & ~SYSTEM_GHVSRC_GHVSRC_MASK) |
+CountMismatch,pll_driver.c,PLL_Init,SYSREG,PLLCTL1,0xFFFFFF70,write,3,1,SYSREG->PLLCTL1 = 0x20000000U | (0x1FU << 24U) | ((6U - 1U) << 16U) | 0xA400U;,SYSREG->PLLCTL1 = PLL1_PLLCTL1_HAL_VALUE;
+OnlyInWorking,pll_driver.c,PLL_Init,SYSREG,PLLCTL2,0xFFFFFF74,rmw,1,0,SYSREG->PLLCTL2 |= 0x00000000U;,
+CountMismatch,pll_driver.c,PLL_Init,SYSREG,RCLKSRC,0xFFFFFF50,write,1,2,SYSREG->RCLKSRC = (1U << 24U) | (RM46_SYS_VCLK_SOURCE << 16U) |,SYSREG->RCLKSRC = (SYSREG->RCLKSRC & ~SYSTEM_RCLKSRC_RTI1SRC_MASK) |
+CountMismatch,pll_driver.c,PLL_Init,SYSREG,VCLKASRC,0xFFFFFF4C,write,1,2,SYSREG->VCLKASRC = (RM46_SYS_VCLK_SOURCE << 8U) | (RM46_SYS_VCLK_SOURCE << 0U);,SYSREG->VCLKASRC = (SYSREG->VCLKASRC & ~SYSTEM_VCLKASRC_VCLKA1S_MASK) |
+CountMismatch,pll_driver.c,PLL_Init,SYSREG2,CLK2CNTRL,0xFFFFE13C,write,2,1,SYSREG2->CLK2CNTRL = (SYSREG2->CLK2CNTRL & 0xFFFFF0F0U) | (1U << 8U) | (1U << 0U);,SYSREG2->CLK2CNTRL = (1u << SYSTEM2_CLK2CNTRL_VCLK4R_SHIFT) |
+CountMismatch,pll_driver.c,PLL_Init,SYSREG2,PLLCTL3,0xFFFFE100,write,3,1,SYSREG2->PLLCTL3 = ((2U - 1U) << 29U) | (0x1FU << 24U) | ((6U - 1U) << 16U) | 0xA400U;,SYSREG2->PLLCTL3 = PLL2_PLLCTL3_HAL_VALUE;
+OnlyInWorking,pll_driver.c,PLL_IsPLLLocked,SYSREG,CSVSTAT,0xFFFFFF54,read,1,0,csvstat = SYSREG->CSVSTAT;,
+OnlyInTarget,pll_driver.c,PLL_SetClockSource,SYSREG,GHVSRC,0xFFFFFF48,read,0,1,,reg_value = SYSREG->GHVSRC;
+OnlyInTarget,pll_driver.c,PLL_SetClockSource,SYSREG,GHVSRC,0xFFFFFF48,write,0,1,,SYSREG->GHVSRC = reg_value;
+OnlyInTarget,pll_driver.c,PLL_SetClockSource,SYSREG,RCLKSRC,0xFFFFFF50,read,0,1,,reg_value = SYSREG->RCLKSRC;
+OnlyInTarget,pll_driver.c,PLL_SetClockSource,SYSREG,RCLKSRC,0xFFFFFF50,write,0,1,,SYSREG->RCLKSRC = reg_value;
+OnlyInTarget,pll_driver.c,PLL_SetClockSource,SYSREG,VCLKASRC,0xFFFFFF4C,read,0,1,,reg_value = SYSREG->VCLKASRC;
+OnlyInTarget,pll_driver.c,PLL_SetClockSource,SYSREG,VCLKASRC,0xFFFFFF4C,write,0,1,,SYSREG->VCLKASRC = reg_value;
+OnlyInTarget,pll_driver.c,PLL_SetDivider,SYSREG,CLKCNTL,0xFFFFFFD0,read,0,2,,reg_value = SYSREG->CLKCNTL;
+OnlyInTarget,pll_driver.c,PLL_SetDivider,SYSREG,CLKCNTL,0xFFFFFFD0,write,0,2,,SYSREG->CLKCNTL = reg_value;
+OnlyInTarget,pll_driver.c,PLL_SetDivider,SYSREG2,CLK2CNTRL,0xFFFFE13C,read,0,2,,reg_value = SYSREG2->CLK2CNTRL;
+OnlyInTarget,pll_driver.c,PLL_SetDivider,SYSREG2,CLK2CNTRL,0xFFFFE13C,write,0,2,,SYSREG2->CLK2CNTRL = reg_value;
+OnlyInTarget,pll_driver.c,calculate_hclk_from_pll1,SYSREG,PLLCTL1,0xFFFFFF70,read,0,1,,pllctl1 = SYSREG->PLLCTL1;
+OnlyInTarget,pll_driver.c,calculate_hclk_from_pll1,SYSREG,PLLCTL2,0xFFFFFF74,read,0,1,,pllctl2 = SYSREG->PLLCTL2;
+OnlyInTarget,pll_driver.c,get_active_ghvsrc_source,SYSREG,GHVSRC,0xFFFFFF48,read,0,1,,ghvsrc_value = SYSREG->GHVSRC;
+OnlyInTarget,pll_driver.c,if,SYSREG,CSDISCLR,0xFFFFFF38,write,0,2,,SYSREG->CSDISCLR = SYSTEM_CSDISCLR_CLRCLKSR6OFF;
+OnlyInTarget,pll_driver.c,if,SYSREG,CSDISSET,0xFFFFFF34,write,0,2,,SYSREG->CSDISSET = SYSTEM_CSDISSET_SETCLKSR6OFF;
+OnlyInTarget,pll_driver.c,if,SYSREG2,PLLCTL3,0xFFFFE100,write,0,1,,SYSREG2->PLLCTL3 = pllctl1_value;
+OnlyInTarget,pll_driver.c,wait_for_pll1_lock,SYSREG,CSVSTAT,0xFFFFFF54,read,0,1,,while ((timeout > 0U) && ((SYSREG->CSVSTAT & SYSTEM_CSVSTAT_CLKSR1V) == 0U))
+OnlyInTarget,pll_driver.c,wait_for_pll2_lock,SYSREG,CSVSTAT,0xFFFFFF54,read,0,1,,while ((timeout > 0U) && ((SYSREG->CSVSTAT & SYSTEM_CSVSTAT_CLKSR6V) == 0U))
+OnlyInWorking,system.c,system_init,SYS,CLKCNTL,0xFFFFFFD0,write,1,0,SYS->CLKCNTL = 0x00010000u;,
+OnlyInWorking,system.c,system_init,SYS,CSVSTAT,0xFFFFFF54,write,1,0,SYS->CSVSTAT = 0x00000000u;,
+OnlyInTarget,system.c,system_setup_flash_waitstates,EEPROMCONFIG,*,0xFFF872B8,write,0,1,,*EEPROMCONFIG = 0x00030002u;
+OnlyInTarget,system.c,system_setup_flash_waitstates,FBFALLBACK,*,0xFFF87040,write,0,1,,*FBFALLBACK = 0x00000000u;
+OnlyInWorking,system.c,system_setup_flash_waitstates,FLASH_EEPROMCONFIG,*,0xFFF872B8,write,1,0,FLASH_EEPROMCONFIG = 0x00000002u | (3u << 16);,
+OnlyInWorking,system.c,system_setup_flash_waitstates,FLASH_FBFALLBACK,*,0xFFF87040,write,1,0,FLASH_FBFALLBACK = 0x00000000u;,
+OnlyInWorking,system.c,system_setup_flash_waitstates,FLASH_FRDCNTL,*,0xFFF87000,write,1,0,FLASH_FRDCNTL = (3u << 8) | (1u << 4) | 1u;,
+OnlyInWorking,system.c,system_setup_flash_waitstates,FLASH_FSMWRENA,*,0xFFF87288,write,2,0,FLASH_FSMWRENA = 0x5u;,
+OnlyInTarget,system.c,system_setup_flash_waitstates,FRDCNTL,*,0xFFF87000,write,0,1,,*FRDCNTL = 0x00000311u;
+OnlyInTarget,system.c,system_setup_flash_waitstates,FSMWRENA,*,0xFFF87288,write,0,2,,*FSMWRENA = 0x00000005u;

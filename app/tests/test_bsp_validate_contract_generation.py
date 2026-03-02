@@ -157,8 +157,9 @@ def test_bsp_validate_generation_uses_contract_fields_and_calls(tmp_path: Path):
     assert "lin_cfg.data_length" not in bsp_validate
     assert "lin_cfg.enable_rx" not in bsp_validate
     assert "LIN_SendData(" not in bsp_validate
-    assert "LIN_Transmit(" in bsp_validate
+    assert "LIN_Transmit(" not in bsp_validate
     assert "LIN_TransmitByte(" in bsp_validate
+    assert "bsp_validate_lin_send_byte_retry(" in bsp_validate
     assert "LIN_ReceiveByte(&rx_byte, 0U)" in bsp_validate
     assert "IOMM_PIN_FUNCTION_1" in bsp_validate
     assert "sci_cfg.enable_tx = true;" in bsp_validate
@@ -301,4 +302,5 @@ def test_bsp_validate_generation_uses_byte_loop_when_lin_tx_buffer_missing(tmp_p
     bsp_validate = (tmp_path / "bsp_validate.c").read_text(encoding="utf-8")
     assert "LIN_SendByte(lin_banner, " not in bsp_validate
     assert "while (lin_banner_idx < (uint32_t)(sizeof(lin_banner) - 1U))" in bsp_validate
-    assert "LIN_SendByte(lin_banner[lin_banner_idx]) == LIN_STATUS_OK" in bsp_validate
+    assert "bsp_validate_lin_send_byte_retry(lin_banner[lin_banner_idx])" in bsp_validate
+    assert "LIN_SendByte(value) == LIN_STATUS_OK" in bsp_validate

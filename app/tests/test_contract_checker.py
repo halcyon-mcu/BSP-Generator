@@ -90,6 +90,56 @@ def test_contract_checker_detects_bsp_validate_invalid_lin_fields(tmp_path: Path
     assert any("lin_cfg.data_length" in err for err in result["errors"])
 
 
+def test_contract_checker_requires_lin_pin_config_functional_mode_defaults(tmp_path: Path):
+    bsp_validate = _write(
+        tmp_path / "bsp_validate.c",
+        """
+        void test(void) {
+            lin_config_t lin_cfg = {0};
+            lin_cfg.mode = LIN_MODE_SCI;
+            lin_cfg.baud_rate = 9600U;
+            lin_cfg.data_bits = 8U;
+            lin_cfg.parity = LIN_PARITY_NONE;
+            lin_cfg.stop_bits = LIN_STOP_BITS_1;
+            g_validate_lin_status = (uint32_t)LIN_Init(&lin_cfg);
+        }
+        """,
+    )
+
+    contract = {
+        "modules": {
+            "LIN": {
+                "functions": {"LIN_Init": {"arity": 1}},
+                "types": {
+                    "lin_config_t": {
+                        "fields": [
+                            {"name": "mode"},
+                            {"name": "baud_rate"},
+                            {"name": "data_bits"},
+                            {"name": "parity"},
+                            {"name": "stop_bits"},
+                            {"name": "pin_config", "type": "lin_pin_config_t"},
+                        ]
+                    },
+                    "lin_pin_config_t": {
+                        "fields": [
+                            {"name": "tx_func_mode"},
+                            {"name": "rx_func_mode"},
+                        ]
+                    },
+                },
+                "compatibility_wrappers": [],
+            },
+            "SCI": {"functions": {}, "types": {}, "compatibility_wrappers": []},
+        }
+    }
+
+    result = check_bsp_validate_contract(bsp_validate, contract)
+    assert result["passed"] is False
+    assert any("tx_func_mode" in err for err in result["errors"])
+    assert any("rx_func_mode" in err for err in result["errors"])
+
+
 def test_contract_checker_detects_undeclared_timeout_usage(tmp_path: Path):
     header = _write(
         tmp_path / "lin_driver.h",

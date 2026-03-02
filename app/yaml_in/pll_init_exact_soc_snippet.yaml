@@ -1,0 +1,89 @@
+﻿# Paste this under peripherals[name=PLL].x-ext in app/yaml_in/soc.yaml
+# Order is mandatory.
+name: PLL
+x-ext:
+  init:
+    # 0xFFFFFF34
+    - reg: CSDISSET
+      op: set_bits
+      value: "0x00000042"
+
+    # 0xFFFFFFEC
+    - reg: GLBSTAT
+      op: write
+      value: "0x00000301"
+
+    # 0xFFFFFF70
+    - reg: PLLCTL1
+      op: write
+      value: "0x3F05A400"
+
+    # 0xFFFFFF74
+    - reg: PLLCTL2
+      op: write
+      value: "0x3FC0723D"
+
+    # 0xFFFFE100
+    - reg: PLLCTL3
+      op: write
+      value: "0x3F05A400"
+
+    # 0xFFFFFF30
+    - reg: CSDIS
+      op: write
+      value: "0x0000008C"
+
+    # 0xFFFFFF3C
+    - reg: CDDIS
+      op: write
+      value: "0x00000020"
+
+    # 0xFFFFFF48
+    - reg: GHVSRC
+      op: write
+      value: "0x00000001"
+
+    # 0xFFFFFF50
+    - reg: RCLKSRC
+      op: write
+      value: "0x01090109"
+
+    # 0xFFFFFF4C
+    - reg: VCLKASRC
+      op: write
+      value: "0x00000909"
+
+    # 0xFFFFFFD0 (VCLK2R field)
+    - reg: CLKCNTL
+      op: write
+      value: "(SYSREG->CLKCNTL & 0xF0FFFFFFU) | (1U << 24U)"
+
+    # 0xFFFFFFD0 (VCLKR field)
+    - reg: CLKCNTL
+      op: write
+      value: "(SYSREG->CLKCNTL & 0xFFF0FFFFU) | (1U << 16U)"
+
+    # 0xFFFFE13C
+    - reg: CLK2CNTRL
+      op: write
+      value: "(SYSREG2->CLK2CNTRL & 0xFFFFF0F0U) | (1U << 8U) | (1U << 0U)"
+
+    # 0xFFFFE140
+    - reg: VCLKACON1
+      op: write
+      value: "0x00020002"
+
+    # 0xFFFFFF70
+    - reg: PLLCTL1
+      op: clear_bits
+      value: "0x1F000000"
+
+    # 0xFFFFE100
+    - reg: PLLCTL3
+      op: clear_bits
+      value: "0x1F000000"
+
+    # 0xFFFFFFD0
+    - reg: CLKCNTL
+      op: set_bits
+      value: "0x00000100"

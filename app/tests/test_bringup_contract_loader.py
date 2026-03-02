@@ -11,6 +11,7 @@ def test_load_bringup_contract_valid(tmp_path: Path):
         """
 serial:
   primary_path: LIN_SCI_MODE
+  primary_tx_only: LIN
   baud_default: 9600
   required_pins:
     - pin: 38
@@ -34,6 +35,7 @@ startup:
 
     data = load_bringup_contract(contract)
     assert data["serial"]["primary_path"] == "LIN_SCI_MODE"
+    assert data["serial"]["primary_tx_only"] == "LIN"
     assert data["lin"]["required_registers"]["SCIPIO0"]["required_value"] == "0x00000006"
 
 

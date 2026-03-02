@@ -5,7 +5,7 @@ These models validate the structure and types of YAML configuration files
 used by the BSP Generator.
 """
 
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 import re
 
@@ -346,6 +346,7 @@ class BringupSerialContract(BaseModel):
     model_config = ConfigDict(extra='allow')
 
     primary_path: str
+    primary_tx_only: Optional[Literal["LIN", "SCI", "BOTH"]] = None
     baud_default: int = Field(..., gt=0)
     required_pins: List[BringupRequiredPin] = Field(default_factory=list)
 
@@ -376,13 +377,53 @@ class BringupIommContract(BaseModel):
     model_config = ConfigDict(extra='allow')
 
     unlock_sequence: List[str] = Field(default_factory=list)
+    require_unlock_for_pin_config: bool = True
+    require_lock_after_pin_config: bool = True
+    configurepin_self_managed_locking: bool = True
 
 
 class BringupPllContract(BaseModel):
     """PLL bring-up constraints."""
     model_config = ConfigDict(extra='allow')
 
+    init_profile: Optional[str] = None
     required_sequence: List[str] = Field(default_factory=list)
+
+    class FrequencyDecodeRule(BaseModel):
+        model_config = ConfigDict(extra='allow')
+
+        class RequiredBehaviorRule(BaseModel):
+            model_config = ConfigDict(extra='allow')
+
+            supports_hal_encoded_pllmul_literal: bool = False
+            uses_hal_literal_hclk_override: bool = False
+            uses_uint64_intermediate_math: bool = False
+            derives_active_source_from_ghvsrc: bool = False
+            uses_trm_field_decoding: bool = False
+            uses_trm_enable_disable_sequence: bool = False
+
+        allow_hal_encoded_pllmul: bool = False
+        hal_literal_hclk_hz: Optional[int] = Field(default=None, gt=0)
+        required_behavior: Optional[RequiredBehaviorRule] = None
+        required_tokens: List[str] = Field(default_factory=list)
+
+    frequency_decode: Optional[FrequencyDecodeRule] = None
+
+
+class BringupFlashRegisterRule(BaseModel):
+    """Flash wait-state register constraints."""
+    model_config = ConfigDict(extra='allow')
+
+    address: str
+    required_value: Optional[str] = None
+    required_write_tokens: List[str] = Field(default_factory=list)
+
+
+class BringupFlashContract(BaseModel):
+    """Flash bring-up constraints."""
+    model_config = ConfigDict(extra='allow')
+
+    required_registers: Dict[str, BringupFlashRegisterRule] = Field(default_factory=dict)
 
 
 class BringupStartupContract(BaseModel):
@@ -400,7 +441,114 @@ class BringupContractYAML(BaseModel):
     lin: Optional[BringupLinContract] = None
     iomm: Optional[BringupIommContract] = None
     pll: Optional[BringupPllContract] = None
+    flash: Optional[BringupFlashContract] = None
     startup: Optional[BringupStartupContract] = None
+
+
+# ==============================================================================
+# GENERATION PROFILE YAML SCHEMA (Optional)
+# ==============================================================================
+
+class BspValidationFrameConfig(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    data_bits: int = Field(..., ge=5, le=9)
+    stop_bits: int = Field(..., ge=1, le=2)
+    parity: Literal["none", "even", "odd"]
+
+
+class BspValidationBannerConfig(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    sci: str
+    lin: str
+
+
+class BspValidationTimingConfig(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    heartbeat_ticks: int = Field(..., ge=1)
+    tx_period_ticks: int = Field(..., ge=1)
+    busy_delay: int = Field(..., ge=0)
+
+
+class BspValidationProfile(BaseModel):
+    model_config = ConfigDict(extra='allow')
+
+    enabled: Optional[bool] = None
+    baud: Optional[int] = Field(default=None, gt=0)
+    primary_serial_path: Optional[Literal["lin_only", "sci_only", "dual"]] = None
+    frame: Optional[BspValidationFrameConfig] = None
+    banners: Optional[BspValidationBannerConfig] = None
+    timing: Optional[BspValidationTimingConfig] = None
+
+
+class BuildGateProfile(BaseModel):
+    model_config = ConfigDict(extra='allow')
+
+    class LlmRewriteProfile(BaseModel):
+        model_config = ConfigDict(extra='allow')
+
+        enabled: Optional[bool] = None
+        scope: Optional[Literal["top_files"]] = None
+        top_k_files: Optional[int] = Field(default=None, ge=1)
+        apply_policy: Optional[Literal["hybrid", "diff_only", "full_file_only"]] = None
+        model: Optional[Literal["inherit", "haiku4.5", "sonnet4.5", "opus4.5", "opus4.6"]] = None
+        max_tokens: Optional[int] = Field(default=None, ge=256)
+        max_attempts: Optional[int] = Field(default=None, ge=0)
+        include_contract_context: Optional[bool] = None
+
+    enabled: Optional[bool] = None
+    mode: Optional[Literal["strict", "advisory", "off"]] = None
+    external_workspace_path: Optional[str] = None
+    project_name: Optional[str] = None
+    configuration: Optional[Literal["Debug", "Release"]] = None
+    max_fix_rounds: Optional[int] = Field(default=None, ge=0)
+    allow_targeted_llm_rewrite: Optional[bool] = None
+    fail_on_compile_error: Optional[bool] = None
+    clean_stale_project_files: Optional[bool] = None
+    clean_build: Optional[bool] = None
+    llm_rewrite: Optional[LlmRewriteProfile] = None
+
+
+class BringupModeProfile(BaseModel):
+    model_config = ConfigDict(extra='allow')
+
+    default: Optional[Literal["direct_init", "validation"]] = None
+
+
+class StartupContractProfile(BaseModel):
+    model_config = ConfigDict(extra='allow')
+
+    gate_mode: Optional[Literal["warn", "fail"]] = None
+
+
+class ParityGuardProfile(BaseModel):
+    model_config = ConfigDict(extra='allow')
+
+    mode: Optional[Literal["critical_only", "strict", "off"]] = None
+    baseline_path: Optional[str] = None
+    critical_registers: Optional[List[str]] = None
+
+
+class GenerationProfileYAML(BaseModel):
+    """Schema for generation_profile.yaml."""
+    model_config = ConfigDict(extra='allow')
+
+    target_board: Optional[str] = None
+    modules: Optional[Dict[str, Any]] = None
+    sci: Optional[Dict[str, Any]] = None
+    pins: Optional[Dict[str, Any]] = None
+    clocks: Optional[Dict[str, Any]] = None
+    strict_validation: Optional[bool] = None
+    contract_mode: Optional[Literal["auto_fix_then_fail", "hard_fail", "warn_only"]] = None
+    require_ccs_proof: Optional[bool] = None
+    bringup: Optional[Dict[str, Any]] = None
+    build_gate: Optional[BuildGateProfile] = None
+    bsp_validation: Optional[BspValidationProfile] = None
+    bringup_mode: Optional[BringupModeProfile] = None
+    startup_contract: Optional[StartupContractProfile] = None
+    parity_guard: Optional[ParityGuardProfile] = None
 
 
 # ==============================================================================

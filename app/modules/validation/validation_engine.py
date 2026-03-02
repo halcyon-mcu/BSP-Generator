@@ -24,6 +24,7 @@ from ..utils.facts_parser import (
     parse_facts_mirror,
     extract_constants_from_c_code,
     compare_values,
+    normalize_value,
     extract_preamble_from_response
 )
 from ..yaml.yaml_utils import get_regs_block, find_soc_peripheral, get_soc_peripherals
@@ -628,10 +629,13 @@ def _validate_code_against_yaml(
                 if compare_values(code_value, yaml_base):
                     result.matches.append((base_name, yaml_base, code_value))
                 else:
+                    normalized_code = normalize_value(code_value)
+                    normalized_expected = normalize_value(yaml_base)
                     result.mismatches.append((base_name, yaml_base, code_value))
                     result.errors.append(
                         f"Base address mismatch in {filename}: "
-                        f"{base_name}={code_value}, expected {yaml_base} from regs.yaml"
+                        f"{base_name}={code_value} (normalized={normalized_code}), "
+                        f"expected {yaml_base} (normalized={normalized_expected}) from regs.yaml"
                     )
                     result.is_valid = False
                 break
@@ -661,10 +665,13 @@ def _validate_code_against_yaml(
                 if compare_values(code_value, yaml_offset):
                     result.matches.append((offset_name, yaml_offset, code_value))
                 else:
+                    normalized_code = normalize_value(code_value)
+                    normalized_expected = normalize_value(yaml_offset)
                     result.mismatches.append((offset_name, yaml_offset, code_value))
                     result.errors.append(
                         f"Register {reg_name} offset mismatch in {filename}: "
-                        f"{offset_name}={code_value}, expected {yaml_offset} from regs.yaml"
+                        f"{offset_name}={code_value} (normalized={normalized_code}), "
+                        f"expected {yaml_offset} (normalized={normalized_expected}) from regs.yaml"
                     )
                     result.is_valid = False
                 break

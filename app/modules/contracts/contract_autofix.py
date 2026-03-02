@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..utils.file_io import normalize_generated_text
 
@@ -70,6 +70,154 @@ def _signature_def(sig: Dict[str, Any]) -> str:
     return _signature_decl(sig).rstrip(";")
 
 
+def _split_top_level_args(arg_blob: str) -> List[str]:
+    args: List[str] = []
+    cur: List[str] = []
+    depth_paren = 0
+    depth_bracket = 0
+    depth_brace = 0
+    in_string = False
+    in_char = False
+    escape = False
+
+    for ch in arg_blob:
+        if in_string or in_char:
+            cur.append(ch)
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if in_string and ch == '"':
+                in_string = False
+            elif in_char and ch == "'":
+                in_char = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            cur.append(ch)
+            continue
+        if ch == "'":
+            in_char = True
+            cur.append(ch)
+            continue
+
+        if ch == "(":
+            depth_paren += 1
+            cur.append(ch)
+            continue
+        if ch == ")":
+            depth_paren = max(0, depth_paren - 1)
+            cur.append(ch)
+            continue
+        if ch == "[":
+            depth_bracket += 1
+            cur.append(ch)
+            continue
+        if ch == "]":
+            depth_bracket = max(0, depth_bracket - 1)
+            cur.append(ch)
+            continue
+        if ch == "{":
+            depth_brace += 1
+            cur.append(ch)
+            continue
+        if ch == "}":
+            depth_brace = max(0, depth_brace - 1)
+            cur.append(ch)
+            continue
+
+        if ch == "," and depth_paren == 0 and depth_bracket == 0 and depth_brace == 0:
+            args.append("".join(cur).strip())
+            cur = []
+            continue
+        cur.append(ch)
+
+    tail = "".join(cur).strip()
+    if tail:
+        args.append(tail)
+    return args
+
+
+def _find_matching_paren(text: str, open_idx: int) -> int:
+    depth = 0
+    in_string = False
+    in_char = False
+    escape = False
+
+    for idx in range(open_idx, len(text)):
+        ch = text[idx]
+        if in_string or in_char:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if in_string and ch == '"':
+                in_string = False
+            elif in_char and ch == "'":
+                in_char = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "'":
+            in_char = True
+            continue
+
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return idx
+    return -1
+
+
+def _rewrite_function_calls(
+    text: str,
+    function_name: str,
+    arg_rewriter: Callable[[List[str]], List[str]],
+) -> Tuple[str, int]:
+    pattern = re.compile(rf"\b{re.escape(function_name)}\s*\(")
+    cursor = 0
+    parts: List[str] = []
+    replacements = 0
+
+    while True:
+        match = pattern.search(text, cursor)
+        if not match:
+            parts.append(text[cursor:])
+            break
+
+        open_idx = match.end() - 1
+        close_idx = _find_matching_paren(text, open_idx)
+        if close_idx < 0:
+            parts.append(text[cursor:])
+            break
+
+        arg_blob = text[open_idx + 1 : close_idx]
+        args = _split_top_level_args(arg_blob)
+        new_args = arg_rewriter(args)
+        normalized_old = ", ".join(args)
+        normalized_new = ", ".join(new_args)
+
+        parts.append(text[cursor : open_idx + 1])
+        if normalized_old != normalized_new:
+            parts.append(normalized_new)
+            replacements += 1
+        else:
+            parts.append(arg_blob)
+        parts.append(")")
+        cursor = close_idx + 1
+
+    return "".join(parts), replacements
+
+
 def autofix_module_contract(
     module_name: str,
     header_path: Path,
@@ -113,6 +261,15 @@ def autofix_module_contract(
         if n:
             actions.append("Converted IOMM single-pin function writes to one-hot encoding")
 
+        # Handle ordinal-style switch assignments (ALT1 -> 0x01, etc.).
+        updated, n = re.subn(
+            r"\bfunction_value\s*=\s*0x0?[0-7]U\s*;",
+            "function_value = (1U << (uint32_t)function);",
+            updated,
+        )
+        if n:
+            actions.append("Normalized ordinal IOMM function assignments to one-hot encoding")
+
         updated, n = re.subn(
             r"\(\(uint32_t\)pin_configs\[i\]\.function\s*&\s*IOMM_FUNCTION_BITS_MASK\)\s*<<\s*bit_shift",
             "((1U << (uint32_t)pin_configs[i].function) & IOMM_FUNCTION_BITS_MASK) << bit_shift",
@@ -133,6 +290,8 @@ def autofix_module_contract(
     tx_buffer_fn = _capability_fn(lin_contract, "tx_buffer", ["LIN_Transmit", "LIN_SendData", "LIN_Send"], "LIN_Transmit")
     tx_byte_fn = _capability_fn(lin_contract, "tx_byte", ["LIN_TransmitByte", "LIN_SendByte"], "LIN_TransmitByte")
     rx_fn = _capability_fn(lin_contract, "rx_byte", ["LIN_ReceiveByte"], "LIN_ReceiveByte")
+    tx_buffer_arity = int((functions.get(tx_buffer_fn, {}) or {}).get("arity", 2))
+    tx_byte_arity = int((functions.get(tx_byte_fn, {}) or {}).get("arity", 1))
 
     header_text = header_path.read_text(encoding="utf-8", errors="ignore")
     source_text = source_path.read_text(encoding="utf-8", errors="ignore")
@@ -207,27 +366,49 @@ def autofix_module_contract(
         return text.replace("#endif /* LIN_DRIVER_H */", "\n".join(wrapper) + "#endif /* LIN_DRIVER_H */")
 
     if tx_buffer_fn:
+        tx_buffer_call_args = ["data", "length"]
+        while len(tx_buffer_call_args) < tx_buffer_arity:
+            tx_buffer_call_args.append("100U" if len(tx_buffer_call_args) >= 2 else "0U")
+        tx_buffer_call_expr = ", ".join(tx_buffer_call_args[:tx_buffer_arity])
+        send_wrapper_pattern = re.compile(
+            r"static\s+inline\s+lin_status_t\s+LIN_Send\s*"
+            r"\(\s*const\s+uint8_t\*\s*data\s*,\s*uint32_t\s*length\s*\)\s*"
+            r"\{\s*return\s+[A-Za-z_]\w*\s*\([^;]*\);\s*\}",
+            re.MULTILINE | re.DOTALL,
+        )
+        send_wrapper_replacement = (
+            "static inline lin_status_t LIN_Send(const uint8_t* data, uint32_t length)\n"
+            "{\n"
+            f"    return {tx_buffer_fn}({tx_buffer_call_expr});\n"
+            "}"
+        )
+        new_header, n = send_wrapper_pattern.subn(send_wrapper_replacement, new_header)
+        if n:
+            actions.append("Normalized LIN_Send compatibility wrapper call arity in lin_driver.h")
         new_header = _append_wrapper(
             new_header,
             "LIN_SendData",
             tx_buffer_fn,
-            "data, length",
+            tx_buffer_call_expr,
             "const uint8_t* data, uint32_t length",
         )
         new_header = _append_wrapper(
             new_header,
             "LIN_Send",
             tx_buffer_fn,
-            "data, length",
+            tx_buffer_call_expr,
             "const uint8_t* data, uint32_t length",
         )
 
     if tx_byte_fn:
+        tx_byte_call_args = ["data"]
+        while len(tx_byte_call_args) < tx_byte_arity:
+            tx_byte_call_args.append("0U")
         new_header = _append_wrapper(
             new_header,
             "LIN_SendByte",
             tx_byte_fn,
-            "data",
+            ", ".join(tx_byte_call_args[:tx_byte_arity]),
             "uint8_t data",
         )
 
@@ -290,11 +471,21 @@ def autofix_bsp_validate(
     lin_tx_byte_arity = int((lin_functions.get(lin_tx_byte, {}) or {}).get("arity", 1))
     sci_contract = _module_contract(api_contract_manifest, "SCI")
     sci_types = sci_contract.get("types", {}) if isinstance(sci_contract, dict) else {}
+    sci_cfg_type = sci_types.get("sci_config_t", {}) if isinstance(sci_types.get("sci_config_t", {}), dict) else {}
+    sci_cfg_fields_meta = sci_cfg_type.get("fields", []) if isinstance(sci_cfg_type.get("fields", []), list) else []
     sci_cfg_fields = {
         f.get("name")
-        for f in (sci_types.get("sci_config_t", {}).get("fields", []) if isinstance(sci_types.get("sci_config_t", {}), dict) else [])
+        for f in sci_cfg_fields_meta
         if isinstance(f, dict) and f.get("name")
     }
+    sci_data_bits_type = next(
+        (
+            f.get("type")
+            for f in sci_cfg_fields_meta
+            if isinstance(f, dict) and f.get("name") == "data_bits"
+        ),
+        "",
+    )
 
     gio_cap = gio_contract.get("capabilities", {}) if isinstance(gio_contract, dict) else {}
     gio_cfg_arity = int(gio_cap.get("configure_pin_arity", 3))
@@ -319,50 +510,47 @@ def autofix_bsp_validate(
     if n:
         actions.append(f"Rewrote LIN_TransmitByte() callsites to {lin_tx_byte}()")
 
+    # Repair malformed cast fragments introduced by legacy comma-splitting arity fixes.
+    updated, n = re.subn(
+        r"\(\s*(u?int(?:8|16|32)_t)\s*,\s*(?:0U|100U)\s*\)\s*\(",
+        r"(\1)(",
+        updated,
+    )
+    if n:
+        actions.append("Repaired malformed cast fragments from legacy LIN arity normalization in bsp_validate.c")
+
     # Normalize receive API and timeout argument count
     updated, n = re.subn(r"\bLIN_ReceiveByte\s*\(", f"{lin_rx}(", updated)
     if n:
         actions.append(f"Rewrote LIN_ReceiveByte() callsites to {lin_rx}()")
 
-    def _lin_receive_repl(match: re.Match[str]) -> str:
-        arg_blob = match.group(1).strip()
-        if lin_rx_arity >= 2 and "," not in arg_blob:
-            return f"{lin_rx}({arg_blob}, 0U)"
-        if lin_rx_arity < 2 and "," in arg_blob:
-            return f"{lin_rx}({arg_blob.split(',', 1)[0].strip()})"
-        return f"{lin_rx}({arg_blob})"
+    def _normalize_arity(args: List[str], target_arity: int, fill_value: str) -> List[str]:
+        trimmed = list(args[:target_arity]) if target_arity >= 0 else list(args)
+        while len(trimmed) < target_arity:
+            trimmed.append(fill_value)
+        return trimmed
 
-    updated, n = re.subn(rf"{re.escape(lin_rx)}\s*\(([^)]*)\)", _lin_receive_repl, updated)
+    updated, n = _rewrite_function_calls(
+        updated,
+        lin_rx,
+        lambda args: _normalize_arity(args, lin_rx_arity, "0U"),
+    )
     if n:
         actions.append(f"Normalized {lin_rx}() call arity in bsp_validate.c")
 
-    def _lin_tx_repl(match: re.Match[str]) -> str:
-        arg_blob = match.group(1).strip()
-        args = [a.strip() for a in arg_blob.split(",") if a.strip()]
-        if lin_tx_arity >= 3 and len(args) == 2:
-            return f"{lin_tx_buffer}({args[0]}, {args[1]}, 100U)"
-        if lin_tx_arity < 3 and len(args) >= 3:
-            return f"{lin_tx_buffer}({args[0]}, {args[1]})"
-        return f"{lin_tx_buffer}({arg_blob})"
-
-    updated, n = re.subn(rf"{re.escape(lin_tx_buffer)}\s*\(([^)]*)\)", _lin_tx_repl, updated)
+    updated, n = _rewrite_function_calls(
+        updated,
+        lin_tx_buffer,
+        lambda args: _normalize_arity(args, lin_tx_arity, "100U"),
+    )
     if n:
         actions.append(f"Normalized {lin_tx_buffer}() call arity in bsp_validate.c")
 
-    def _lin_tx_byte_repl(match: re.Match[str]) -> str:
-        arg_blob = match.group(1).strip()
-        args = [a.strip() for a in arg_blob.split(",") if a.strip()]
-        if lin_tx_byte_arity <= 1:
-            if not args:
-                return f"{lin_tx_byte}(0U)"
-            return f"{lin_tx_byte}({args[0]})"
-        if len(args) >= lin_tx_byte_arity:
-            return f"{lin_tx_byte}({', '.join(args[:lin_tx_byte_arity])})"
-        if len(args) == 1:
-            return f"{lin_tx_byte}({args[0]}, 0U)"
-        return f"{lin_tx_byte}({arg_blob})"
-
-    updated, n = re.subn(rf"{re.escape(lin_tx_byte)}\s*\(([^)]*)\)", _lin_tx_byte_repl, updated)
+    updated, n = _rewrite_function_calls(
+        updated,
+        lin_tx_byte,
+        lambda args: _normalize_arity(args, lin_tx_byte_arity, "0U"),
+    )
     if n:
         actions.append(f"Normalized {lin_tx_byte}() call arity in bsp_validate.c")
 
@@ -407,6 +595,67 @@ def autofix_bsp_validate(
 
     updated = "\n".join(new_lines)
 
+    # Ensure pin_config defaults are explicitly set when present in contract.
+    # Missing functional-mode fields can silently disable SCI-over-LIN terminal output.
+    if "pin_config" in cfg_fields:
+        pin_cfg_field = next(
+            (
+                f
+                for f in (lin_types.get("lin_config_t", {}).get("fields", []) or [])
+                if isinstance(f, dict) and f.get("name") == "pin_config"
+            ),
+            None,
+        )
+        pin_cfg_type = str((pin_cfg_field or {}).get("type", ""))
+        pin_cfg_fields = {
+            f.get("name")
+            for f in (
+                lin_types.get(pin_cfg_type, {}).get("fields", [])
+                if isinstance(lin_types.get(pin_cfg_type, {}), dict)
+                else []
+            )
+            if isinstance(f, dict) and f.get("name")
+        }
+        desired_pin_assignments = [
+            ("tx_functional_mode", "true"),
+            ("rx_functional_mode", "true"),
+            ("tx_func_mode", "true"),
+            ("rx_func_mode", "true"),
+            ("tx_open_drain", "false"),
+            ("rx_open_drain", "false"),
+            ("open_drain", "false"),
+            ("tx_pull_enable", "false"),
+            ("rx_pull_enable", "false"),
+            ("pull_enable", "false"),
+            ("tx_pull_select", "true"),
+            ("rx_pull_select", "true"),
+            ("pull_select", "true"),
+        ]
+        pin_lines_to_insert: List[str] = []
+        for field_name, field_value in desired_pin_assignments:
+            if field_name in pin_cfg_fields and not re.search(
+                rf"\blin_cfg\.pin_config\.{re.escape(field_name)}\s*=",
+                updated,
+            ):
+                pin_lines_to_insert.append(f"    lin_cfg.pin_config.{field_name} = {field_value};")
+
+        if pin_lines_to_insert:
+            insert_before_match = re.search(
+                r"^\s*g_validate_lin_status\s*=.*$",
+                updated,
+                flags=re.MULTILINE,
+            )
+            if not insert_before_match:
+                insert_before_match = re.search(
+                    r"^\s*g_validate_heartbeat_ticks\s*=.*$",
+                    updated,
+                    flags=re.MULTILINE,
+                )
+            insert_idx = insert_before_match.start() if insert_before_match else len(updated)
+            insertion = "\n".join(pin_lines_to_insert) + "\n"
+            updated = updated[:insert_idx] + insertion + updated[insert_idx:]
+            actions.append("Inserted missing lin_cfg.pin_config bring-up defaults in bsp_validate.c")
+
     # Drop unsupported sci_cfg assignments to prevent struct-field drift.
     if sci_cfg_fields:
         sci_lines: List[str] = []
@@ -420,6 +669,15 @@ def autofix_bsp_validate(
                     continue
             sci_lines.append(line)
         updated = "\n".join(sci_lines)
+
+    if sci_data_bits_type in {"uint8_t", "uint16_t", "uint32_t", "unsigned int", "int"}:
+        updated, n = re.subn(
+            r"(sci_cfg\.data_bits\s*=\s*)[A-Za-z_][A-Za-z0-9_]*8[A-Za-z0-9_]*\s*;",
+            r"\g<1>8U;",
+            updated,
+        )
+        if n:
+            actions.append("Normalized sci_cfg.data_bits token assignment to literal 8U in bsp_validate.c")
 
     if updated != text:
         bsp_validate_path.write_text(

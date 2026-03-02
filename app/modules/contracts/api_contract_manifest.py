@@ -175,29 +175,49 @@ def _derive_module_capabilities(
         capabilities["init"] = init_fn
 
     if module_upper in {"LIN", "SCI"}:
+        if module_upper == "SCI":
+            tx_byte_names = [f"{module_upper}_TransmitByte", f"{module_upper}_SendByte", f"{module_upper}_WriteByte"]
+            tx_buffer_names = [f"{module_upper}_Transmit", f"{module_upper}_SendData", f"{module_upper}_Send", f"{module_upper}_Write"]
+            rx_byte_names = [f"{module_upper}_ReceiveByte", f"{module_upper}_ReadByte"]
+        else:
+            tx_byte_names = [f"{module_upper}_TransmitByte", f"{module_upper}_SendByte"]
+            tx_buffer_names = [f"{module_upper}_Transmit", f"{module_upper}_SendData", f"{module_upper}_Send"]
+            rx_byte_names = [f"{module_upper}_ReceiveByte"]
+
         tx_byte = (
-            _find_first_fn(functions, [f"{module_upper}_TransmitByte", f"{module_upper}_SendByte"])
+            _find_first_fn(functions, tx_byte_names)
             or _find_fn_by_contains(functions, ["TRANSMITBYTE"])
             or _find_fn_by_contains(functions, ["SENDBYTE"])
+            or _find_fn_by_contains(functions, ["WRITEBYTE"])
         )
         tx_buffer = (
-            _find_first_fn(functions, [f"{module_upper}_Transmit", f"{module_upper}_SendData", f"{module_upper}_Send"])
+            _find_first_fn(functions, tx_buffer_names)
             or _find_fn_by_contains(functions, ["TRANSMIT"], excludes=["BYTE"], min_arity=2)
             or _find_fn_by_contains(functions, ["SENDDATA"], excludes=["BYTE"], min_arity=2)
             or _find_fn_by_contains(functions, ["SEND"], excludes=["BYTE"], min_arity=2)
+            or _find_fn_by_contains(functions, ["WRITE"], excludes=["BYTE"], min_arity=2)
         )
         rx_byte = (
-            _find_first_fn(functions, [f"{module_upper}_ReceiveByte"])
+            _find_first_fn(functions, rx_byte_names)
             or _find_fn_by_contains(functions, ["RECEIVEBYTE"])
+            or _find_fn_by_contains(functions, ["READBYTE"])
         )
         tx_ready = (
-            _find_first_fn(functions, [f"{module_upper}_IsTxReady", f"{module_upper}_GetTxStatus"])
+            _find_first_fn(
+                functions,
+                [f"{module_upper}_IsTxReady", f"{module_upper}_GetTxReady", f"{module_upper}_GetTxStatus"],
+            )
             or _find_fn_by_contains(functions, ["ISTXREADY"])
+            or _find_fn_by_contains(functions, ["GETTXREADY"])
             or _find_fn_by_contains(functions, ["GETTXSTATUS"])
         )
         rx_ready = (
-            _find_first_fn(functions, [f"{module_upper}_IsRxReady", f"{module_upper}_GetRxStatus"])
+            _find_first_fn(
+                functions,
+                [f"{module_upper}_IsRxReady", f"{module_upper}_GetRxReady", f"{module_upper}_GetRxStatus"],
+            )
             or _find_fn_by_contains(functions, ["ISRXREADY"])
+            or _find_fn_by_contains(functions, ["GETRXREADY"])
             or _find_fn_by_contains(functions, ["GETRXSTATUS"])
         )
 
@@ -321,6 +341,8 @@ def _add_sci_compatibility_wrappers(module_contract: Dict[str, Any]) -> None:
     wrappers = module_contract.setdefault("compatibility_wrappers", [])
     capabilities = module_contract.get("capabilities", {})
     tx_buffer = capabilities.get("tx_buffer")
+    tx_byte = capabilities.get("tx_byte")
+    rx_byte = capabilities.get("rx_byte")
     tx_ready = capabilities.get("tx_ready")
     rx_ready = capabilities.get("rx_ready")
 
@@ -363,6 +385,20 @@ def _add_sci_compatibility_wrappers(module_contract: Dict[str, Any]) -> None:
                 {"name": "data", "type": "const uint8_t*"},
                 {"name": "length", "type": "uint32_t"},
             ],
+        )
+
+    if tx_byte:
+        _append_wrapper(
+            "SCI_SendByte",
+            tx_byte,
+            [{"name": "data", "type": "uint8_t"}],
+        )
+
+    if rx_byte:
+        _append_wrapper(
+            "SCI_ReceiveByte",
+            rx_byte,
+            [{"name": "data", "type": "uint8_t*"}],
         )
 
     if tx_ready:

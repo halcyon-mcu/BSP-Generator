@@ -12,6 +12,7 @@ This module provides:
 
 from __future__ import annotations
 
+import ast
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -369,29 +370,136 @@ def extract_constants_from_c_code(
     return extracted
 
 
+def _strip_outer_parentheses(expr: str) -> str:
+    """Strip balanced outer parentheses repeatedly."""
+    text = expr.strip()
+    while text.startswith("(") and text.endswith(")"):
+        depth = 0
+        balanced = True
+        for i, ch in enumerate(text):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0 and i != len(text) - 1:
+                    balanced = False
+                    break
+            if depth < 0:
+                balanced = False
+                break
+        if not balanced or depth != 0:
+            break
+        text = text[1:-1].strip()
+    return text
+
+
+def _strip_c_numeric_suffixes(expr: str) -> str:
+    """Strip C integer suffixes (U/L) from literals inside an expression."""
+    return re.sub(r'\b(0x[0-9A-Fa-f]+|\d+)([uUlL]+)\b', r'\1', expr)
+
+
+def _strip_c_casts(expr: str) -> str:
+    """Remove simple C-style casts from an expression."""
+    text = expr
+    cast_pattern = re.compile(r'\(\s*[A-Za-z_][A-Za-z0-9_\s\*]*\s*\)')
+    prev = None
+    while prev != text:
+        prev = text
+        text = cast_pattern.sub('', text)
+    return text
+
+
+def _safe_eval_numeric_expression(expr: str) -> Optional[int]:
+    """
+    Safely evaluate a constrained numeric expression.
+
+    Allowed operators: +, -, <<, >>, &, |, ^
+    """
+    text = _strip_outer_parentheses(expr)
+    text = _strip_c_casts(text)
+    text = _strip_c_numeric_suffixes(text)
+    text = _strip_outer_parentheses(text)
+
+    if not text:
+        return None
+
+    # Reject pointer and dereference/address operators.
+    if "*" in text or "/" in text or "%" in text:
+        return None
+
+    # Reject identifiers after cast stripping; allow 'x' only as part of 0x hex.
+    scrubbed = re.sub(r'0x[0-9A-Fa-f]+', '', text)
+    if re.search(r'[A-Za-z_]', scrubbed):
+        return None
+
+    if re.search(r'[^0-9a-fA-FxX\(\)\+\-\<\>\&\|\^\s]', text):
+        return None
+
+    try:
+        node = ast.parse(text, mode='eval')
+    except SyntaxError:
+        return None
+
+    def _eval(n: ast.AST) -> int:
+        if isinstance(n, ast.Expression):
+            return _eval(n.body)
+        if isinstance(n, ast.Constant) and isinstance(n.value, int):
+            return int(n.value)
+        if isinstance(n, ast.UnaryOp):
+            value = _eval(n.operand)
+            if isinstance(n.op, ast.USub):
+                return -value
+            if isinstance(n.op, ast.UAdd):
+                return value
+            raise ValueError("unsupported unary operator")
+        if isinstance(n, ast.BinOp):
+            left = _eval(n.left)
+            right = _eval(n.right)
+            if isinstance(n.op, ast.Add):
+                return left + right
+            if isinstance(n.op, ast.Sub):
+                return left - right
+            if isinstance(n.op, ast.LShift):
+                return left << right
+            if isinstance(n.op, ast.RShift):
+                return left >> right
+            if isinstance(n.op, ast.BitAnd):
+                return left & right
+            if isinstance(n.op, ast.BitOr):
+                return left | right
+            if isinstance(n.op, ast.BitXor):
+                return left ^ right
+            raise ValueError("unsupported binary operator")
+        raise ValueError("unsupported expression")
+
+    try:
+        return _eval(node)
+    except Exception:
+        return None
+
+
 def normalize_value(value: str) -> str:
     """
-    Normalize a constant value for comparison.
+    Normalize a constant value/expression for comparison.
 
-    Examples:
-        "0xFFF7BC00" -> "0xfff7bc00"
-        "0xFFF7BC00u" -> "0xfff7bc00"
-        "(0x00000001)" -> "0x00000001"
+    Supports casted pointer forms and simple arithmetic expressions.
     """
-    # Remove whitespace
-    value = value.strip()
+    raw = (value or "").strip()
+    if not raw:
+        return raw
 
-    # Remove common C suffixes (u, U, l, L, ul, UL, etc.)
-    value = re.sub(r'[uUlL]+$', '', value)
+    parsed_int = _safe_eval_numeric_expression(raw)
+    if parsed_int is not None:
+        if parsed_int < 0:
+            return str(parsed_int)
+        return f"0x{parsed_int:x}"
 
-    # Remove parentheses
-    value = value.strip('()')
-
-    # Lowercase hex values
-    if value.startswith('0x') or value.startswith('0X'):
-        value = value.lower()
-
-    return value
+    # Fallback to legacy normalization behavior.
+    raw = _strip_c_numeric_suffixes(raw)
+    raw = _strip_outer_parentheses(raw)
+    if raw.startswith('0x') or raw.startswith('0X'):
+        raw = raw.lower()
+    return raw
 
 
 def compare_values(val1: str, val2: str) -> bool:
@@ -407,15 +515,10 @@ def compare_values(val1: str, val2: str) -> bool:
     if norm1 == norm2:
         return True
 
-    # Try to convert to integers for numeric comparison
+    # Try to convert both normalized values to integers for numeric comparison.
     try:
-        # Handle hex
         if norm1.startswith('0x') and norm2.startswith('0x'):
-            int1 = int(norm1, 16)
-            int2 = int(norm2, 16)
-            return int1 == int2
-
-        # Handle decimal
+            return int(norm1, 16) == int(norm2, 16)
         int1 = int(norm1, 0)  # Auto-detect base
         int2 = int(norm2, 0)
         return int1 == int2

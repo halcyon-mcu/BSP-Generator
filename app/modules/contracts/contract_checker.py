@@ -317,6 +317,38 @@ def check_bsp_validate_contract(
     else:
         warnings.append("BSP_VALIDATE: LIN contract missing lin_config_t fields")
 
+    # Guard against silent terminal-output regressions:
+    # when LIN config exposes pin_config functional-mode fields, BSP validate must enable them.
+    if "pin_config" in allowed_fields:
+        pin_cfg_field = next(
+            (
+                f
+                for f in (lin_cfg.get("fields", []) or [])
+                if isinstance(f, dict) and f.get("name") == "pin_config"
+            ),
+            None,
+        )
+        pin_cfg_type = str((pin_cfg_field or {}).get("type", ""))
+        pin_cfg = lin_types.get(pin_cfg_type, {}) if pin_cfg_type else {}
+        pin_cfg_fields = {
+            f.get("name")
+            for f in (pin_cfg.get("fields", []) if isinstance(pin_cfg, dict) else [])
+            if isinstance(f, dict) and f.get("name")
+        }
+        required_functional_fields = [
+            name
+            for name in ("tx_functional_mode", "tx_func_mode", "rx_functional_mode", "rx_func_mode")
+            if name in pin_cfg_fields
+        ]
+        for field in required_functional_fields:
+            if not re.search(
+                rf"\blin_cfg\.pin_config\.{re.escape(field)}\s*=\s*true\s*;",
+                text_no_comments,
+            ):
+                errors.append(
+                    f"BSP_VALIDATE: lin_cfg.pin_config.{field} must be set true for LIN/SCI functional mode"
+                )
+
     sci_contract = modules.get("SCI", {})
     sci_types = sci_contract.get("types", {})
     sci_cfg = sci_types.get("sci_config_t", {})

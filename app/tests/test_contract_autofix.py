@@ -149,6 +149,69 @@ def test_autofix_bsp_validate_normalizes_lin_tx_byte_arity(tmp_path: Path):
     assert "LIN_TransmitByte(msg);" in text
 
 
+def test_autofix_bsp_validate_inserts_lin_pin_config_defaults(tmp_path: Path):
+    bsp_validate = _write(
+        tmp_path / "bsp_validate.c",
+        """
+        void test(void) {
+            lin_config_t lin_cfg = {0};
+            lin_cfg.mode = LIN_MODE_SCI;
+            lin_cfg.baud_rate = 9600U;
+            lin_cfg.data_bits = 8U;
+            lin_cfg.parity = LIN_PARITY_NONE;
+            lin_cfg.stop_bits = LIN_STOP_BITS_1;
+            lin_cfg.enable_tx = true;
+            lin_cfg.enable_rx = true;
+            g_validate_lin_status = (uint32_t)LIN_Init(&lin_cfg);
+        }
+        """,
+    )
+
+    manifest = {
+        "modules": {
+            "LIN": {
+                "functions": {"LIN_Init": {"arity": 1}},
+                "types": {
+                    "lin_config_t": {
+                        "fields": [
+                            {"name": "mode"},
+                            {"name": "baud_rate"},
+                            {"name": "data_bits"},
+                            {"name": "parity"},
+                            {"name": "stop_bits"},
+                            {"name": "pin_config", "type": "lin_pin_config_t"},
+                            {"name": "enable_tx"},
+                            {"name": "enable_rx"},
+                            {"name": "use_dma"},
+                        ]
+                    },
+                    "lin_pin_config_t": {
+                        "fields": [
+                            {"name": "tx_func_mode"},
+                            {"name": "rx_func_mode"},
+                            {"name": "open_drain"},
+                            {"name": "pull_enable"},
+                            {"name": "pull_select"},
+                        ]
+                    },
+                },
+                "capabilities": {},
+                "compatibility_wrappers": [],
+            },
+            "SCI": {"functions": {}, "types": {}, "capabilities": {}, "compatibility_wrappers": []},
+        }
+    }
+
+    result = autofix_bsp_validate(bsp_validate, manifest)
+    text = bsp_validate.read_text(encoding="utf-8")
+
+    assert "lin_cfg.pin_config.tx_func_mode = true;" in text
+    assert "lin_cfg.pin_config.rx_func_mode = true;" in text
+    assert "lin_cfg.pin_config.open_drain = false;" in text
+    assert "lin_cfg.pin_config.pull_enable = false;" in text
+    assert "Inserted missing lin_cfg.pin_config bring-up defaults in bsp_validate.c" in result["actions"]
+
+
 def test_autofix_module_contract_promotes_timeout_signature_when_source_uses_timeout(tmp_path: Path):
     header = _write(
         tmp_path / "lin_driver.h",

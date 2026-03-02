@@ -6,6 +6,11 @@ provenance:
   source: "4 IO Multiplexing and Control Module IOMM.pdf"
   schematic_source: "RM46_schematic.pdf"
   table: "Table 4-21. Output Multiplexing and Control"
+x-ext:
+  iomm_mux_encoding:
+    encoding: one_hot_8bit
+    field_width: 8
+    af1_bit: 1
 pins:
   - package_pin: 132
     name: "GIOB[3]"

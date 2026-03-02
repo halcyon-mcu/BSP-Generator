@@ -26,6 +26,7 @@ from .schemas import (
     MemmapYAML,
     BoardYAML,
     BringupContractYAML,
+    GenerationProfileYAML,
     validate_yaml_schema
 )
 
@@ -176,26 +177,28 @@ def load_generation_profile(path: Path) -> Dict[str, Any]:
 
     Expected shape (all keys optional):
       target_board: str
-      modules:
-        enabled: [str, ...]
-      sci:
-        default_baud: int
-      pins:
-        lock_board_mapping: bool
-      clocks:
-        mode: "board_default"
+      modules.enabled: [str, ...]
+      sci.default_baud: int
+      pins.lock_board_mapping: bool
+      clocks.mode: "board_default"
       strict_validation: bool
-      bsp_validation:
-        enabled: bool
       contract_mode: "auto_fix_then_fail" | "hard_fail" | "warn_only"
       require_ccs_proof: bool
-      bringup:
-        mode: "strict" | "relaxed"
-        contract_file: str
-        fail_on_contract_mismatch: bool
-        emit_debug_probes: bool
+      bringup.{mode,contract_file,fail_on_contract_mismatch,emit_debug_probes}
+      bringup_mode.default: direct_init|validation
+      startup_contract.gate_mode: warn|fail
+      parity_guard.{mode,baseline_path,critical_registers}
+      build_gate.{enabled,mode,external_workspace_path,project_name,configuration,max_fix_rounds,allow_targeted_llm_rewrite,fail_on_compile_error,clean_build,llm_rewrite.*}
+      bsp_validation.{enabled,baud,primary_serial_path,frame,banners,timing}
     """
     data = _load_yaml(path)
+
+    is_valid, errors = validate_yaml_schema(data, GenerationProfileYAML)
+    if not is_valid:
+        raise ValueError(
+            "generation_profile.yaml schema validation failed:\n"
+            + "\n".join(f"  - {e}" for e in errors)
+        )
 
     if "target_board" in data and not isinstance(data["target_board"], str):
         raise ValueError("generation_profile.yaml: 'target_board' must be a string")
@@ -233,6 +236,62 @@ def load_generation_profile(path: Path) -> Dict[str, Any]:
         raise ValueError("generation_profile.yaml: 'bsp_validation' must be a mapping")
     if "enabled" in bsp_validation and not isinstance(bsp_validation["enabled"], bool):
         raise ValueError("generation_profile.yaml: 'bsp_validation.enabled' must be boolean")
+    if "baud" in bsp_validation and not isinstance(bsp_validation["baud"], int):
+        raise ValueError("generation_profile.yaml: 'bsp_validation.baud' must be integer")
+    if "primary_serial_path" in bsp_validation and bsp_validation["primary_serial_path"] not in ("lin_only", "sci_only", "dual"):
+        raise ValueError(
+            "generation_profile.yaml: 'bsp_validation.primary_serial_path' must be "
+            "'lin_only', 'sci_only', or 'dual'"
+        )
+
+    frame = bsp_validation.get("frame", {})
+    if frame and not isinstance(frame, dict):
+        raise ValueError("generation_profile.yaml: 'bsp_validation.frame' must be a mapping")
+    if "data_bits" in frame and not isinstance(frame["data_bits"], int):
+        raise ValueError("generation_profile.yaml: 'bsp_validation.frame.data_bits' must be integer")
+    if "stop_bits" in frame and not isinstance(frame["stop_bits"], int):
+        raise ValueError("generation_profile.yaml: 'bsp_validation.frame.stop_bits' must be integer")
+    if "parity" in frame and frame["parity"] not in ("none", "even", "odd"):
+        raise ValueError("generation_profile.yaml: 'bsp_validation.frame.parity' must be one of 'none', 'even', 'odd'")
+
+    banners = bsp_validation.get("banners", {})
+    if banners and not isinstance(banners, dict):
+        raise ValueError("generation_profile.yaml: 'bsp_validation.banners' must be a mapping")
+    if "sci" in banners and not isinstance(banners["sci"], str):
+        raise ValueError("generation_profile.yaml: 'bsp_validation.banners.sci' must be a string")
+    if "lin" in banners and not isinstance(banners["lin"], str):
+        raise ValueError("generation_profile.yaml: 'bsp_validation.banners.lin' must be a string")
+
+    timing = bsp_validation.get("timing", {})
+    if timing and not isinstance(timing, dict):
+        raise ValueError("generation_profile.yaml: 'bsp_validation.timing' must be a mapping")
+    for key in ("heartbeat_ticks", "tx_period_ticks", "busy_delay"):
+        if key in timing and not isinstance(timing[key], int):
+            raise ValueError(f"generation_profile.yaml: 'bsp_validation.timing.{key}' must be integer")
+
+    bringup_mode = data.get("bringup_mode", {})
+    if bringup_mode and not isinstance(bringup_mode, dict):
+        raise ValueError("generation_profile.yaml: 'bringup_mode' must be a mapping")
+    if "default" in bringup_mode and bringup_mode["default"] not in ("direct_init", "validation"):
+        raise ValueError("generation_profile.yaml: 'bringup_mode.default' must be 'direct_init' or 'validation'")
+
+    startup_contract = data.get("startup_contract", {})
+    if startup_contract and not isinstance(startup_contract, dict):
+        raise ValueError("generation_profile.yaml: 'startup_contract' must be a mapping")
+    if "gate_mode" in startup_contract and startup_contract["gate_mode"] not in ("warn", "fail"):
+        raise ValueError("generation_profile.yaml: 'startup_contract.gate_mode' must be 'warn' or 'fail'")
+
+    parity_guard = data.get("parity_guard", {})
+    if parity_guard and not isinstance(parity_guard, dict):
+        raise ValueError("generation_profile.yaml: 'parity_guard' must be a mapping")
+    if "mode" in parity_guard and parity_guard["mode"] not in ("critical_only", "strict", "off"):
+        raise ValueError("generation_profile.yaml: 'parity_guard.mode' must be 'critical_only', 'strict', or 'off'")
+    if "baseline_path" in parity_guard and not isinstance(parity_guard["baseline_path"], str):
+        raise ValueError("generation_profile.yaml: 'parity_guard.baseline_path' must be a string")
+    if "critical_registers" in parity_guard:
+        regs = parity_guard["critical_registers"]
+        if not isinstance(regs, list) or not all(isinstance(x, str) for x in regs):
+            raise ValueError("generation_profile.yaml: 'parity_guard.critical_registers' must be a list of strings")
 
     if "contract_mode" in data:
         valid_modes = {"auto_fix_then_fail", "hard_fail", "warn_only"}
@@ -256,6 +315,69 @@ def load_generation_profile(path: Path) -> Dict[str, Any]:
         raise ValueError("generation_profile.yaml: 'bringup.fail_on_contract_mismatch' must be boolean")
     if "emit_debug_probes" in bringup and not isinstance(bringup["emit_debug_probes"], bool):
         raise ValueError("generation_profile.yaml: 'bringup.emit_debug_probes' must be boolean")
+
+    build_gate = data.get("build_gate", {})
+    if build_gate and not isinstance(build_gate, dict):
+        raise ValueError("generation_profile.yaml: 'build_gate' must be a mapping")
+    if "enabled" in build_gate and not isinstance(build_gate["enabled"], bool):
+        raise ValueError("generation_profile.yaml: 'build_gate.enabled' must be boolean")
+    if "mode" in build_gate and build_gate["mode"] not in ("strict", "advisory", "off"):
+        raise ValueError("generation_profile.yaml: 'build_gate.mode' must be 'strict', 'advisory', or 'off'")
+    if "external_workspace_path" in build_gate and not isinstance(build_gate["external_workspace_path"], str):
+        raise ValueError("generation_profile.yaml: 'build_gate.external_workspace_path' must be a string")
+    if "project_name" in build_gate and not isinstance(build_gate["project_name"], str):
+        raise ValueError("generation_profile.yaml: 'build_gate.project_name' must be a string")
+    if "configuration" in build_gate and build_gate["configuration"] not in ("Debug", "Release"):
+        raise ValueError("generation_profile.yaml: 'build_gate.configuration' must be 'Debug' or 'Release'")
+    if "max_fix_rounds" in build_gate and (
+        not isinstance(build_gate["max_fix_rounds"], int) or build_gate["max_fix_rounds"] < 0
+    ):
+        raise ValueError("generation_profile.yaml: 'build_gate.max_fix_rounds' must be a non-negative integer")
+    if "allow_targeted_llm_rewrite" in build_gate and not isinstance(build_gate["allow_targeted_llm_rewrite"], bool):
+        raise ValueError("generation_profile.yaml: 'build_gate.allow_targeted_llm_rewrite' must be boolean")
+    if "fail_on_compile_error" in build_gate and not isinstance(build_gate["fail_on_compile_error"], bool):
+        raise ValueError("generation_profile.yaml: 'build_gate.fail_on_compile_error' must be boolean")
+    if "clean_stale_project_files" in build_gate and not isinstance(build_gate["clean_stale_project_files"], bool):
+        raise ValueError("generation_profile.yaml: 'build_gate.clean_stale_project_files' must be boolean")
+    if "clean_build" in build_gate and not isinstance(build_gate["clean_build"], bool):
+        raise ValueError("generation_profile.yaml: 'build_gate.clean_build' must be boolean")
+    llm_rewrite = build_gate.get("llm_rewrite", {})
+    if llm_rewrite and not isinstance(llm_rewrite, dict):
+        raise ValueError("generation_profile.yaml: 'build_gate.llm_rewrite' must be a mapping")
+    if "enabled" in llm_rewrite and not isinstance(llm_rewrite["enabled"], bool):
+        raise ValueError("generation_profile.yaml: 'build_gate.llm_rewrite.enabled' must be boolean")
+    if "scope" in llm_rewrite and llm_rewrite["scope"] not in ("top_files",):
+        raise ValueError("generation_profile.yaml: 'build_gate.llm_rewrite.scope' must be 'top_files'")
+    if "top_k_files" in llm_rewrite and (
+        not isinstance(llm_rewrite["top_k_files"], int) or llm_rewrite["top_k_files"] < 1
+    ):
+        raise ValueError("generation_profile.yaml: 'build_gate.llm_rewrite.top_k_files' must be a positive integer")
+    if "apply_policy" in llm_rewrite and llm_rewrite["apply_policy"] not in ("hybrid", "diff_only", "full_file_only"):
+        raise ValueError(
+            "generation_profile.yaml: 'build_gate.llm_rewrite.apply_policy' must be "
+            "'hybrid', 'diff_only', or 'full_file_only'"
+        )
+    if "model" in llm_rewrite and llm_rewrite["model"] not in ("inherit", "haiku4.5", "sonnet4.5", "opus4.5", "opus4.6"):
+        raise ValueError(
+            "generation_profile.yaml: 'build_gate.llm_rewrite.model' must be "
+            "'inherit', 'haiku4.5', 'sonnet4.5', 'opus4.5', or 'opus4.6'"
+        )
+    if "max_tokens" in llm_rewrite and (
+        not isinstance(llm_rewrite["max_tokens"], int) or llm_rewrite["max_tokens"] < 256
+    ):
+        raise ValueError("generation_profile.yaml: 'build_gate.llm_rewrite.max_tokens' must be an integer >= 256")
+    if "max_attempts" in llm_rewrite and (
+        not isinstance(llm_rewrite["max_attempts"], int) or llm_rewrite["max_attempts"] < 0
+    ):
+        raise ValueError("generation_profile.yaml: 'build_gate.llm_rewrite.max_attempts' must be a non-negative integer")
+    if "include_contract_context" in llm_rewrite and not isinstance(llm_rewrite["include_contract_context"], bool):
+        raise ValueError("generation_profile.yaml: 'build_gate.llm_rewrite.include_contract_context' must be boolean")
+
+    # Backward-compat: legacy boolean toggle maps to llm_rewrite.enabled.
+    if isinstance(build_gate, dict) and "llm_rewrite" not in build_gate and "allow_targeted_llm_rewrite" in build_gate:
+        build_gate["llm_rewrite"] = {
+            "enabled": bool(build_gate.get("allow_targeted_llm_rewrite", True))
+        }
 
     return data
 

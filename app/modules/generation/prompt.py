@@ -1634,12 +1634,19 @@ Requirements for your generated entry.c:
 
 - Implement void Reset_Handler_C(void) that:
   1. Computes the size (in bytes) of .data using start_of_data and end_of_data.
+     - Required form:
+       `data_size = (size_t)(&end_of_data - &start_of_data) * sizeof(uint32_t);`
   2. Calls memcpy to copy initialized data from flash:
       - Destination: &start_of_data
       - Source:      &start_of_data_in_flash
       - Size:        data_size
+     - Do NOT multiply by `sizeof(uint32_t)` again in memcpy.
   3. Computes the size of .bss using start_of_bss and end_of_bss.
+     - Required form:
+       `bss_size = (size_t)(&end_of_bss - &start_of_bss) * sizeof(uint32_t);`
   4. Calls memset to zero the entire .bss region.
+     - Use `memset(&start_of_bss, 0, bss_size);`
+     - Do NOT multiply by `sizeof(uint32_t)` again in memset.
   5. Calls system_init();
   6. Calls main();
   7. If main() returns, enters an infinite loop (for (;;){}) to avoid undefined behavior.
@@ -2360,11 +2367,14 @@ def build_pass2_driver_c_prompt(
         lin = contract.get("lin", {}) if isinstance(contract.get("lin"), dict) else {}
         iomm = contract.get("iomm", {}) if isinstance(contract.get("iomm"), dict) else {}
         pll = contract.get("pll", {}) if isinstance(contract.get("pll"), dict) else {}
+        flash = contract.get("flash", {}) if isinstance(contract.get("flash"), dict) else {}
         startup = contract.get("startup", {}) if isinstance(contract.get("startup"), dict) else {}
 
         lines = ["Bring-up Contract Constraints (Authoritative):"]
         if serial:
             lines.append(f"- serial.primary_path: {serial.get('primary_path')}")
+            if "primary_tx_only" in serial:
+                lines.append(f"- serial.primary_tx_only: {serial.get('primary_tx_only')}")
             lines.append(f"- serial.baud_default: {serial.get('baud_default')}")
             req_pins = serial.get("required_pins", [])
             if isinstance(req_pins, list):
@@ -2379,9 +2389,52 @@ def build_pass2_driver_c_prompt(
         unlock_seq = iomm.get("unlock_sequence", [])
         if isinstance(unlock_seq, list) and unlock_seq:
             lines.append("- iomm.unlock_sequence: " + ", ".join(str(v) for v in unlock_seq))
+        if isinstance(iomm, dict):
+            if "require_unlock_for_pin_config" in iomm:
+                lines.append(
+                    f"- iomm.require_unlock_for_pin_config: {iomm.get('require_unlock_for_pin_config')}"
+                )
+            if "require_lock_after_pin_config" in iomm:
+                lines.append(
+                    f"- iomm.require_lock_after_pin_config: {iomm.get('require_lock_after_pin_config')}"
+                )
+            if "configurepin_self_managed_locking" in iomm:
+                lines.append(
+                    f"- iomm.configurepin_self_managed_locking: {iomm.get('configurepin_self_managed_locking')}"
+                )
         req_seq = pll.get("required_sequence", [])
+        if isinstance(pll, dict) and pll.get("init_profile"):
+            lines.append(f"- pll.init_profile: {pll.get('init_profile')}")
         if isinstance(req_seq, list) and req_seq:
-            lines.append("- pll.required_sequence tokens: " + ", ".join(str(v) for v in req_seq))
+            lines.append("- pll.required_sequence checkpoints: " + ", ".join(str(v) for v in req_seq))
+        pll_freq_decode = pll.get("frequency_decode", {}) if isinstance(pll, dict) else {}
+        if isinstance(pll_freq_decode, dict) and pll_freq_decode:
+            lines.append(
+                f"- pll.frequency_decode.allow_hal_encoded_pllmul: {pll_freq_decode.get('allow_hal_encoded_pllmul')}"
+            )
+            if "hal_literal_hclk_hz" in pll_freq_decode:
+                lines.append(
+                    f"- pll.frequency_decode.hal_literal_hclk_hz: {pll_freq_decode.get('hal_literal_hclk_hz')}"
+                )
+            required_behavior = pll_freq_decode.get("required_behavior", {})
+            if isinstance(required_behavior, dict) and required_behavior:
+                for key, value in required_behavior.items():
+                    lines.append(f"- pll.frequency_decode.required_behavior.{key}: {value}")
+            req_decode_tokens = pll_freq_decode.get("required_tokens", [])
+            if isinstance(req_decode_tokens, list) and req_decode_tokens:
+                lines.append("- pll.frequency_decode.required_tokens: " + ", ".join(str(v) for v in req_decode_tokens))
+        flash_regs = flash.get("required_registers", {}) if isinstance(flash, dict) else {}
+        if isinstance(flash_regs, dict) and flash_regs:
+            for reg_name, reg_rule in flash_regs.items():
+                if not isinstance(reg_rule, dict):
+                    continue
+                lines.append(f"- flash.required_registers.{reg_name}.address: {reg_rule.get('address')}")
+                req_writes = reg_rule.get("required_write_tokens", [])
+                if isinstance(req_writes, list) and req_writes:
+                    lines.append(
+                        f"- flash.required_registers.{reg_name}.required_write_tokens: "
+                        + ", ".join(str(v) for v in req_writes)
+                    )
         req_order = startup.get("required_order", [])
         if isinstance(req_order, list) and req_order:
             lines.append("- startup.required_order: " + " -> ".join(str(v) for v in req_order))
@@ -2392,6 +2445,45 @@ def build_pass2_driver_c_prompt(
     # PLL-specific implementation requirements
     pll_section = ""
     if module_name.upper() == "PLL":
+        pll_contract_cfg = (
+            bringup_contract.get("pll", {})
+            if isinstance(bringup_contract, dict)
+            else {}
+        )
+        pll_init_profile = ""
+        pll_freq_decode_cfg = {}
+        if isinstance(pll_contract_cfg, dict):
+            pll_init_profile = str(pll_contract_cfg.get("init_profile", "")).strip().lower()
+            pll_freq_decode_cfg = pll_contract_cfg.get("frequency_decode", {})
+        if not isinstance(pll_freq_decode_cfg, dict):
+            pll_freq_decode_cfg = {}
+        pll_allow_hal_encoded = bool(pll_freq_decode_cfg.get("allow_hal_encoded_pllmul", False))
+
+        profile_guidance = (
+            "PLL PROFILE SELECTOR:\n"
+            f"- Current bring-up pll.init_profile: {pll_init_profile or 'not_set'}\n"
+            "- If profile is rm46_hal_aligned: use the proven HAL-aligned literal sequence.\n"
+            "- If profile is rm46_trm_dynamic: use TRM field-programming path from YAML values "
+            "(REFCLKDIV/PLLMUL/PLLDIV/ODPLL), no HAL hardcoded literals.\n"
+            "- If profile is rm46_trm_dynamic_with_hal_fallback: use TRM field-programming by default, "
+            "but include HAL-encoded PLLMUL decode guard when contract allows it.\n"
+        )
+
+        if pll_allow_hal_encoded:
+            hal_decode_example = """
+   HAL-encoded decode branch (required when allow_hal_encoded_pllmul=true):
+   uint32_t NF = nf_raw;
+   if (nf_raw == 0xA400U) {
+       NF = 120U;  // or contract-authoritative equivalent
+   }
+"""
+        else:
+            hal_decode_example = """
+   HAL-encoded decode branch:
+   - NOT required when allow_hal_encoded_pllmul=false.
+   - Use raw register-derived NF semantics from YAML/fields only.
+"""
+
         # Extract the SYSTEM register typedef name from the manifest so the LLM uses
         # the exact name generated by Pass 1 rather than guessing.
         system_typedef = "SYSTEM_REG_MAP_t"  # safe fallback
@@ -2431,6 +2523,8 @@ value from a MASK/SHIFT pair that IS present.
 This is the central clock service module. You MUST implement ALL functions completely.
 NO STUB FUNCTIONS. NO TODO COMMENTS in switch cases. Every case in every switch MUST be handled.
 
+{profile_guidance}
+
 ENUM NAMING RULE (CRITICAL):
 - All clock domain enum values use: CLOCKDOMAIN_<UPPERCASE_REF>
 - Example: VCLK → CLOCKDOMAIN_VCLK, HF_LPO → CLOCKDOMAIN_HF_LPO
@@ -2464,7 +2558,7 @@ REGISTER ACCESS (MANDATORY):
 - Use SYSREG2->VCLKACON1 for VCLKA3 and VCLKA4 source and divider configuration
 """
 
-        pll_section += """
+        pll_section += f"""
 - Use EXACT member names from reg_system.h (e.g. SYSREG->PLLCTL1, SYSREG->CSDISCLR, SYSREG->CLKCNTL)
 - NEVER use undefined symbols. Every constant you use MUST exist in reg_system.h or your FACTS MIRROR.
 
@@ -2479,20 +2573,64 @@ CSDIS/CDDIS REGISTER USAGE (CRITICAL):
 REQUIRED FUNCTION: PLL_Init(void)
 This function owns the COMPLETE clock tree activation. Perform in this exact order:
 1. Enable OSCIN: SYSREG->CSDISCLR = SYSTEM_CSDISCLR_CLRCLKSR0OFF;
-2. Configure PLL1 multipliers using the values in INPUT CONTEXT 5 (bus.yaml slice) under
-   sources → PLL1 → x-ext → default_config. Extract nr, nf, r, odpll values from there.
-   FACTS MIRROR REQUIRED: mirror these exact values before writing any code.
-   Do NOT hardcode numeric divider values — read them from the bus slice.
-   - Write PLLCTL1: set REFCLKDIV (NR-1 in bits 16-21), PLLMUL (NF in bits 0-15), PLLDIV (R in bits 24-28)
+2. Configure PLL1 multipliers from INPUT CONTEXT 5 (bus.yaml slice).
+   FACTS MIRROR REQUIRED: mirror exact source values before writing code.
+   Contract rule:
+   - If sources.PLL1.x-ext.pll1_encoding.pllmul_register_encoding == hal_encoded:
+     write PLLMUL using pllmul_hal_literal (for RM46 this is 0xA400), not inferred raw NF.
+   - Otherwise use default_config numeric fields.
+   - Write PLLCTL1: set REFCLKDIV (NR-1 in bits 16-21), PLLMUL (bits 0-15), PLLDIV (R in bits 24-28)
    - Write PLLCTL2: set ODPLL (bits 9-11), clear FMENA (bit 31) for non-modulating
+   - Do NOT infer PLLMUL semantics from generic formulas when contract metadata is present.
+   - TRM dynamic profiles: express PLLCTL field construction from YAML values (not opaque literals).
 3. Enable PLL1 source: SYSREG->CSDISCLR = SYSTEM_CSDISCLR_CLRCLKSR1OFF;
 4. Wait for PLL1 lock: poll SYSREG->CSVSTAT bit 1 (SYSTEM_CSVSTAT_CLKSR1V) with bounded iteration counter
-5. Switch GHVSRC to PLL1 source using the source_number for PLL1 from
-   x-ext.peripheral_clocks.SYSTEM.clock_sources in bus slice (source_number=1 → GHVSRC=1).
-   Mirror the source_number in FACTS MIRROR.
-6. Set VCLK divider: write CLKCNTL with VCLKR=1 (divide-by-2) and VCLK2R=1 (divide-by-2) in bits 16-19 and 24-27
-7. Enable core domains: SYSREG->CDDISCLR = SYSTEM_CDDISCLR_CLRGCLKOFF | SYSTEM_CDDISCLR_CLRHCLKOFF | SYSTEM_CDDISCLR_CLRVCLKPOFF | SYSTEM_CDDISCLR_CLRVCLK2OFF;
-8. Enable peripheral enable: set SYSTEM_CLKCNTL_PENA bit in SYSREG->CLKCNTL
+   - Polling may be inline or delegated to wait_for_pll_lock()/wait_for_pll1_lock() helper.
+5. Set VCLK divider BEFORE source switch: write CLKCNTL with VCLKR=1 (divide-by-2) and VCLK2R=1
+   (divide-by-2) in bits 16-19 and 24-27. CRITICAL ORDERING: This write MUST occur BEFORE writing
+   GHVSRC. If CLKCNTL is written after GHVSRC, VCLK momentarily runs at full HCLK (220MHz), which
+   exceeds the 110MHz peripheral bus maximum and causes hardware faults.
+6. Switch GHVSRC to PLL1 source using bus.yaml sources.PLL1.x-ext.source_ids.ghvsrc_pll1_source_id.
+   If source_ids are present, they are authoritative over heuristic source-number inference.
+   Mirror the chosen GHVSRC source id in FACTS MIRROR.
+7. Write RCLKSRC and VCLKASRC using bus.yaml sources.PLL1.x-ext.source_ids (rclksrc_sys_source_id and vclkasrc_sys_source_id).
+8. Enable core domains: SYSREG->CDDISCLR = SYSTEM_CDDISCLR_CLRGCLKOFF | SYSTEM_CDDISCLR_CLRHCLKOFF | SYSTEM_CDDISCLR_CLRVCLKPOFF | SYSTEM_CDDISCLR_CLRVCLK2OFF;
+9. Enable peripheral enable: set SYSTEM_CLKCNTL_PENA bit in SYSREG->CLKCNTL
+
+RM46 HAL-ALIGNED PROFILE (MANDATORY WHEN pll.init_profile == rm46_hal_aligned):
+- Emit the proven HAL-aligned programming pattern instead of reduced generic programming.
+- Required literal writes/checkpoints in PLL_Init:
+  * Disable PLL1/PLL2 sources first (CSDISSET for CLKSR1/CLKSR6) and wait/ack.
+  * Clear GLBSTAT with 0x00000301.
+  * Program:
+      SYSREG->PLLCTL1 = 0x20000000 | (0x1F << 24) | ((6 - 1) << 16) | 0xA400
+      SYSREG->PLLCTL2 = (255 << 22) | (7 << 12) | ((2 - 1) << 9) | 61
+      SYSREG2->PLLCTL3 = ((2 - 1) << 29) | (0x1F << 24) | ((6 - 1) << 16) | 0xA400
+  * Program source/domain disable snapshots:
+      SYSREG->CSDIS = 0x0000008C
+      SYSREG->CDDIS = 0x00000020
+  * Poll CSVSTAT for PLL1/PLL2 validity.
+  * Program CLKCNTL VCLK/VCLK2 dividers FIRST (before GHVSRC switch) to prevent VCLK from
+    momentarily exceeding 110MHz peripheral bus limit when HCLK switches to 220MHz PLL1:
+        SYSREG->CLKCNTL = (SYSREG->CLKCNTL & 0xF0F0FFFFu) | (1u << 24u) | (1u << 16u);
+  * Program GHVSRC/RCLKSRC/VCLKASRC in the HAL-aligned source path.
+  * Program CLK2CNTRL for VCLK3/VCLK4 auxiliary dividers (SYSREG2->CLK2CNTRL).
+  * Program VCLKACON1 for VCLKA3/VCLKA4 source and divider (SYSREG2->VCLKACON1).
+  * Set PENA via SYSREG->CLKCNTL |= SYSTEM_CLKCNTL_PENA.
+- Do NOT replace this with simplified "default_config-only" PLL writes when rm46_hal_aligned is active.
+
+RM46 TRM-DYNAMIC PROFILE (MANDATORY WHEN pll.init_profile == rm46_trm_dynamic OR rm46_trm_dynamic_with_hal_fallback):
+- Program PLLCTL1/PLLCTL2 (and PLLCTL3 if present) from YAML fields/defaults:
+  * REFCLKDIV from bus.yaml/default_config nr (register stores NR-1).
+  * PLLMUL from bus.yaml/default_config nf unless pll1_encoding says hal_encoded.
+  * PLLDIV from bus.yaml/default_config r.
+  * ODPLL from bus.yaml/default_config odpll.
+- Keep full TRM sequence:
+  * disable source before reprogram (CSDISSET path),
+  * clear slip/GLBSTAT state as needed,
+  * re-enable source via CSDISCLR,
+  * poll CSVSTAT valid bits before GHVSRC handoff.
+- Do not hardcode HAL literal register writes unless contract/YAML explicitly selects hal_encoded behavior.
 
 REQUIRED FUNCTION: PLL_EnableClock(clock_domain_t domain)
 Must have a case for EVERY enum value in clock_domain_t. Handle as follows:
@@ -2543,37 +2681,40 @@ REGISTER EXTRACTION (Step by step):
    uint32_t odpll_raw = (pllctl2 & SYSTEM_PLLCTL2_ODPLL_MASK) >> SYSTEM_PLLCTL2_ODPLL_SHIFT;
 
 3. Convert to actual values:
-   uint32_t NF = nf_raw;           // Multiplier value (use as-is)
-   uint32_t NR = nr_raw + 1;       // Pre-divider (register stores NR-1)
-   uint32_t R = 1u << plldiv_raw;  // Output divider (2^PLLDIV)
-   uint32_t ODPLL = odpll_raw + 1; // Final divider (register stores ODPLL-1)
+   uint32_t NF = nf_raw;
+{hal_decode_example}
+   uint32_t NR = nr_raw + 1U;       // Pre-divider (register stores NR-1)
+   uint32_t R = 1U << plldiv_raw;   // Output divider (2^PLLDIV)
+   uint32_t ODPLL = odpll_raw + 1U; // Final divider (register stores ODPLL-1)
 
-4. Calculate PLL frequency:
-   uint32_t f_pll = (OSCIN_HZ * NF) / (NR * R);
-   uint32_t f_hclk = f_pll / ODPLL;
+4. Calculate PLL frequency using 64-bit intermediates (MANDATORY):
+   uint64_t f_pll = ((uint64_t)OSCIN_HZ * (uint64_t)NF) / ((uint64_t)NR * (uint64_t)R);
+   uint32_t f_hclk = (uint32_t)(f_pll / (uint64_t)ODPLL);
 
 ACTIVE SOURCE RULE (MANDATORY):
 - Read SYSREG->GHVSRC and derive the live HCLK source before returning domain frequencies.
+- GHVSRC logic may be implemented in PLL_GetFrequency() directly or in a helper called by PLL_GetFrequency().
 - If GHVSRC selects OSCIN/LF_LPO/HF_LPO/PLL2, return frequencies from that selected source path.
 - Do NOT assume PLL1 is always active.
 - Do NOT hardcode PLL1-derived HCLK when GHVSRC indicates another source.
 
-WORKED EXAMPLE (from bus.yaml typical configuration):
+WORKED EXAMPLE (HAL-encoded RM46 profile):
 - OSCIN_HZ = 16,000,000 Hz (16 MHz)
-- NF = 120 (multiplier)
-- NR = 6 (pre-divider, stored as 5 in register)
-- R = 2 (output divider, stored as 1 in register since 2^1=2)
-- ODPLL = 2 (final divider, stored as 1 in register)
+- PLLMUL register literal = 0xA400, effective NF = 120
+- NR = 6 (register value 5), R = 2 (register value 1), ODPLL = 2 (register value 1)
 
 Calculation:
-f_pll = (16 MHz × 120) / (6 × 2) = 1,920 MHz / 12 = 160 MHz
+f_pll = (16 MHz * 120) / (6 * 2) = 160 MHz
 f_hclk = 160 MHz / 2 = 80 MHz
 
+RM46 HAL-ALIGNED OVERRIDE (AUTHORITATIVE WHEN PROVIDED):
+- If bring-up contract provides pll.frequency_decode.hal_literal_hclk_hz,
+  return that value when nf_raw equals 0xA400 (or its aliased macro).
+- This is the source of truth for baud-critical bring-up paths.
+
 VERIFICATION:
-Use bus.yaml default_config values to verify your formula produces the expected frequency.
-If bus.yaml shows: nr=5, nf=120, r=1, odpll=1, then:
-- Actual values: NR=6 (5+1), NF=120, R=2 (2^1), ODPLL=2 (1+1)
-- Expected result: 160 MHz PLL, 80 MHz HCLK
+Use bus.yaml pll1_encoding/default_config values and contract rules together.
+If encoding says hal_encoded, do not treat NF as raw register value without decode.
 
 5. Domain-specific calculations:
 Cases per domain:
@@ -2650,10 +2791,43 @@ VALIDATION: After writing code, scan for patterns like:
 If found, replace with PLL_GetFrequency() calls.
 """
 
+    lin_section = ""
+    if module_name.upper() == "LIN":
+        lin_section = """
+LIN TRANSMIT LOOP SAFETY (MANDATORY):
+------------------------------------
+For LIN_Transmit() multi-byte loops:
+- Do NOT treat LIN_STATUS_RX_EMPTY as a transmit failure.
+- If LIN_GetStatus() is used in the TX loop, RX_EMPTY must be tolerated.
+- Prefer checking only TX-relevant hard error flags after write:
+  FE / OE / PE (and optional timeout logic), then continue sending remaining bytes.
+- Do not abort banner/message transmission just because RXRDY is not set.
+
+LIN SCI MODE BRING-UP (MANDATORY):
+----------------------------------
+- When mode is LIN_MODE_SCI, SCIPIO0 must always enable TX/RX functional bits.
+- In SCI mode, do NOT gate SCIPIO0 TX/RX functional bits on optional pin_config booleans.
+- Treat lin.required_registers.SCIPIO0.required_value as authoritative (RM46 strict: 0x00000006).
+- Pin electrical options (SCIPIO6/SCIPIO7/SCIPIO8) may remain configurable.
+
+COMM_MODE BIT (CRITICAL - MUST NOT BE SET):
+--------------------------------------------
+- LIN_SCIGCR1_COMM_MODE is bit 0 of SCIGCR1.
+- COMM_MODE = 0: idle-line mode (standard 8N1 SCI; 10-bit frame: START + 8 data + STOP).
+- COMM_MODE = 1: address-bit mode (9-bit SCI; 11-bit frame: START + 8 data + ADDR_BIT + STOP).
+- In SCI mode for terminal output, COMM_MODE MUST remain 0 (idle-line, the reset default).
+- NEVER write:  gcr1_value |= LIN_SCIGCR1_COMM_MODE;
+- NEVER set bit 0 of SCIGCR1 in any LIN_Init or LIN_Configure path.
+- Setting COMM_MODE causes 9-bit address-bit framing. A terminal configured for 8N1 receives
+  a framing error on every byte — no readable output appears. This is a silent hardware bug.
+- Idle-line mode is the correct default; the bit must simply be left at 0 (do not OR it in).
+"""
+
     return f"""
 You are an Expert Embedded C Developer.
 Generate the Driver Implementation file for the "{module_name}" peripheral.
 {pll_section}
+{lin_section}
 {UNIVERSAL_CLOCK_RULES}
 
 INPUT CONTEXT:
@@ -2703,31 +2877,35 @@ When calling functions from dependency modules (IOMM, PLL, VIM, etc.):
    - NEVER fabricate or guess similar-sounding names
 
 2. ENUM TYPE USAGE (STRICT):
-   - When a parameter type is an enum (ends in _t, like iomm_pin_function_t):
-   - You MUST use the enum VALUE NAMES from the "Available values" list
-   - DO NOT fabricate similar-sounding names (e.g., IOMM_PIN_FUNC_ALT1 when not declared)
-   - DO NOT use integer literals (0, 1, 2, etc.)
-   - DO NOT use hex literals (0x0, 0x1, etc.)
+   - If INPUT CONTEXT 7 shows enum values for a parameter type, you MUST use ONLY those enum VALUE NAMES.
+   - DO NOT fabricate similar-sounding names (e.g., IOMM_PIN_FUNC_ALT1 when not declared).
+   - If no enum values are declared and the type is scalar (e.g., typedef uint8_t iomm_pin_function_t),
+     pass the AF numeric value from pinmux/instance data (e.g., AF1 -> 1U).
+   - Never mix scalar numeric mode with undeclared symbolic mode.
 
 3. IOMM PIN CONFIGURATION (SPECIFIC EXAMPLE):
    IOMM_ConfigurePin() takes (uint8_t pin_number, iomm_pin_function_t function)
 
-   ✅ CORRECT usage (use ACTUAL enum values from INPUT CONTEXT 7):
-   - IOMM_ConfigurePin(38, IOMM_PIN_FUNC_ALT1);  // From enum values list
-   - IOMM_ConfigurePin(39, IOMM_PIN_FUNC_GPIO);  // From enum values list
+   ✅ CORRECT usage:
+   - Enum mode (when enum values exist):
+     IOMM_ConfigurePin(38, <IOMM_ENUM_VALUE_FROM_CONTEXT7>);
+     IOMM_ConfigurePin(39, <IOMM_ENUM_VALUE_FROM_CONTEXT7>);
+   - Scalar mode (when iomm_pin_function_t is numeric typedef and no enum values exist):
+     IOMM_ConfigurePin(38, (iomm_pin_function_t)1U);  /* AF1 */
+     IOMM_ConfigurePin(39, (iomm_pin_function_t)1U);  /* AF1 */
 
    ❌ INCORRECT usage (will cause compilation errors):
    - IOMM_ConfigurePin(38, IOMM_PIN_ENUM_AF1);    // WRONG - undefined identifier
-   - IOMM_ConfigurePin(38, 1);                     // WRONG - type mismatch
+   - IOMM_ConfigurePin(38, IOMM_PIN_FUNC_ALT1);    // WRONG if not declared in INPUT CONTEXT 7
    - IOMM_ConfigurePin(38, AF1);                   // WRONG - undefined identifier
-   - IOMM_ConfigurePin(38, 0x1);                   // WRONG - type mismatch
 
 4. RETURN TYPE HANDLING:
    ❌ WRONG: status = IOMM_Unlock();  (IOMM_Unlock returns void)
    ✅ CORRECT: IOMM_Unlock();  (no assignment)
 
    ❌ WRONG: IOMM_ConfigurePin(39, IOMM_PIN_ENUM_AF1);  (wrong enum name)
-   ✅ CORRECT: status = IOMM_ConfigurePin(39, IOMM_PIN_FUNC_ALT1);  (use enum from list + check status)
+   ✅ CORRECT: status = IOMM_ConfigurePin(39, <IOMM_FUNCTION_VALUE_FROM_CONTEXT7_OR_AF_NUMERIC_MODE>);
+              (must match declared type mode and check status)
 
 5. VERIFICATION CHECKLIST:
    Before generating code, verify:
@@ -2738,9 +2916,9 @@ When calling functions from dependency modules (IOMM, PLL, VIM, etc.):
 
 6. PIN CONFIGURATION EXAMPLES FROM INPUT CONTEXT 6:
    If instance_pin_config provides pin mappings with af_enum values:
-   - Use the EXACT af_enum string provided (e.g., "IOMM_PIN_FUNC_ALT1")
-   - These values are derived from IOMM Pass 1 manifest
-   - They are guaranteed to match the actual enum declaration
+   - Use the EXACT af_enum string only if that symbol exists in INPUT CONTEXT 7.
+   - If af_enum is absent or no enum values exist, use AF numeric value cast to iomm_pin_function_t.
+   - Never invent symbolic names.
 
 FAILURE TO FOLLOW THESE RULES WILL CAUSE COMPILATION ERRORS.
 ===========================================================================
@@ -2770,12 +2948,10 @@ If "IOMM" appears in dependencies, you MUST:
 3. Implementation pattern:
    ```c
    void XXX_EnablePins(void) {{
-       IOMM_Status_t status;  /* Variables at top - C89 */
+       iomm_status_t status;  /* Variables at top - C89 */
 
-       status = IOMM_Unlock();  /* Use exact name from INPUT CONTEXT 7 */
-       if (status != IOMM_STATUS_OK) {{
-           return;
-       }}
+       /* IOMM_Unlock returns void */
+       IOMM_Unlock();
 
        IOMM_ConfigurePin(...);  /* Configure pins for this instance */
        IOMM_Lock();
@@ -2806,6 +2982,9 @@ REGISTER ACCESS REQUIREMENTS:
 - Instance Definition:
   - Create the base pointer definition casting the address to the Struct Type found in Context 3
   - Example: `#define {module_name.lower()}REG ((volatile <STRUCT_TYPE_FROM_CTX3> *)0xFFF7E500U)`
+- If `reg_<module>.h` already defines a base macro (for example `GIO_BASE_ADDRESS`), reuse that macro.
+- Do NOT redefine existing base-address macros from included register headers.
+- Prefer macro-based base pointers over new hardcoded numeric address literals when such macros exist.
 
 CLOCK SERVICE INTEGRATION (MANDATORY):
 --------------------------------------
@@ -2959,7 +3138,7 @@ DYNAMIC PIN ENABLE FUNCTION GENERATION (MANDATORY FOR I/O PERIPHERALS):
    ```
 
 4a. ALTERNATE FUNCTION (AF) VALUE CONVERSION:
-   **CRITICAL:** The AF number must be converted to a raw bit pattern value.
+   **CRITICAL:** Use enum values at API call sites, then encode ONE-HOT bits in PINMMR fields.
 
    **CRITICAL:** Use the iomm_pin_function_t enum values defined in iomm_driver.h
    See INPUT CONTEXT 7A for EXACT function signatures.
@@ -2990,6 +3169,12 @@ DYNAMIC PIN ENABLE FUNCTION GENERATION (MANDATORY FOR I/O PERIPHERALS):
    IOMM_ConfigurePin(39, 0x02U);  /* ❌ WRONG - expects enum, not raw integer */
    IOMM_ConfigurePin(39, 1);      /* ❌ WRONG - expects enum, not raw integer */
    ```
+
+   **CRITICAL ENCODING RULE inside IOMM_ConfigurePin():**
+   - PINMMR writes MUST use one-hot encoding inside each 8-bit function field.
+   - AF1 must set bit1 in the field (`1U << 1`), not write ordinal `0x01`.
+   - AF2 must set bit2 (`1U << 2`), etc.
+   - IOMM_ConfigurePin() MUST call IOMM_Unlock() before PINMMR writes and IOMM_Lock() on every return path.
 
 4b. CRITICAL: IOMM PIN-TO-PINMMR MAPPING (NON-LINEAR HARDWARE MAPPING):
    **CRITICAL BUG FIX:** The RM46 hardware uses NON-LINEAR pin-to-PINMMR register mapping.
@@ -3022,8 +3207,8 @@ DYNAMIC PIN ENABLE FUNCTION GENERATION (MANDATORY FOR I/O PERIPHERALS):
    }} IOMM_PinMapping_t;
 
    static const IOMM_PinMapping_t g_pin_mapping[] = {{
-       {{ .package_pin = 38, .pinmmr_reg = 7, .bit_position = 17 }},  /* SCIRX */
-       {{ .package_pin = 39, .pinmmr_reg = 8, .bit_position = 1 }},   /* SCITX */
+       {{ .package_pin = 38, .pinmmr_reg = 7, .bit_position = 16 }},  /* SCIRX field base */
+       {{ .package_pin = 39, .pinmmr_reg = 8, .bit_position = 0 }},   /* SCITX field base */
        {{ .package_pin = 89, .pinmmr_reg = 11, .bit_position = 8 }},  /* DCAN1TX */
        {{ .package_pin = 90, .pinmmr_reg = 11, .bit_position = 16 }}, /* DCAN1RX */
        /* ... all pins from pinmux.yaml with mux data ... */
@@ -3051,18 +3236,27 @@ DYNAMIC PIN ENABLE FUNCTION GENERATION (MANDATORY FOR I/O PERIPHERALS):
        }}
 
        if (mapping == NULL) {{
+           IOMM_Lock();
            return IOMM_STATUS_INVALID_PIN;
        }}
+
+       /* Bring-up contract: always unlock before PINMMR writes */
+       IOMM_Unlock();
 
        /* Calculate PINMMR register address */
        pinmmr_reg = &iommREG->PINMMR0 + mapping->pinmmr_reg;
 
+       /* Convert enum to one-hot bit within the 8-bit field */
+       uint32_t function_value = (1U << (uint32_t)function);
+
        /* Read-modify-write with proper bit masking */
        reg_value = *pinmmr_reg;
        reg_value &= ~(0xFFU << mapping->bit_position);  /* Clear 8-bit field */
-       reg_value |= (function & 0xFFU) << mapping->bit_position;  /* Set new value */
+       reg_value |= (function_value & 0xFFU) << mapping->bit_position;  /* Set one-hot value */
        *pinmmr_reg = reg_value;
 
+       /* Bring-up contract: always re-lock before return */
+       IOMM_Lock();
        return IOMM_STATUS_OK;
    }}
    ```
@@ -3508,6 +3702,69 @@ async def invoke_model(model: Model, max_tokens: int, messages: list[Message]) -
         finally:
             # Mark this task as completed for progress tracking
             _progress.increment()
+
+
+def invoke_model_sync(model: Model, max_tokens: int, messages: list[Message]):
+    """
+    Synchronous Bedrock invocation helper for compile-gate repair passes.
+    Returns raw Bedrock response payload (same shape as invoke_model).
+    """
+    # Check for mock mode (for testing without API calls)
+    import os
+    if os.getenv("BSP_MOCK_MODE", "").lower() in ("1", "true", "yes"):
+        from modules.utils.mock_api import mock_invoke_model_sync
+        response = mock_invoke_model_sync(model, max_tokens, messages)
+        try:
+            from modules.utils.utils import extract_usage_from_bedrock_response
+            usage = extract_usage_from_bedrock_response(response)
+            _cost_tracker.add_usage(model, usage["input_tokens"], usage["output_tokens"])
+        except Exception:
+            pass
+        _progress.increment()
+        return response
+
+    MODEL_CONTEXT_LIMIT = 200000
+    SAFETY_MARGIN = 5000
+    total_input_chars = sum(len(msg["content"]) for msg in messages)
+    estimated_input_tokens = total_input_chars // 4
+    available_output = MODEL_CONTEXT_LIMIT - estimated_input_tokens - SAFETY_MARGIN
+
+    if max_tokens > available_output:
+        if available_output < 4096:
+            print(
+                f"[warn] Input very large (~{estimated_input_tokens} tokens). "
+                f"Only {available_output} tokens available for output. Using minimum 4096."
+            )
+            max_tokens = 4096
+        else:
+            print(
+                f"[info] Requested {max_tokens} output tokens, but only {available_output} available "
+                f"(estimated input: ~{estimated_input_tokens} tokens). Adjusting output to {available_output}."
+            )
+            max_tokens = available_output
+
+    body = {
+        "max_tokens": max_tokens,
+        "anthropic_version": "bedrock-2023-05-31",
+        "messages": messages,
+    }
+
+    try:
+        response = client.invoke_model(
+            modelId=model.get_model_id(),
+            body=json.dumps(body),
+        )
+        body_bytes = response["body"].read()
+        response["body"] = body_bytes
+        try:
+            from modules.utils.utils import extract_usage_from_bedrock_response
+            usage = extract_usage_from_bedrock_response(response)
+            _cost_tracker.add_usage(model, usage["input_tokens"], usage["output_tokens"])
+        except Exception:
+            pass
+        return response
+    finally:
+        _progress.increment()
 
 
 def _show_progress(stop_event):
