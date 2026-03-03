@@ -1452,6 +1452,12 @@ soc:
       - reg: CDDIS
         op: write
         value: '0x00000020'
+      - reg: CLKCNTL
+        op: write
+        value: '(SYSREG->CLKCNTL & 0xF0FFFFFFU) | (1U << 24U)'
+      - reg: CLKCNTL
+        op: write
+        value: '(SYSREG->CLKCNTL & 0xFFF0FFFFU) | (1U << 16U)'
       - reg: GHVSRC
         op: write
         value: '0x00000001'
@@ -1461,12 +1467,6 @@ soc:
       - reg: VCLKASRC
         op: write
         value: '0x00000909'
-      - reg: CLKCNTL
-        op: write
-        value: '(SYSREG->CLKCNTL & 0xF0FFFFFFU) | (1U << 24U)'
-      - reg: CLKCNTL
-        op: write
-        value: '(SYSREG->CLKCNTL & 0xFFF0FFFFU) | (1U << 16U)'
       - reg: CLK2CNTRL
         op: write
         value: '(SYSREG2->CLK2CNTRL & 0xFFFFF0F0U) | (1U << 8U) | (1U << 0U)'
@@ -1871,7 +1871,7 @@ soc:
           - 21
           confidence: high
       base_address:
-        base: '0xFFF7E500'
+        base: '0xFFF7E400'
         size: '0x100'
         x-source:
           pdf: RM46_datasheet.pdf
@@ -1943,12 +1943,6 @@ soc:
     clock_ref: VCLK
     x-ext:
       init:
-      - reg: CLKCNTL
-        op: set_bits
-        value: '0x00000100'
-      - reg: CLKCNTL
-        op: write
-        value: '0x00010000'
       - reg: MINITGCR
         op: set_bits
         value: '0x0000000A'

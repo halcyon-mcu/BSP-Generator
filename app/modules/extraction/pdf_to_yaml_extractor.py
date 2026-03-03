@@ -433,7 +433,7 @@ Please fix these validation errors and regenerate the YAML. Make sure to:
 2. Use correct field names matching the schema exactly
 3. Include 'reset' values for all fields (use "0x00000000" if unknown)
 4. Ensure peripheral name matches '{peripheral_abbrev}' exactly
-5. Use proper YAML syntax - all hex values must be quoted strings like "0xFFF7E500"
+5. Use proper YAML syntax - all hex values must be quoted strings like "0xFFF7E400"
 6. Include ALL {discovery['count']} registers from the discovery results
 7. {'IMPORTANT: This is the SYSTEM module with multiple register blocks (SYS, SYS2, etc.). Include ALL of them.' if peripheral_abbrev.upper() == 'SYSTEM' else ''}
 

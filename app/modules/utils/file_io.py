@@ -20,11 +20,64 @@ from typing import List
 # Matches lines like: ===== FILE: foo.c =====
 FILE_SPLIT_RE = re.compile(r"^===== FILE: (.+) =====\s*$", re.M)
 GENERATED_TEXT_EXTENSIONS = {".c", ".h", ".s", ".S", ".cmd", ".ld"}
+_METADATA_MARKER = "BSP-GEN-META:"
+_METADATA_SEMICOLON_COMMENT_EXTENSIONS = {".s", ".S"}
 
 
 def _now_tag() -> str:
     """Return a compact timestamp tag for directory / artifact naming."""
     return datetime.now().strftime("%Y%m%dT%H%M%S")
+
+
+def _find_output_folder_name(file_path: Path | str) -> str:
+    path = Path(file_path)
+    try:
+        path = path.resolve()
+    except OSError:
+        pass
+
+    for candidate in [path.name, *[p.name for p in path.parents]]:
+        if candidate.startswith("output_") and len(candidate) > len("output_"):
+            return candidate
+    return "output_unknown"
+
+
+def _build_generation_metadata_line(file_path: Path | str) -> str:
+    path = Path(file_path)
+    output_folder = _find_output_folder_name(path)
+    output_tag = output_folder[len("output_"):] if output_folder.startswith("output_") else "unknown"
+    created_at = datetime.now().astimezone().isoformat(timespec="seconds")
+
+    if path.suffix in _METADATA_SEMICOLON_COMMENT_EXTENSIONS:
+        prefix = ";"
+    else:
+        prefix = "/*"
+
+    if prefix == ";":
+        return (
+            f"; {_METADATA_MARKER} created_at={created_at}; "
+            f"output_folder={output_folder}; output_tag={output_tag}"
+        )
+
+    return (
+        f"/* {_METADATA_MARKER} created_at={created_at}; "
+        f"output_folder={output_folder}; output_tag={output_tag} */"
+    )
+
+
+def _prepend_generation_metadata(content: str, file_path: Path | str) -> str:
+    path = Path(file_path)
+    if path.suffix not in GENERATED_TEXT_EXTENSIONS:
+        return content
+
+    head_lines = "\n".join(content.splitlines()[:5])
+    if _METADATA_MARKER in head_lines:
+        return content
+
+    metadata_line = _build_generation_metadata_line(path)
+    if not content:
+        return metadata_line
+    return f"{metadata_line}\n{content}"
 
 
 def _safe_relpath(s: str) -> str:
@@ -68,7 +121,9 @@ def normalize_generated_text(content: str, file_path: Path | str) -> str:
     """
     path = Path(file_path)
     if path.suffix in GENERATED_TEXT_EXTENSIONS:
-        return content.rstrip("\n") + "\n"
+        normalized = content.rstrip("\n")
+        normalized = _prepend_generation_metadata(normalized, path)
+        return normalized.rstrip("\n") + "\n"
     return content
 
 

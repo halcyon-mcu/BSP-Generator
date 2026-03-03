@@ -2981,7 +2981,7 @@ REGISTER ACCESS REQUIREMENTS:
 - Base Address: Use the specific memory address from the YAML (e.g. `sciREG1`)
 - Instance Definition:
   - Create the base pointer definition casting the address to the Struct Type found in Context 3
-  - Example: `#define {module_name.lower()}REG ((volatile <STRUCT_TYPE_FROM_CTX3> *)0xFFF7E500U)`
+  - Example: `#define {module_name.lower()}REG ((volatile <STRUCT_TYPE_FROM_CTX3> *)0xFFF7E400U)`
 - If `reg_<module>.h` already defines a base macro (for example `GIO_BASE_ADDRESS`), reuse that macro.
 - Do NOT redefine existing base-address macros from included register headers.
 - Prefer macro-based base pointers over new hardcoded numeric address literals when such macros exist.

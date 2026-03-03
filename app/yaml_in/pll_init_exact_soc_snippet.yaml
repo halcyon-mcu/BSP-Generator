@@ -38,6 +38,16 @@ x-ext:
       op: write
       value: "0x00000020"
 
+    # 0xFFFFFFD0 (VCLK2R field)
+    - reg: CLKCNTL
+      op: write
+      value: "(SYSREG->CLKCNTL & 0xF0FFFFFFU) | (1U << 24U)"
+
+    # 0xFFFFFFD0 (VCLKR field)
+    - reg: CLKCNTL
+      op: write
+      value: "(SYSREG->CLKCNTL & 0xFFF0FFFFU) | (1U << 16U)"
+
     # 0xFFFFFF48
     - reg: GHVSRC
       op: write
@@ -52,16 +62,6 @@ x-ext:
     - reg: VCLKASRC
       op: write
       value: "0x00000909"
-
-    # 0xFFFFFFD0 (VCLK2R field)
-    - reg: CLKCNTL
-      op: write
-      value: "(SYSREG->CLKCNTL & 0xF0FFFFFFU) | (1U << 24U)"
-
-    # 0xFFFFFFD0 (VCLKR field)
-    - reg: CLKCNTL
-      op: write
-      value: "(SYSREG->CLKCNTL & 0xFFF0FFFFU) | (1U << 16U)"
 
     # 0xFFFFE13C
     - reg: CLK2CNTRL

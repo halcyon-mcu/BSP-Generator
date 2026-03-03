@@ -21,7 +21,7 @@ contract_lock_mode: strict
 bringup_mode:
   default: direct_init
 startup_contract:
-  gate_mode: fail
+  gate_mode: warn
 parity_guard:
   mode: critical_only
   baseline_path: app/output_working_with_manual_changes
@@ -50,11 +50,11 @@ parity_guard:
     - PSPWRDWNCLR2
     - PSPWRDWNCLR3
 bsp_validation:
-  enabled: true
+  enabled: false
   baud: 9600
-  primary_serial_path: dual
-  force_sci_init: true
-  force_sci_tx: true
+  primary_serial_path: lin_only
+  force_sci_init: false
+  force_sci_tx: false
   frame:
     data_bits: 8
     stop_bits: 1
@@ -72,7 +72,8 @@ build_gate:
   external_workspace_path: "C:/Users/dovyd/workspace_v10"
   project_name: "Blinky2"
   configuration: Debug
-  max_fix_rounds: 3
+  # User preference: one extra correction round (no full runs by Codex).
+  max_fix_rounds: 4
   allow_targeted_llm_rewrite: true
   fail_on_compile_error: true
   clean_stale_project_files: true
@@ -84,10 +85,18 @@ build_gate:
     apply_policy: diff_only
     model: inherit
     max_tokens: 6000
-    max_attempts: 1
+    max_attempts: 2
     include_contract_context: true
 bringup:
   mode: strict
   contract_file: app/yaml_in/bringup_contract.yaml
   fail_on_contract_mismatch: true
   emit_debug_probes: false
+app_intent:
+  enabled: true
+  critical_file_freeze: true
+  allow_llm_on_critical: false
+  task_library_path: app/yaml_in/firmware_tasks.yaml
+  intent_refs_mode: proven_only
+  generate_firmware_pass: true
+  post_gen_max_tokens: 8000

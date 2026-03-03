@@ -8,6 +8,9 @@ required:
   - ir_schema_version
   - board
   - mcu
+  - communication
+  - leds
+  - buttons
 
 properties:
   ir_schema_version:
@@ -80,14 +83,58 @@ properties:
   leds:
     type: array
     description: LED connections
+    minItems: 1
     items:
       type: object
+      required:
+        - designator
+        - function
+        - mcu_pin
+        - active_state
+      properties:
+        designator:
+          type: string
+          minLength: 1
+        function:
+          type: string
+          minLength: 1
+        mcu_pin:
+          type: integer
+          minimum: 0
+        active_state:
+          type: string
+          enum: [LOW, HIGH]
+        gpio:
+          type: string
+          pattern: '^GIO[A-Za-z]\[[0-9]+\]$'
 
   buttons:
     type: array
     description: Button/switch connections
+    minItems: 1
     items:
       type: object
+      required:
+        - designator
+        - function
+        - mcu_pin
+        - active_state
+      properties:
+        designator:
+          type: string
+          minLength: 1
+        function:
+          type: string
+          minLength: 1
+        mcu_pin:
+          type: integer
+          minimum: 0
+        active_state:
+          type: string
+          enum: [LOW, HIGH]
+        gpio:
+          type: string
+          pattern: '^GIO[A-Za-z]\[[0-9]+\]$'
 
   sensors:
     type: array
@@ -110,7 +157,37 @@ properties:
   communication:
     type: object
     description: Communication interface routing
+    required:
+      - preferred_debug_path
     properties:
+      preferred_debug_path:
+        type: object
+        required:
+          - peripheral
+          - mode
+          - instance
+          - rx_pin
+          - tx_pin
+          - af
+        properties:
+          peripheral:
+            type: string
+            enum: [LIN, SCI, UART]
+          mode:
+            type: string
+            enum: [SCI, UART]
+          instance:
+            type: string
+            minLength: 1
+          rx_pin:
+            type: integer
+            minimum: 0
+          tx_pin:
+            type: integer
+            minimum: 0
+          af:
+            type: integer
+            minimum: 0
       can:
         type: object
         description: CAN bus interfaces
@@ -189,3 +266,40 @@ properties:
   x-ext:
     type: object
     description: Extended board information
+    properties:
+      data_quality:
+        type: object
+        description: Confidence tags for component and recipe references
+        properties:
+          components:
+            type: object
+            additionalProperties:
+              type: string
+              enum: [proven, schematic_only, needs_hw_verify]
+      provenance:
+        type: object
+        description: Optional provenance details for confidence-tagged entries
+        properties:
+          components:
+            type: object
+            additionalProperties:
+              type: string
+      peripheral_recipes:
+        type: object
+        description: Board-specific operational recipes used by post-generation app intent
+        additionalProperties:
+          type: object
+          properties:
+            canonical_ref:
+              type: string
+            kind:
+              type: string
+            quality:
+              type: string
+              enum: [proven, schematic_only, needs_hw_verify]
+            description:
+              type: string
+            aliases:
+              type: array
+              items:
+                type: string

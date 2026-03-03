@@ -3,16 +3,6 @@
 name: SYSTEM
 x-ext:
   init:
-    # 0xFFFFFFD0
-    - reg: CLKCNTL
-      op: set_bits
-      value: "0x00000100"
-
-    # 0xFFFFFFD0
-    - reg: CLKCNTL
-      op: write
-      value: "0x00010000"
-
     # 0xFFFFFF5C
     - reg: MINITGCR
       op: set_bits

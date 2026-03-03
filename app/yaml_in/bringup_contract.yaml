@@ -27,7 +27,6 @@ iomm:
 pll:
   init_profile: rm46_hal_aligned
   supported_profiles:
-  supported_profiles:
     - rm46_hal_aligned
     - rm46_trm_dynamic
     - rm46_trm_dynamic_with_hal_fallback

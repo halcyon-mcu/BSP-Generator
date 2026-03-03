@@ -9,6 +9,7 @@ from modules.yaml.schemas import (
     BusYAML,
     IrqYAML,
     PinmuxYAML,
+    BoardYAML,
     BringupContractYAML,
     validate_yaml_schema
 )
@@ -351,6 +352,65 @@ class TestBringupContractSchema:
         }
         is_valid, errors = validate_yaml_schema(data, PinmuxYAML)
         assert is_valid
+
+
+class TestBoardYAMLSchema:
+    """Test board.yaml schema requirements for board capability header completeness."""
+
+    @staticmethod
+    def _valid_board_data() -> dict:
+        return {
+            "ir_schema_version": "1.1.0",
+            "board": {"name": "LAUNCHXL2-TMS57012-RM46", "revision": "Rev 1.0"},
+            "mcu": {"part_number": "RM46L850", "package": "PGE_144"},
+            "communication": {
+                "preferred_debug_path": {
+                    "peripheral": "LIN",
+                    "mode": "SCI",
+                    "instance": "lin1",
+                    "rx_pin": 38,
+                    "tx_pin": 39,
+                    "af": 1,
+                }
+            },
+            "leds": [
+                {
+                    "designator": "LED2",
+                    "function": "USER LED",
+                    "mcu_pin": 142,
+                    "active_state": "LOW",
+                    "gpio": "GIOB[2]",
+                }
+            ],
+            "buttons": [
+                {
+                    "designator": "S3",
+                    "function": "USER button",
+                    "mcu_pin": 55,
+                    "active_state": "LOW",
+                }
+            ],
+        }
+
+    def test_valid_board_yaml_passes(self):
+        data = self._valid_board_data()
+        is_valid, errors = validate_yaml_schema(data, BoardYAML)
+        assert is_valid
+        assert errors == []
+
+    def test_missing_preferred_debug_path_fails(self):
+        data = self._valid_board_data()
+        data["communication"] = {}
+        is_valid, errors = validate_yaml_schema(data, BoardYAML)
+        assert not is_valid
+        assert any("preferred_debug_path" in err for err in errors)
+
+    def test_button_missing_mcu_pin_fails(self):
+        data = self._valid_board_data()
+        data["buttons"][0].pop("mcu_pin")
+        is_valid, errors = validate_yaml_schema(data, BoardYAML)
+        assert not is_valid
+        assert any("mcu_pin" in err for err in errors)
 
 
 if __name__ == "__main__":

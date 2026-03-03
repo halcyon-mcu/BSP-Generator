@@ -242,6 +242,7 @@ buttons:
   function: USER button
   type: TACT6MM_NO_MOM
   active_state: LOW
+  mcu_pin: 139
   net_name: N2HET1_15 / MIBSPI1NCS_4 / ECAP1
   pull_resistor: 2.2kΩ
   pull_direction: up
@@ -316,10 +317,10 @@ debug:
           note: Pulled down for normal operation
     additional_signals:
     - net: LINRX
-      pin: 131
+      pin: 38
       function: LIN Receive for debug
     - net: LINTX
-      pin: 132
+      pin: 39
       function: LIN Transmit for debug
     - net: CAN1RX
       pin: 90

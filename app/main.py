@@ -11,7 +11,14 @@ from typing import Any, List, Dict, Optional
 
 from config import YAMLS_DIR, TARGET_FILES, FACTS_CANON, PATTERN_SNIPS
 
-from modules.utils.file_io import split_and_write_files, write_makefile, write_manifest, write_doxyfile, run_doxygen
+from modules.utils.file_io import (
+    normalize_generated_text,
+    run_doxygen,
+    split_and_write_files,
+    write_doxyfile,
+    write_makefile,
+    write_manifest,
+)
 from modules.utils.utils import _read, extract_text_from_bedrock_response, _now_tag
 from modules.generation.prompt import (
     build_clock_prompt,
@@ -45,6 +52,13 @@ from modules.build.ccs_build_gate import (
     run_ccs_build_gate,
 )
 from modules.build.ti_diagnostics import apply_deterministic_fixes
+from modules.intent.board_capabilities import (
+    build_board_capability_header,
+    build_board_capability_manifest,
+    format_allowed_references_for_console,
+    validate_intent_references,
+)
+from modules.intent.post_generation_prompt import build_post_generation_firmware_prompt
 from modules.validation.startup_contract_validator import validate_startup_contract
 from modules.validation.register_parity_guard import (
     default_critical_registers,
@@ -106,6 +120,15 @@ DEFAULT_GENERATION_PROFILE = {
         "baseline_path": "app/output_working_with_manual_changes",
         "critical_registers": default_critical_registers(),
     },
+    "app_intent": {
+        "enabled": True,
+        "critical_file_freeze": True,
+        "allow_llm_on_critical": False,
+        "task_library_path": "app/yaml_in/firmware_tasks.yaml",
+        "intent_refs_mode": "proven_only",
+        "generate_firmware_pass": True,
+        "post_gen_max_tokens": 8000,
+    },
     "bsp_validation": {
         "enabled": False,
         "baud": 9600,
@@ -130,7 +153,7 @@ DEFAULT_GENERATION_PROFILE = {
         "external_workspace_path": "",
         "project_name": "",
         "configuration": "Debug",
-        "max_fix_rounds": 3,
+        "max_fix_rounds": 4,
         "allow_targeted_llm_rewrite": True,
         "fail_on_compile_error": True,
         "clean_stale_project_files": True,
@@ -142,7 +165,7 @@ DEFAULT_GENERATION_PROFILE = {
             "apply_policy": "hybrid",
             "model": "inherit",
             "max_tokens": 6000,
-            "max_attempts": 1,
+            "max_attempts": 2,
             "include_contract_context": True,
         },
     },
@@ -172,6 +195,49 @@ def _merge_generation_profile(override_profile: dict | None) -> dict:
     return merged
 
 
+def _load_profile_data(
+    *,
+    args_profile: Optional[str],
+    no_profile: bool,
+    yaml_root: Path,
+) -> tuple[Optional[Dict[str, Any]], Optional[Path]]:
+    """
+    Resolve profile source for a run.
+    Returns (profile_data, loaded_path). When no profile is used, both are None.
+    """
+    if no_profile:
+        return None, None
+
+    if args_profile:
+        profile_path = Path(args_profile)
+        return load_generation_profile(profile_path), profile_path
+
+    default_path = Path(yaml_root) / "generation_profile.yaml"
+    if default_path.exists():
+        return load_generation_profile(default_path), default_path
+
+    return None, None
+
+
+def _should_use_profile_module_selection(
+    *,
+    loaded_profile_path: Optional[Path],
+    no_profile: bool,
+    profile_enabled_modules: Any,
+) -> bool:
+    """
+    Use profile module selection only when an actual profile file was loaded.
+    This avoids treating in-code defaults as an explicit profile selection.
+    """
+    if no_profile:
+        return False
+    if loaded_profile_path is None:
+        return False
+    if not isinstance(profile_enabled_modules, list):
+        return False
+    return len(profile_enabled_modules) > 0
+
+
 def _resolve_optional_path(path_value: Optional[str], yaml_root: Path) -> Optional[Path]:
     if not isinstance(path_value, str) or not path_value.strip():
         return None
@@ -197,6 +263,47 @@ def _resolve_optional_path(path_value: Optional[str], yaml_root: Path) -> Option
         if resolved.exists():
             return resolved
     return None
+
+
+def _prompt_for_ccs_workspace_project(
+    workspace_value: Optional[str],
+    project_value: Optional[str],
+    *,
+    context_label: str = "compile gate",
+) -> tuple[str, str]:
+    """
+    Prompt interactively for CCS workspace/project when values are missing/invalid.
+    Returns empty strings when user intentionally skips.
+    """
+    workspace = str(workspace_value or "").strip()
+    project = str(project_value or "").strip()
+
+    # Non-interactive sessions cannot be prompted.
+    if not sys.stdin.isatty():
+        return workspace, project
+
+    if not workspace:
+        workspace = input(
+            f"[user] Enter CCS workspace path for {context_label} (blank to skip): "
+        ).strip()
+    while workspace and not Path(workspace).exists():
+        print(f"[warn] CCS workspace path does not exist: {workspace}")
+        workspace = input(
+            f"[user] Re-enter existing CCS workspace path for {context_label} (blank to skip): "
+        ).strip()
+
+    if workspace and not project:
+        project = input(
+            f"[user] Enter CCS project name in that workspace for {context_label} (blank to skip): "
+        ).strip()
+
+    while workspace and project and not (Path(workspace) / project).exists():
+        print(f"[warn] CCS project path does not exist: {Path(workspace) / project}")
+        project = input(
+            f"[user] Re-enter CCS project name for {context_label} (blank to skip): "
+        ).strip()
+
+    return workspace, project
 
 
 def _resolve_startup_gate_mode(
@@ -284,6 +391,572 @@ def _augment_compile_gate_report(
 
     report_path = Path(out_dir) / "compile_gate_report.json"
     report_path.write_text(json.dumps(build_gate_result, indent=2), encoding="utf-8")
+
+
+def _build_build_evidence_from_gate_result(
+    build_gate_result: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if not isinstance(build_gate_result, dict):
+        return {
+            "mode": "validation_only",
+            "required": False,
+            "status": "not_run",
+        }
+    return {
+        "mode": "generator_ccs_build_gate",
+        "required": bool(build_gate_result.get("required", False)),
+        "status": build_gate_result.get("status"),
+        "passes": bool(build_gate_result.get("passes", False)),
+        "rounds": len(build_gate_result.get("rounds", [])),
+        "error_summary": build_gate_result.get("error_summary", {}),
+        "configuration": build_gate_result.get("configuration"),
+        "external_workspace_path": build_gate_result.get("external_workspace_path"),
+        "project_name": build_gate_result.get("project_name"),
+        "llm_rewrite_attempted": bool(build_gate_result.get("llm_rewrite_attempted", False)),
+        "llm_rewrite_applied": bool(build_gate_result.get("llm_rewrite_applied", False)),
+        "llm_rewrite_target_files": list(build_gate_result.get("llm_rewrite_target_files", [])),
+        "llm_rewrite_tokens": dict(build_gate_result.get("llm_rewrite_tokens", {})),
+        "llm_rewrite_failure_reason": build_gate_result.get("llm_rewrite_failure_reason"),
+    }
+
+
+def _recompute_strict_critical_errors(
+    report_data: Dict[str, Any],
+    build_gate_result: Optional[Dict[str, Any]],
+) -> int:
+    modules = report_data.get("peripheral_validations", {}) or {}
+    critical_errors = 0
+    if isinstance(modules, dict):
+        for _, module in modules.items():
+            if isinstance(module, dict):
+                critical_errors += len(module.get("critical_errors", []) or [])
+
+    compile_contract = report_data.get("compile_contract", {}) or {}
+    if isinstance(compile_contract, dict) and not bool(compile_contract.get("passes", True)):
+        critical_errors += len(compile_contract.get("errors", []) or [])
+
+    startup_contract = report_data.get("startup_contract", {}) or {}
+    if isinstance(startup_contract, dict) and not bool(startup_contract.get("passes", True)):
+        critical_errors += len(startup_contract.get("errors", []) or [])
+
+    runtime_invariants = report_data.get("runtime_invariants", {}) or {}
+    parity_passes = bool(runtime_invariants.get("parity_guard_passes", True))
+    if not parity_passes:
+        critical_errors += len(report_data.get("critical_sequence_mismatches", []) or [])
+
+    if isinstance(build_gate_result, dict) and not bool(build_gate_result.get("passes", False)):
+        diag_errors = int((build_gate_result.get("error_summary", {}) or {}).get("errors", 1))
+        critical_errors += max(1, diag_errors)
+
+    return critical_errors
+
+
+def _sync_validation_report_build_evidence(
+    out_dir: Path,
+    build_gate_result: Optional[Dict[str, Any]],
+    *,
+    strict_validation_enabled: bool = False,
+) -> bool:
+    """
+    Keep validation_report.{json,md} aligned with the latest compile-gate result.
+    This avoids stale false-positive build evidence after post-generation compile reruns.
+    """
+    json_path = Path(out_dir) / "validation_report.json"
+    md_path = Path(out_dir) / "validation_report.md"
+    if not json_path.exists():
+        return False
+
+    try:
+        report_data = json.loads(json_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if not isinstance(report_data, dict):
+        return False
+
+    report_data["build_evidence"] = _build_build_evidence_from_gate_result(build_gate_result)
+    runtime = report_data.get("runtime_invariants")
+    if not isinstance(runtime, dict):
+        runtime = {}
+        report_data["runtime_invariants"] = runtime
+    runtime["build_gate_passes"] = (
+        bool(build_gate_result.get("passes", False))
+        if isinstance(build_gate_result, dict)
+        else None
+    )
+
+    summary = report_data.get("validation_summary")
+    if strict_validation_enabled and isinstance(summary, dict):
+        summary["critical_errors"] = _recompute_strict_critical_errors(report_data, build_gate_result)
+
+    try:
+        from modules.validation.validation_report import (
+            ModuleValidation,
+            ValidationReport,
+            ValidationSummary,
+            write_json_report,
+            write_markdown_report,
+        )
+
+        summary_dict = report_data.get("validation_summary", {}) or {}
+        summary_obj = ValidationSummary(
+            total_modules=int(summary_dict.get("total_modules", 0) or 0),
+            modules_valid=int(summary_dict.get("modules_valid", 0) or 0),
+            modules_invalid=int(summary_dict.get("modules_invalid", 0) or 0),
+            critical_errors=int(summary_dict.get("critical_errors", 0) or 0),
+            warnings=int(summary_dict.get("warnings", 0) or 0),
+            success_rate=float(summary_dict.get("success_rate", 0.0) or 0.0),
+        )
+
+        periph_objs: Dict[str, ModuleValidation] = {}
+        periph_data = report_data.get("peripheral_validations", {}) or {}
+        if isinstance(periph_data, dict):
+            for module_name, raw in periph_data.items():
+                if not isinstance(raw, dict):
+                    continue
+                periph_objs[module_name] = ModuleValidation(
+                    module_name=str(raw.get("module_name", module_name)),
+                    facts_mirror_valid=bool(raw.get("facts_mirror_valid", False)),
+                    constants_validated=int(raw.get("constants_validated", 0) or 0),
+                    mismatches=int(raw.get("mismatches", 0) or 0),
+                    tests_generated=bool(raw.get("tests_generated", False)),
+                    critical_errors=list(raw.get("critical_errors", []) or []),
+                    warnings=list(raw.get("warnings", []) or []),
+                )
+
+        report_obj = ValidationReport(
+            timestamp=str(report_data.get("timestamp", "")),
+            bsp_output_dir=str(report_data.get("bsp_output_dir", "")),
+            validation_summary=summary_obj,
+            peripheral_validations=periph_objs,
+            cross_file_validation=report_data.get("cross_file_validation"),
+            dependency_graph_info=(
+                report_data.get("dependency_graph")
+                if isinstance(report_data.get("dependency_graph"), dict)
+                else report_data.get("dependency_graph_info")
+            ),
+            compile_contract=report_data.get("compile_contract"),
+            autofix_actions=list(report_data.get("autofix_actions", []) or []),
+            startup_contract=report_data.get("startup_contract"),
+            build_evidence=report_data.get("build_evidence"),
+            api_contract_hash=report_data.get("api_contract_hash"),
+            runtime_invariants=report_data.get("runtime_invariants"),
+            critical_sequence_mismatches=list(report_data.get("critical_sequence_mismatches", []) or []),
+        )
+
+        write_json_report(report_obj, json_path)
+        write_markdown_report(report_obj, md_path)
+        return True
+    except Exception:
+        return False
+
+
+def _emit_board_capability_manifest(out_dir: Path, board_data: Dict[str, Any]) -> Dict[str, Any]:
+    manifest = build_board_capability_manifest(board_data or {})
+    manifest_path = Path(out_dir) / "board_capability_manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    include_dir = Path(out_dir) / "include"
+    include_dir.mkdir(parents=True, exist_ok=True)
+    header_path = include_dir / "board_capabilities.h"
+    header_content = build_board_capability_header(board_data or {}, capability_manifest=manifest)
+    header_path.write_text(
+        normalize_generated_text(header_content, header_path),
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def _run_post_generation_intent_prompt(
+    out_dir: Path,
+    capability_manifest: Dict[str, Any],
+    *,
+    refs_mode: str,
+    initial_intent: str = "",
+    task_library_path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    for line in format_allowed_references_for_console(capability_manifest, mode=refs_mode):
+        print(line)
+
+    non_interactive = bool(initial_intent.strip())
+    prompt = (
+        "\n[user] Enter app intent (for example: 'blink LED2 and print S3 presses over terminal'): "
+    )
+    intent_text = initial_intent.strip()
+    cancelled = False
+    validation_result: Dict[str, Any] = {
+        "mode": refs_mode,
+        "valid": False,
+        "recognized_refs": [],
+        "rejected_refs": [{"reference": "<none>", "reason": "no_input"}],
+        "suggested_refs": {},
+        "matched_aliases": [],
+    }
+
+    while True:
+        if not intent_text:
+            intent_text = input(prompt).strip()
+            if not intent_text:
+                cancelled = True
+                break
+
+        validation_result = validate_intent_references(
+            intent_text,
+            capability_manifest,
+            mode=refs_mode,
+        )
+        if validation_result.get("valid", False):
+            print(
+                "[ok] Intent references validated: "
+                + ", ".join(validation_result.get("recognized_refs", []))
+            )
+            break
+
+        rejected = validation_result.get("rejected_refs", [])
+        print("[warn] Intent contains unknown or disallowed component references:")
+        for item in rejected:
+            if not isinstance(item, dict):
+                continue
+            print(f"  - {item.get('reference')}: {item.get('reason')}")
+        suggestions = validation_result.get("suggested_refs", {})
+        if isinstance(suggestions, dict) and suggestions:
+            print("[info] Suggested references:")
+            for token, values in suggestions.items():
+                if isinstance(values, list) and values:
+                    print(f"  - {token} -> {', '.join(values)}")
+
+        if non_interactive:
+            break
+
+        retry = input("[user] Re-enter app intent? [Y/n]: ").strip().lower()
+        if retry in {"n", "no"}:
+            cancelled = True
+            break
+        intent_text = ""
+
+    firmware_prompt_path: Optional[Path] = None
+    board_header_path = Path(out_dir) / "include" / "board_capabilities.h"
+    if validation_result.get("valid", False) and not cancelled:
+        if board_header_path.exists():
+            board_header_text = board_header_path.read_text(encoding="utf-8")
+            driver_headers_context = _build_driver_headers_context(Path(out_dir))
+            task_library_text = ""
+            if isinstance(task_library_path, Path):
+                if task_library_path.exists():
+                    task_library_text = task_library_path.read_text(encoding="utf-8")
+                else:
+                    print(f"[warn] app_intent task library not found: {task_library_path}")
+
+            prompt_text = build_post_generation_firmware_prompt(
+                intent_text=intent_text,
+                board_capabilities_header=board_header_text,
+                driver_headers_context=driver_headers_context,
+                task_library_text=task_library_text,
+                task_library_source=str(task_library_path) if isinstance(task_library_path, Path) else "",
+            )
+            artifacts_dir = Path(out_dir) / "_artifacts"
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            firmware_prompt_path = artifacts_dir / f"post_gen_firmware_prompt_{_now_tag()}.txt"
+            firmware_prompt_path.write_text(prompt_text, encoding="utf-8")
+            print(f"[ok] Post-generation firmware prompt written: {firmware_prompt_path}")
+        else:
+            print(
+                "[warn] Skipping post-generation firmware prompt build; missing "
+                f"{board_header_path}"
+            )
+
+    report = {
+        "enabled": True,
+        "mode": refs_mode,
+        "intent_text": intent_text,
+        "cancelled": cancelled,
+        "intent_reference_validation": validation_result,
+        "board_mapping_source": str(board_header_path),
+        "task_library_path": str(task_library_path) if isinstance(task_library_path, Path) else "",
+        "firmware_prompt_path": str(firmware_prompt_path) if firmware_prompt_path else "",
+    }
+    report_path = Path(out_dir) / "app_intent_report.json"
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return report
+
+
+def _build_driver_headers_context(out_dir: Path) -> str:
+    """
+    Collect key driver headers so post-generation prompt can call existing APIs
+    instead of inventing low-level/manual operations.
+    """
+    include_dir = Path(out_dir) / "include"
+    header_names = [
+        "system.h",
+        "pll_driver.h",
+        "pcr_driver.h",
+        "iomm_driver.h",
+        "gio_driver.h",
+        "lin_driver.h",
+        "sci_driver.h",
+        "vim.h",
+    ]
+    sections: List[str] = []
+    for name in header_names:
+        header_path = include_dir / name
+        if not header_path.exists():
+            continue
+        content = header_path.read_text(encoding="utf-8", errors="ignore").strip()
+        if not content:
+            continue
+        sections.extend(
+            [
+                f"===== BEGIN HEADER: include/{name} =====",
+                content,
+                f"===== END HEADER: include/{name} =====",
+            ]
+        )
+
+    source_symbols = _extract_driver_source_symbols(Path(out_dir))
+    if source_symbols:
+        sections.append("===== BEGIN DRIVER_SOURCE_SYMBOLS =====")
+        for filename in sorted(source_symbols.keys()):
+            symbols = source_symbols.get(filename, [])
+            if not symbols:
+                continue
+            preview = ", ".join(symbols[:40])
+            suffix = " ..." if len(symbols) > 40 else ""
+            sections.append(f"{filename}: {preview}{suffix}")
+        sections.append("===== END DRIVER_SOURCE_SYMBOLS =====")
+    return "\n".join(sections)
+
+
+def _extract_driver_source_symbols(out_dir: Path) -> Dict[str, List[str]]:
+    """
+    Discover non-static BSP-like function symbols from generated source files so
+    post-generation prompt can use helper APIs that may be missing from headers.
+    """
+    source_dir = Path(out_dir) / "source"
+    if not source_dir.exists():
+        return {}
+
+    symbol_map: Dict[str, List[str]] = {}
+    source_files = [
+        "lin_driver.c",
+        "sci_driver.c",
+        "gio_driver.c",
+        "iomm_driver.c",
+        "pll_driver.c",
+        "pcr_driver.c",
+        "system.c",
+        "vim.c",
+    ]
+    func_re = re.compile(
+        r"^\s*(?!static\b)[A-Za-z_][\w\s\*]*?\s+([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{",
+        re.MULTILINE,
+    )
+    keep_prefixes = ("LIN_", "SCI_", "GIO_", "IOMM_", "PLL_", "PCR_", "system_", "vim_")
+
+    for filename in source_files:
+        path = source_dir / filename
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        symbols = []
+        for match in func_re.finditer(text):
+            name = match.group(1)
+            if name.startswith(keep_prefixes):
+                symbols.append(name)
+        unique_symbols = sorted(set(symbols))
+        if unique_symbols:
+            symbol_map[filename] = unique_symbols
+
+    return symbol_map
+
+
+def _build_post_gen_contract_slice(api_contract_manifest: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(api_contract_manifest, dict):
+        return {}
+    modules = api_contract_manifest.get("modules", {})
+    if not isinstance(modules, dict):
+        return {}
+
+    keep_modules = {"SYSTEM", "PLL", "PCR", "IOMM", "VIM", "GIO", "LIN", "SCI"}
+    sliced_modules = {
+        name: value
+        for name, value in modules.items()
+        if str(name).upper() in keep_modules and isinstance(value, dict)
+    }
+    if not sliced_modules:
+        return {}
+
+    return {
+        "version": api_contract_manifest.get("version", ""),
+        "generated_at": api_contract_manifest.get("generated_at", ""),
+        "modules": sliced_modules,
+    }
+
+
+def _wire_app_intent_into_main(out_dir: Path) -> bool:
+    """
+    Deterministically wire APP_INTENT_Init/Step hooks into generated main.c.
+    """
+    main_c_path = Path(out_dir) / "main.c"
+    if not main_c_path.exists():
+        return False
+
+    lines = main_c_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    changed = False
+
+    if '#include "app_intent.h"' not in lines:
+        include_indices = [idx for idx, line in enumerate(lines) if line.strip().startswith("#include ")]
+        insert_at = include_indices[-1] + 1 if include_indices else 0
+        lines.insert(insert_at, '#include "app_intent.h"')
+        changed = True
+
+    if not any("APP_INTENT_Init();" in line for line in lines):
+        inserted_init = False
+        for idx, line in enumerate(lines):
+            if "BSP_ValidateInit();" in line:
+                lines.insert(idx + 1, "    APP_INTENT_Init();")
+                changed = True
+                inserted_init = True
+                break
+        if not inserted_init:
+            for idx, line in enumerate(lines):
+                if line.strip() == "while (1)":
+                    lines.insert(idx, "    APP_INTENT_Init();")
+                    lines.insert(idx + 1, "")
+                    changed = True
+                    inserted_init = True
+                    break
+
+    if not any("APP_INTENT_Step();" in line for line in lines):
+        inserted_step = False
+        for idx, line in enumerate(lines):
+            if "BSP_ValidateStep();" in line:
+                lines.insert(idx + 1, "        APP_INTENT_Step();")
+                changed = True
+                inserted_step = True
+                break
+        if not inserted_step:
+            for idx, line in enumerate(lines):
+                if line.strip() == "while (1)":
+                    for j in range(idx + 1, min(idx + 6, len(lines))):
+                        if lines[j].strip() == "{":
+                            lines.insert(j + 1, "        APP_INTENT_Step();")
+                            changed = True
+                            inserted_step = True
+                            break
+                    if inserted_step:
+                        break
+
+    if changed:
+        main_c_path.write_text(
+            normalize_generated_text("\n".join(lines), main_c_path),
+            encoding="utf-8",
+        )
+    return changed
+
+
+async def _run_post_generation_firmware_pass(
+    *,
+    out_dir: Path,
+    intent_report: Dict[str, Any],
+    model_enum: Model,
+    max_tokens: int,
+    generation_profile: Dict[str, Any],
+    api_contract_manifest: Optional[Dict[str, Any]],
+    bringup_contract: Optional[Dict[str, Any]],
+    task_library_path: Optional[Path],
+    token_allocator=None,
+    progress_manager=None,
+) -> Dict[str, Any]:
+    intent_validation = intent_report.get("intent_reference_validation", {})
+    if not bool(intent_validation.get("valid", False)):
+        return {
+            "enabled": True,
+            "success": False,
+            "reason": "invalid_intent_references",
+            "written_files": [],
+        }
+
+    board_header_path = Path(out_dir) / "include" / "board_capabilities.h"
+    if not board_header_path.exists():
+        return {
+            "enabled": True,
+            "success": False,
+            "reason": "missing_board_capabilities_header",
+            "written_files": [],
+        }
+
+    board_header_text = board_header_path.read_text(encoding="utf-8")
+    driver_headers_context = _build_driver_headers_context(Path(out_dir))
+    task_library_text = ""
+    if isinstance(task_library_path, Path) and task_library_path.exists():
+        task_library_text = task_library_path.read_text(encoding="utf-8")
+
+    bringup_contract_yaml = ""
+    if isinstance(bringup_contract, dict):
+        bringup_contract_yaml = dump_yaml_str(bringup_contract)
+
+    profile_slice = {
+        "app_intent": generation_profile.get("app_intent", {}),
+        "bsp_validation": generation_profile.get("bsp_validation", {}),
+        "bringup_mode": generation_profile.get("bringup_mode", {}),
+    }
+    profile_yaml = dump_yaml_str(profile_slice)
+
+    contract_slice = _build_post_gen_contract_slice(api_contract_manifest)
+    contract_slice_json = json.dumps(contract_slice, indent=2) if contract_slice else ""
+
+    main_c_text = ""
+    main_c_path = Path(out_dir) / "main.c"
+    if main_c_path.exists():
+        main_c_text = main_c_path.read_text(encoding="utf-8", errors="ignore")
+
+    user_prompt = build_post_generation_firmware_prompt(
+        intent_text=str(intent_report.get("intent_text", "")),
+        board_capabilities_header=board_header_text,
+        api_contract_manifest_json=contract_slice_json,
+        bringup_contract_yaml=bringup_contract_yaml,
+        generation_profile_yaml=profile_yaml,
+        existing_main_c=main_c_text,
+        driver_headers_context=driver_headers_context,
+        task_library_text=task_library_text,
+        task_library_source=str(task_library_path) if isinstance(task_library_path, Path) else "",
+    )
+
+    artifacts_dir = Path(out_dir) / "_artifacts"
+    written_files = await _invoke_and_write(
+        tag="post_gen_firmware",
+        system_prompt=build_system_prompt(),
+        user_prompt=user_prompt,
+        model_enum=model_enum,
+        max_tokens=max_tokens,
+        artifacts_dir=artifacts_dir,
+        out_dir=out_dir,
+        token_allocator=token_allocator,
+        progress_manager=progress_manager,
+    )
+
+    expected = {
+        Path(out_dir) / "include" / "app_intent.h",
+        Path(out_dir) / "source" / "app_intent.c",
+    }
+    produced = set(written_files or [])
+    missing_expected = [str(path) for path in expected if path not in produced and not path.exists()]
+
+    main_wired = _wire_app_intent_into_main(out_dir)
+    if main_wired:
+        print(f"[ok] Wired APP_INTENT hooks into {Path(out_dir) / 'main.c'}")
+
+    report = {
+        "enabled": True,
+        "success": len(missing_expected) == 0 and len(written_files or []) > 0,
+        "reason": "" if len(missing_expected) == 0 else "missing_expected_files",
+        "written_files": [str(path) for path in (written_files or [])],
+        "missing_expected_files": missing_expected,
+        "main_hook_injected": main_wired,
+        "expected_files": sorted(str(path) for path in expected),
+        "max_tokens": int(max_tokens),
+    }
+    report_path = Path(out_dir) / "post_gen_firmware_report.json"
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return report
 
 
 def resolve_dependencies(modules: List[str], manifest: Dict) -> List[str]:
@@ -947,7 +1620,7 @@ def _discover_generated_modules(out_dir: Path) -> List[str]:
     return sorted(modules)
 
 
-def _run_validation_only(args) -> int:
+async def _run_validation_only(args) -> int:
     if not args.output_dir:
         raise ValueError("--validate-only requires --output-dir <existing output_* directory>")
 
@@ -973,16 +1646,54 @@ def _run_validation_only(args) -> int:
     board_data = load_board_yaml(yaml_root / "board.yaml")
 
     # Load profile and bring-up contract using same defaults
-    profile_data = None
-    if args.profile:
-        profile_data = load_generation_profile(Path(args.profile))
-        print(f"[info] Loaded generation profile: {args.profile}")
-    elif (yaml_root / "generation_profile.yaml").exists():
-        profile_path = yaml_root / "generation_profile.yaml"
-        profile_data = load_generation_profile(profile_path)
-        print(f"[info] Loaded generation profile: {profile_path}")
+    if args.no_profile and args.profile:
+        print("[warn] --no-profile set; ignoring --profile.")
+    profile_data, loaded_profile_path = _load_profile_data(
+        args_profile=args.profile,
+        no_profile=bool(args.no_profile),
+        yaml_root=yaml_root,
+    )
+    if args.no_profile:
+        print("[info] --no-profile set: using in-code defaults (no generation profile loaded).")
+    elif loaded_profile_path is not None:
+        print(f"[info] Loaded generation profile: {loaded_profile_path}")
 
     generation_profile = _merge_generation_profile(profile_data)
+    app_intent_cfg = generation_profile.get("app_intent", {}) if isinstance(generation_profile.get("app_intent", {}), dict) else {}
+    app_intent_enabled = bool(app_intent_cfg.get("enabled", True))
+    intent_refs_mode = str(
+        args.intent_refs_mode
+        or app_intent_cfg.get("intent_refs_mode", "proven_only")
+    ).strip().lower()
+    if intent_refs_mode not in {"proven_only", "include_unverified"}:
+        intent_refs_mode = "proven_only"
+    post_gen_generate = bool(args.post_gen_generate or app_intent_cfg.get("generate_firmware_pass", False))
+    post_gen_max_tokens_raw = (
+        args.post_gen_max_tokens
+        if args.post_gen_max_tokens is not None
+        else app_intent_cfg.get("post_gen_max_tokens", args.max_tokens)
+    )
+    try:
+        post_gen_max_tokens = int(post_gen_max_tokens_raw)
+    except (TypeError, ValueError):
+        post_gen_max_tokens = int(args.max_tokens)
+    if post_gen_max_tokens < 1024:
+        post_gen_max_tokens = 1024
+
+    configured_task_library = app_intent_cfg.get("task_library_path")
+    app_intent_task_library_path: Optional[Path] = None
+    if isinstance(configured_task_library, str) and configured_task_library.strip():
+        app_intent_task_library_path = _resolve_optional_path(
+            configured_task_library,
+            yaml_root,
+        )
+        if app_intent_task_library_path is None:
+            print(f"[warn] app_intent.task_library_path not found: {configured_task_library}")
+
+    board_capability_manifest = _emit_board_capability_manifest(out_dir, board_data)
+    print(f"[ok] Board capability manifest written: {out_dir / 'board_capability_manifest.json'}")
+    print(f"[ok] Board capability header written: {out_dir / 'include' / 'board_capabilities.h'}")
+
     bringup_cfg = generation_profile.get("bringup", {}) if isinstance(generation_profile.get("bringup", {}), dict) else {}
     bringup_mode = str(bringup_cfg.get("mode", "strict")).strip().lower()
     if bringup_mode not in {"strict", "relaxed"}:
@@ -1238,20 +1949,41 @@ def _run_validation_only(args) -> int:
                 "checks": {},
             }
 
+    build_gate_cfg = generation_profile.get("build_gate", {}) if isinstance(generation_profile.get("build_gate", {}), dict) else {}
+    build_gate_overrides = {
+        "ccs_workspace": args.ccs_workspace,
+        "ccs_project": args.ccs_project,
+        "ccs_config": args.ccs_config,
+        "build_gate": args.build_gate,
+        "build_gate_llm": args.build_gate_llm,
+        "build_gate_llm_top_k": args.build_gate_llm_top_k,
+        "build_gate_llm_model": args.build_gate_llm_model,
+        "model": args.model,
+    }
+    run_build_gate_requested = bool(args.run_build_gate)
+    if run_build_gate_requested:
+        workspace_seed = str(
+            args.ccs_workspace or build_gate_cfg.get("external_workspace_path", "")
+        ).strip()
+        project_seed = str(
+            args.ccs_project or build_gate_cfg.get("project_name", "")
+        ).strip()
+        prompted_workspace, prompted_project = _prompt_for_ccs_workspace_project(
+            workspace_seed,
+            project_seed,
+            context_label="validate-only compile gate",
+        )
+        if prompted_workspace and prompted_project:
+            build_gate_overrides["ccs_workspace"] = prompted_workspace
+            build_gate_overrides["ccs_project"] = prompted_project
+        else:
+            print("[warn] Skipping validate-only compile gate (missing CCS workspace/project).")
+            run_build_gate_requested = False
+
     # Optional compile gate in validation-only mode
     build_gate_result = None
     build_gate_failed = False
-    if args.run_build_gate:
-        build_gate_overrides = {
-            "ccs_workspace": args.ccs_workspace,
-            "ccs_project": args.ccs_project,
-            "ccs_config": args.ccs_config,
-            "build_gate": args.build_gate,
-            "build_gate_llm": args.build_gate_llm,
-            "build_gate_llm_top_k": args.build_gate_llm_top_k,
-            "build_gate_llm_model": args.build_gate_llm_model,
-            "model": args.model,
-        }
+    if run_build_gate_requested:
         build_gate_result = run_ccs_build_gate(
             output_dir=out_dir,
             generation_profile=generation_profile,
@@ -1353,29 +2085,7 @@ def _run_validation_only(args) -> int:
         (parity_result or {}).get("critical_sequence_mismatches", [])
     )
 
-    if build_gate_result:
-        final_report.build_evidence = {
-            "mode": "generator_ccs_build_gate",
-            "required": bool(build_gate_result.get("required", False)),
-            "status": build_gate_result.get("status"),
-            "passes": bool(build_gate_result.get("passes", False)),
-            "rounds": len(build_gate_result.get("rounds", [])),
-            "error_summary": build_gate_result.get("error_summary", {}),
-            "configuration": build_gate_result.get("configuration"),
-            "external_workspace_path": build_gate_result.get("external_workspace_path"),
-            "project_name": build_gate_result.get("project_name"),
-            "llm_rewrite_attempted": bool(build_gate_result.get("llm_rewrite_attempted", False)),
-            "llm_rewrite_applied": bool(build_gate_result.get("llm_rewrite_applied", False)),
-            "llm_rewrite_target_files": list(build_gate_result.get("llm_rewrite_target_files", [])),
-            "llm_rewrite_tokens": dict(build_gate_result.get("llm_rewrite_tokens", {})),
-            "llm_rewrite_failure_reason": build_gate_result.get("llm_rewrite_failure_reason"),
-        }
-    else:
-        final_report.build_evidence = {
-            "mode": "validation_only",
-            "required": False,
-            "status": "not_run",
-        }
+    final_report.build_evidence = _build_build_evidence_from_gate_result(build_gate_result)
 
     if api_contract_manifest:
         final_report.api_contract_hash = api_contract_manifest.get("api_contract_hash")
@@ -1386,7 +2096,7 @@ def _run_validation_only(args) -> int:
         "bringup_mode": bringup_mode,
         "fail_on_contract_mismatch": fail_on_contract_mismatch,
         "startup_contract_gate_mode": startup_gate_mode,
-        "run_build_gate": bool(args.run_build_gate),
+        "run_build_gate": bool(run_build_gate_requested),
         "parity_guard_mode": parity_guard_cfg.get("mode"),
         "parity_guard_passes": bool((parity_result or {}).get("passes", True)),
         "parity_guard_baseline": str(parity_guard_cfg.get("baseline_path") or ""),
@@ -1437,6 +2147,87 @@ def _run_validation_only(args) -> int:
         startup_gate_mode,
         parity_result,
     )
+
+    should_prompt_for_intent = bool(
+        args.post_gen_prompt
+        or args.post_gen_generate
+        or post_gen_generate
+        or str(args.app_intent or "").strip()
+    )
+    if app_intent_enabled and should_prompt_for_intent:
+        intent_report = _run_post_generation_intent_prompt(
+            out_dir,
+            board_capability_manifest,
+            refs_mode=intent_refs_mode,
+            initial_intent=str(args.app_intent or ""),
+            task_library_path=app_intent_task_library_path,
+        )
+        if not bool((intent_report or {}).get("intent_reference_validation", {}).get("valid", False)):
+            print("[error] App intent reference validation failed in validate-only mode. See app_intent_report.json for details.")
+            return 4
+
+        if post_gen_generate:
+            model_enum = {
+                "haiku3.0": Model.HAIKU_3_0,
+                "haiku4.5": Model.HAIKU_4_5,
+                "sonnet3.5": Model.SONNET_3_5,
+                "sonnet4.5": Model.SONNET_4_5,
+                "opus4.5": Model.OPUS_4_5,
+                "opus4.6": Model.OPUS_4_6,
+            }[args.model]
+
+            post_gen_report = await _run_post_generation_firmware_pass(
+                out_dir=out_dir,
+                intent_report=intent_report,
+                model_enum=model_enum,
+                max_tokens=post_gen_max_tokens,
+                generation_profile=generation_profile,
+                api_contract_manifest=api_contract_manifest,
+                bringup_contract=bringup_contract,
+                task_library_path=app_intent_task_library_path,
+                token_allocator=None,
+                progress_manager=None,
+            )
+            if not bool((post_gen_report or {}).get("success", False)):
+                print("[error] Post-generation firmware pass failed in validate-only mode. See post_gen_firmware_report.json for details.")
+                return 5
+
+            if run_build_gate_requested:
+                print("[info] Re-running external CCS compile gate after validate-only post-generation firmware pass...")
+                build_gate_result = run_ccs_build_gate(
+                    output_dir=out_dir,
+                    generation_profile=generation_profile,
+                    overrides=build_gate_overrides,
+                    api_contract_manifest=api_contract_manifest,
+                    bringup_contract=bringup_contract,
+                    run_model_name=args.model,
+                    progress_callback=print,
+                )
+                build_gate_failed = gate_should_fail_run(build_gate_result)
+                print(
+                    f"[info] Post-gen compile gate status (validate-only): {build_gate_result.get('status')} "
+                    f"(passes={bool(build_gate_result.get('passes', False))}, "
+                    f"rounds={len(build_gate_result.get('rounds', []))})"
+                )
+                _augment_compile_gate_report(
+                    out_dir,
+                    build_gate_result,
+                    startup_contract_result,
+                    startup_gate_mode,
+                    parity_result,
+                )
+                synced = _sync_validation_report_build_evidence(
+                    out_dir,
+                    build_gate_result,
+                    strict_validation_enabled=strict_validation_enabled,
+                )
+                if synced:
+                    print("[info] Updated validation report with final post-gen compile-gate result (validate-only).")
+                if build_gate_failed:
+                    print("[error] Post-generation compile gate failed in validate-only mode.")
+                    return 6
+    elif should_prompt_for_intent and not app_intent_enabled:
+        print("[warn] app_intent.enabled=false in profile; skipping post-generation intent prompt in validate-only mode.")
 
     if startup_gate_mode == "fail" and not startup_contract_result.get("passes", True):
         print("[error] Startup contract gate failed in validate-only mode.")
@@ -1511,6 +2302,33 @@ async def main():
         help="Include test harness in main.c (conditional on BSP_RUN_TESTS define)",
     )
     parser.add_argument(
+        "--post-gen-prompt",
+        action="store_true",
+        help="After BSP generation, prompt for app intent and validate board component references.",
+    )
+    parser.add_argument(
+        "--post-gen-generate",
+        action="store_true",
+        help="After successful post-generation app intent validation, run an LLM firmware generation pass.",
+    )
+    parser.add_argument(
+        "--post-gen-max-tokens",
+        type=int,
+        default=None,
+        help="Max tokens for post-generation firmware pass (defaults to app_intent.post_gen_max_tokens or --max-tokens).",
+    )
+    parser.add_argument(
+        "--app-intent",
+        default="",
+        help="Optional non-interactive app intent string to validate against board component allowlist.",
+    )
+    parser.add_argument(
+        "--intent-refs-mode",
+        default=None,
+        choices=["proven_only", "include_unverified"],
+        help="Reference validation mode for post-generation intent prompt. Defaults to profile or proven_only.",
+    )
+    parser.add_argument(
         "--mock",
         action="store_true",
         help="Use mock API responses for testing (no real API calls, no cost)",
@@ -1534,6 +2352,11 @@ async def main():
         "--profile",
         default=None,
         help="Optional generation profile YAML path (e.g., yaml_in/generation_profile.yaml)",
+    )
+    parser.add_argument(
+        "--no-profile",
+        action="store_true",
+        help="Do not load --profile or auto-load generation_profile.yaml; use in-code defaults only.",
     )
     parser.add_argument(
         "--ccs-workspace",
@@ -1578,7 +2401,7 @@ async def main():
     args = parser.parse_args()
 
     if args.validate_only:
-        return _run_validation_only(args)
+        return await _run_validation_only(args)
 
     # Enable mock mode if requested
     if args.mock:
@@ -1634,16 +2457,55 @@ async def main():
     board_data = load_board_yaml(Path(args.yamlpath) / "board.yaml")
 
     # Load optional profile and merge with defaults
-    profile_data = None
-    if args.profile:
-        profile_data = load_generation_profile(Path(args.profile))
-        print(f"[info] Loaded generation profile: {args.profile}")
-    elif (Path(args.yamlpath) / "generation_profile.yaml").exists():
-        profile_path = Path(args.yamlpath) / "generation_profile.yaml"
-        profile_data = load_generation_profile(profile_path)
-        print(f"[info] Loaded generation profile: {profile_path}")
+    yaml_root_for_profile = Path(args.yamlpath)
+    if args.no_profile and args.profile:
+        print("[warn] --no-profile set; ignoring --profile.")
+    profile_data, loaded_profile_path = _load_profile_data(
+        args_profile=args.profile,
+        no_profile=bool(args.no_profile),
+        yaml_root=yaml_root_for_profile,
+    )
+    if args.no_profile:
+        print("[info] --no-profile set: using in-code defaults (no generation profile loaded).")
+    elif loaded_profile_path is not None:
+        print(f"[info] Loaded generation profile: {loaded_profile_path}")
 
     generation_profile = _merge_generation_profile(profile_data)
+    app_intent_cfg = generation_profile.get("app_intent", {}) if isinstance(generation_profile.get("app_intent", {}), dict) else {}
+    app_intent_enabled = bool(app_intent_cfg.get("enabled", True))
+    intent_refs_mode = str(
+        args.intent_refs_mode
+        or app_intent_cfg.get("intent_refs_mode", "proven_only")
+    ).strip().lower()
+    if intent_refs_mode not in {"proven_only", "include_unverified"}:
+        intent_refs_mode = "proven_only"
+    post_gen_generate = bool(args.post_gen_generate or app_intent_cfg.get("generate_firmware_pass", False))
+    post_gen_max_tokens_raw = (
+        args.post_gen_max_tokens
+        if args.post_gen_max_tokens is not None
+        else app_intent_cfg.get("post_gen_max_tokens", args.max_tokens)
+    )
+    try:
+        post_gen_max_tokens = int(post_gen_max_tokens_raw)
+    except (TypeError, ValueError):
+        post_gen_max_tokens = int(args.max_tokens)
+    if post_gen_max_tokens < 1024:
+        post_gen_max_tokens = 1024
+
+    configured_task_library = app_intent_cfg.get("task_library_path")
+    app_intent_task_library_path: Optional[Path] = None
+    if isinstance(configured_task_library, str) and configured_task_library.strip():
+        app_intent_task_library_path = _resolve_optional_path(
+            configured_task_library,
+            Path(args.yamlpath),
+        )
+        if app_intent_task_library_path is None:
+            print(f"[warn] app_intent.task_library_path not found: {configured_task_library}")
+
+    board_capability_manifest = _emit_board_capability_manifest(out_dir, board_data)
+    print(f"[ok] Board capability manifest written: {out_dir / 'board_capability_manifest.json'}")
+    print(f"[ok] Board capability header written: {out_dir / 'include' / 'board_capabilities.h'}")
+
     bringup_cfg = generation_profile.get("bringup", {}) if isinstance(generation_profile.get("bringup", {}), dict) else {}
     bringup_mode = str(bringup_cfg.get("mode", "strict")).strip().lower()
     if bringup_mode not in {"strict", "relaxed"}:
@@ -1730,19 +2592,23 @@ async def main():
     if build_gate_enabled and build_gate_mode == "strict":
         strict_workspace = str(ccs_workspace_override or build_gate_cfg.get("external_workspace_path", "")).strip()
         strict_project = str(ccs_project_override or build_gate_cfg.get("project_name", "")).strip()
-        if not strict_workspace or not strict_project:
+        strict_workspace, strict_project = _prompt_for_ccs_workspace_project(
+            strict_workspace,
+            strict_project,
+            context_label="strict compile gate",
+        )
+        if strict_workspace and strict_project:
+            build_gate_overrides["ccs_workspace"] = strict_workspace
+            build_gate_overrides["ccs_project"] = strict_project
+        elif sys.stdin.isatty():
+            print("[warn] Missing CCS workspace/project; disabling compile gate for this run.")
+            build_gate_enabled = False
+            build_gate_mode = "off"
+            build_gate_overrides["build_gate"] = "off"
+        else:
             raise ValueError(
                 "build_gate.mode=strict requires both build_gate.external_workspace_path and build_gate.project_name "
                 "(or --ccs-workspace/--ccs-project overrides)."
-            )
-        if not Path(strict_workspace).exists():
-            raise ValueError(
-                f"build_gate.mode=strict external workspace path does not exist: {strict_workspace}"
-            )
-        strict_project_path = Path(strict_workspace) / strict_project
-        if not strict_project_path.exists():
-            raise ValueError(
-                f"build_gate.mode=strict CCS project path does not exist: {strict_project_path}"
             )
 
     target_board_name = generation_profile.get("target_board")
@@ -1821,10 +2687,15 @@ async def main():
 
     if generate_peripherals:
         profile_enabled = generation_profile.get("modules", {}).get("enabled", [])
+        use_profile_modules = _should_use_profile_module_selection(
+            loaded_profile_path=loaded_profile_path,
+            no_profile=bool(args.no_profile),
+            profile_enabled_modules=profile_enabled,
+        )
 
         # Selection priority:
         # 1) explicit CLI modules
-        # 2) profile modules
+        # 2) loaded profile modules
         # 3) interactive prompt
         if args.modules:
             progress_manager.log_or_print(f"[info] Using peripherals from command line: {', '.join(args.modules)}")
@@ -1835,13 +2706,26 @@ async def main():
                 found_names = [p.get("name") for p in chosen_peripherals]
                 missing = set(m.upper() for m in args.modules) - set(n.upper() for n in found_names)
                 print(f"[warn] Could not find modules: {', '.join(missing)}")
-        elif profile_enabled:
-            enabled_upper = {m.upper() for m in profile_enabled}
-            all_peripherals = get_peripheral_list(soc_data)
-            chosen_peripherals = [p for p in all_peripherals if p.get("name", "").upper() in enabled_upper]
-            progress_manager.log_or_print(
-                f"[info] Using modules from profile: {', '.join(profile_enabled)}"
-            )
+        elif use_profile_modules:
+            use_profile_selection = True
+            if sys.stdin.isatty() and not args.yes:
+                answer = input(
+                    f"[user] Use modules from loaded profile ({', '.join(profile_enabled)})? [Y/n]: "
+                ).strip().lower()
+                if answer in {"n", "no"}:
+                    use_profile_selection = False
+
+            if use_profile_selection:
+                enabled_upper = {m.upper() for m in profile_enabled}
+                all_peripherals = get_peripheral_list(soc_data)
+                chosen_peripherals = [p for p in all_peripherals if p.get("name", "").upper() in enabled_upper]
+                progress_manager.log_or_print(
+                    f"[info] Using modules from profile: {', '.join(profile_enabled)}"
+                )
+            else:
+                print("\n[user] Select Peripherals for BSP Generation:")
+                print("[info] Core infrastructure (SYSTEM, VIM) are platform files; PLL driver provides clock APIs")
+                chosen_peripherals = prompt_user_for_peripherals(soc_data)
         else:
             print("\n[user] Select Peripherals for BSP Generation:")
             print("[info] Core infrastructure (SYSTEM, VIM) are platform files; PLL driver provides clock APIs")
@@ -2592,22 +3476,7 @@ async def main():
             (parity_result or {}).get("critical_sequence_mismatches", [])
         )
         if build_gate_result:
-            final_report.build_evidence = {
-                "mode": "generator_ccs_build_gate",
-                "required": bool(build_gate_result.get("required", False)),
-                "status": build_gate_result.get("status"),
-                "passes": bool(build_gate_result.get("passes", False)),
-                "rounds": len(build_gate_result.get("rounds", [])),
-                "error_summary": build_gate_result.get("error_summary", {}),
-                "configuration": build_gate_result.get("configuration"),
-                "external_workspace_path": build_gate_result.get("external_workspace_path"),
-                "project_name": build_gate_result.get("project_name"),
-                "llm_rewrite_attempted": bool(build_gate_result.get("llm_rewrite_attempted", False)),
-                "llm_rewrite_applied": bool(build_gate_result.get("llm_rewrite_applied", False)),
-                "llm_rewrite_target_files": list(build_gate_result.get("llm_rewrite_target_files", [])),
-                "llm_rewrite_tokens": dict(build_gate_result.get("llm_rewrite_tokens", {})),
-                "llm_rewrite_failure_reason": build_gate_result.get("llm_rewrite_failure_reason"),
-            }
+            final_report.build_evidence = _build_build_evidence_from_gate_result(build_gate_result)
         else:
             final_report.build_evidence = {
                 "mode": "user_ccs_compile_log_required",
@@ -2749,17 +3618,114 @@ async def main():
     except Exception as e:
         print(f"[warn] Could not display cost summary: {e}")
 
+    should_prompt_for_intent = bool(
+        args.post_gen_prompt
+        or args.post_gen_generate
+        or post_gen_generate
+        or str(args.app_intent or "").strip()
+    )
+    defer_initial_build_gate_failure = bool(
+        build_gate_failed
+        and build_gate_enabled
+        and app_intent_enabled
+        and should_prompt_for_intent
+        and post_gen_generate
+    )
+
     if startup_gate_mode == "fail" and bringup_contract_failed:
         print("[error] Startup/parity contract gate failed; see validation_report for details.")
         _progress.stop_spinner()
         return 2
-    if build_gate_failed:
+    if build_gate_failed and not defer_initial_build_gate_failure:
         print("[error] Strict CCS compile gate failed; see compile_gate_report.json and ccs_build_log.txt for details.")
         _progress.stop_spinner()
         return 3
+    if defer_initial_build_gate_failure:
+        print(
+            "[warn] Initial strict CCS compile gate failed; continuing to post-generation firmware pass "
+            "and final compile-gate rerun."
+        )
 
     # Ensure any remaining spinner threads are stopped
     _progress.stop_spinner()
+
+    if app_intent_enabled and should_prompt_for_intent:
+        intent_report = _run_post_generation_intent_prompt(
+            out_dir,
+            board_capability_manifest,
+            refs_mode=intent_refs_mode,
+            initial_intent=str(args.app_intent or ""),
+            task_library_path=app_intent_task_library_path,
+        )
+        if not bool((intent_report or {}).get("intent_reference_validation", {}).get("valid", False)):
+            print("[error] App intent reference validation failed. See app_intent_report.json for details.")
+            return 4
+        if post_gen_generate:
+            post_gen_report = await _run_post_generation_firmware_pass(
+                out_dir=out_dir,
+                intent_report=intent_report,
+                model_enum=model_enum,
+                max_tokens=post_gen_max_tokens,
+                generation_profile=generation_profile,
+                api_contract_manifest=api_contract_manifest,
+                bringup_contract=bringup_contract,
+                task_library_path=app_intent_task_library_path,
+                token_allocator=token_allocator,
+                progress_manager=progress_manager,
+            )
+            if not bool((post_gen_report or {}).get("success", False)):
+                print("[error] Post-generation firmware pass failed. See post_gen_firmware_report.json for details.")
+                return 5
+
+            # Compile gate was already run before post-gen modifications; rerun to verify new files.
+            if build_gate_enabled:
+                print("[info] Re-running external CCS compile gate after post-generation firmware pass...")
+
+                def _post_gen_build_gate_progress(msg: str) -> None:
+                    if progress_manager:
+                        progress_manager.log_or_print(msg)
+                    else:
+                        print(msg)
+
+                post_gen_build_gate_result = run_ccs_build_gate(
+                    output_dir=out_dir,
+                    generation_profile=generation_profile,
+                    overrides=build_gate_overrides,
+                    api_contract_manifest=api_contract_manifest,
+                    bringup_contract=bringup_contract,
+                    run_model_name=model_enum.value,
+                    progress_callback=_post_gen_build_gate_progress,
+                )
+                post_gen_status = post_gen_build_gate_result.get("status", "unknown")
+                post_gen_passes = bool(post_gen_build_gate_result.get("passes", False))
+                print(
+                    f"[info] Post-gen compile gate status: {post_gen_status} "
+                    f"(passes={post_gen_passes})"
+                )
+                build_gate_result = post_gen_build_gate_result
+                build_gate_failed = gate_should_fail_run(build_gate_result)
+                _augment_compile_gate_report(
+                    out_dir,
+                    build_gate_result,
+                    startup_contract_result,
+                    startup_gate_mode,
+                    parity_result,
+                )
+                synced = _sync_validation_report_build_evidence(
+                    out_dir,
+                    build_gate_result,
+                    strict_validation_enabled=strict_validation_enabled,
+                )
+                if synced:
+                    print("[info] Updated validation report with final post-gen compile-gate result.")
+                if build_gate_failed:
+                    print(
+                        "[error] Post-generation compile gate failed; see compile_gate_report.json "
+                        "and ccs_build_log.txt for details."
+                    )
+                    return 6
+    elif should_prompt_for_intent and not app_intent_enabled:
+        print("[warn] app_intent.enabled=false in profile; skipping post-generation intent prompt.")
 
     # Update cost metrics and cleanup progress manager
     if progress_manager:

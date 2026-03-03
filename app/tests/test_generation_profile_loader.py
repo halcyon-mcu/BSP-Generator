@@ -184,3 +184,53 @@ parity_guard:
     )
     with pytest.raises(ValueError):
         load_generation_profile(profile_path)
+
+
+def test_load_generation_profile_accepts_app_intent_section(tmp_path: Path):
+    profile_path = _write_yaml(
+        tmp_path / "generation_profile.yaml",
+        """
+app_intent:
+  enabled: true
+  critical_file_freeze: true
+  allow_llm_on_critical: false
+  task_library_path: app/yaml_in/firmware_tasks.yaml
+  intent_refs_mode: proven_only
+  generate_firmware_pass: true
+  post_gen_max_tokens: 7000
+        """,
+    )
+
+    data = load_generation_profile(profile_path)
+    assert data["app_intent"]["enabled"] is True
+    assert data["app_intent"]["intent_refs_mode"] == "proven_only"
+    assert data["app_intent"]["generate_firmware_pass"] is True
+    assert data["app_intent"]["post_gen_max_tokens"] == 7000
+
+
+def test_load_generation_profile_rejects_invalid_app_intent_refs_mode(tmp_path: Path):
+    profile_path = _write_yaml(
+        tmp_path / "generation_profile.yaml",
+        """
+app_intent:
+  enabled: true
+  intent_refs_mode: maybe
+        """,
+    )
+
+    with pytest.raises(ValueError):
+        load_generation_profile(profile_path)
+
+
+def test_load_generation_profile_rejects_invalid_post_gen_tokens(tmp_path: Path):
+    profile_path = _write_yaml(
+        tmp_path / "generation_profile.yaml",
+        """
+app_intent:
+  enabled: true
+  post_gen_max_tokens: 256
+        """,
+    )
+
+    with pytest.raises(ValueError):
+        load_generation_profile(profile_path)

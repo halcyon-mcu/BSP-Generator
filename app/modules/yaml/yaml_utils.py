@@ -143,10 +143,10 @@ def load_pinmux_yaml(path: Path) -> Dict[str, Any]:
 
 
 def load_board_yaml(path: Path) -> Dict[str, Any]:
-    """Load board.yaml and perform lightweight schema validation."""
+    """Load board.yaml and enforce required board-capability schema fields."""
     data = _load_yaml(path)
 
-    # Optional schema, allow extra fields for board-specific metadata.
+    # Strict schema for capability-header completeness (extra keys still allowed).
     is_valid, errors = validate_yaml_schema(data, BoardYAML)
     if not is_valid:
         error_msg = f"board.yaml validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
@@ -185,9 +185,10 @@ def load_generation_profile(path: Path) -> Dict[str, Any]:
       contract_mode: "auto_fix_then_fail" | "hard_fail" | "warn_only"
       require_ccs_proof: bool
       bringup.{mode,contract_file,fail_on_contract_mismatch,emit_debug_probes}
-      bringup_mode.default: direct_init|validation
-      startup_contract.gate_mode: warn|fail
-      parity_guard.{mode,baseline_path,critical_registers}
+    bringup_mode.default: direct_init|validation
+    startup_contract.gate_mode: warn|fail
+    parity_guard.{mode,baseline_path,critical_registers}
+      app_intent.{enabled,critical_file_freeze,allow_llm_on_critical,task_library_path,intent_refs_mode,generate_firmware_pass,post_gen_max_tokens}
       build_gate.{enabled,mode,external_workspace_path,project_name,configuration,max_fix_rounds,allow_targeted_llm_rewrite,fail_on_compile_error,clean_build,llm_rewrite.*}
       bsp_validation.{enabled,baud,primary_serial_path,frame,banners,timing}
     """
@@ -292,6 +293,30 @@ def load_generation_profile(path: Path) -> Dict[str, Any]:
         regs = parity_guard["critical_registers"]
         if not isinstance(regs, list) or not all(isinstance(x, str) for x in regs):
             raise ValueError("generation_profile.yaml: 'parity_guard.critical_registers' must be a list of strings")
+
+    app_intent = data.get("app_intent", {})
+    if app_intent and not isinstance(app_intent, dict):
+        raise ValueError("generation_profile.yaml: 'app_intent' must be a mapping")
+    if "enabled" in app_intent and not isinstance(app_intent["enabled"], bool):
+        raise ValueError("generation_profile.yaml: 'app_intent.enabled' must be boolean")
+    if "critical_file_freeze" in app_intent and not isinstance(app_intent["critical_file_freeze"], bool):
+        raise ValueError("generation_profile.yaml: 'app_intent.critical_file_freeze' must be boolean")
+    if "allow_llm_on_critical" in app_intent and not isinstance(app_intent["allow_llm_on_critical"], bool):
+        raise ValueError("generation_profile.yaml: 'app_intent.allow_llm_on_critical' must be boolean")
+    if "task_library_path" in app_intent and not isinstance(app_intent["task_library_path"], str):
+        raise ValueError("generation_profile.yaml: 'app_intent.task_library_path' must be a string")
+    if "intent_refs_mode" in app_intent and app_intent["intent_refs_mode"] not in ("proven_only", "include_unverified"):
+        raise ValueError(
+            "generation_profile.yaml: 'app_intent.intent_refs_mode' must be "
+            "'proven_only' or 'include_unverified'"
+        )
+    if "generate_firmware_pass" in app_intent and not isinstance(app_intent["generate_firmware_pass"], bool):
+        raise ValueError("generation_profile.yaml: 'app_intent.generate_firmware_pass' must be boolean")
+    if "post_gen_max_tokens" in app_intent and (
+        not isinstance(app_intent["post_gen_max_tokens"], int)
+        or app_intent["post_gen_max_tokens"] < 1024
+    ):
+        raise ValueError("generation_profile.yaml: 'app_intent.post_gen_max_tokens' must be an integer >= 1024")
 
     if "contract_mode" in data:
         valid_modes = {"auto_fix_then_fail", "hard_fail", "warn_only"}

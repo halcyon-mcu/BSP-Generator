@@ -317,14 +317,156 @@ class MemmapYAML(BaseModel):
 
 
 # ==============================================================================
-# BOARD.YAML SCHEMA (Optional - for future use)
+# BOARD.YAML SCHEMA
 # ==============================================================================
 
+class BoardIdentity(BaseModel):
+    """Board identity metadata."""
+    model_config = ConfigDict(extra='allow')
+
+    name: str
+    revision: str
+
+    @field_validator('name', 'revision')
+    @classmethod
+    def validate_non_empty(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("Field cannot be empty")
+        return v.strip()
+
+
+class BoardMcu(BaseModel):
+    """Board MCU package identity."""
+    model_config = ConfigDict(extra='allow')
+
+    part_number: str
+    package: str
+
+    @field_validator('part_number', 'package')
+    @classmethod
+    def validate_non_empty(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("Field cannot be empty")
+        return v.strip()
+
+
+class BoardPreferredDebugPath(BaseModel):
+    """Canonical preferred terminal/UART route used for bring-up."""
+    model_config = ConfigDict(extra='allow')
+
+    peripheral: Literal["LIN", "SCI", "UART"]
+    mode: Literal["SCI", "UART"]
+    instance: str
+    rx_pin: int = Field(..., ge=0)
+    tx_pin: int = Field(..., ge=0)
+    af: int = Field(..., ge=0)
+
+    @field_validator('peripheral', 'mode', mode='before')
+    @classmethod
+    def normalize_upper_token(cls, v: Any) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("Field cannot be empty")
+        return v.strip().upper()
+
+    @field_validator('instance')
+    @classmethod
+    def validate_instance(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("Field cannot be empty")
+        return v.strip()
+
+
+class BoardCommunication(BaseModel):
+    """Board communication routing."""
+    model_config = ConfigDict(extra='allow')
+
+    preferred_debug_path: BoardPreferredDebugPath
+
+
+class BoardLed(BaseModel):
+    """LED mapping required for generated board capability header."""
+    model_config = ConfigDict(extra='allow')
+
+    designator: str
+    function: str
+    mcu_pin: int = Field(..., ge=0)
+    active_state: Literal["LOW", "HIGH"]
+    gpio: Optional[str] = None
+
+    @field_validator('designator', 'function')
+    @classmethod
+    def validate_non_empty(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("Field cannot be empty")
+        return v.strip()
+
+    @field_validator('active_state', mode='before')
+    @classmethod
+    def normalize_active_state(cls, v: Any) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("Field cannot be empty")
+        return v.strip().upper()
+
+    @field_validator('gpio')
+    @classmethod
+    def validate_gpio(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        token = v.strip()
+        if not token:
+            return None
+        if not re.match(r"^GIO[A-Za-z]\[\d+\]$", token):
+            raise ValueError("gpio must match GIO<port>[<pin>] when provided")
+        return token
+
+
+class BoardButton(BaseModel):
+    """Button mapping required for generated board capability header."""
+    model_config = ConfigDict(extra='allow')
+
+    designator: str
+    function: str
+    mcu_pin: int = Field(..., ge=0)
+    active_state: Literal["LOW", "HIGH"]
+    gpio: Optional[str] = None
+
+    @field_validator('designator', 'function')
+    @classmethod
+    def validate_non_empty(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("Field cannot be empty")
+        return v.strip()
+
+    @field_validator('active_state', mode='before')
+    @classmethod
+    def normalize_active_state(cls, v: Any) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("Field cannot be empty")
+        return v.strip().upper()
+
+    @field_validator('gpio')
+    @classmethod
+    def validate_gpio(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        token = v.strip()
+        if not token:
+            return None
+        if not re.match(r"^GIO[A-Za-z]\[\d+\]$", token):
+            raise ValueError("gpio must match GIO<port>[<pin>] when provided")
+        return token
+
+
 class BoardYAML(BaseModel):
-    """Root schema for board.yaml (optional)."""
-    board_name: Optional[str] = None
-    communication: Optional[Dict[str, Any]] = None
-    model_config = {"extra": "allow"}  # Allow extra fields
+    """Root schema for board.yaml used by board capability header generation."""
+    model_config = ConfigDict(extra='allow')
+
+    ir_schema_version: str
+    board: BoardIdentity
+    mcu: BoardMcu
+    communication: BoardCommunication
+    leds: List[BoardLed] = Field(..., min_length=1)
+    buttons: List[BoardButton] = Field(..., min_length=1)
 
 
 # ==============================================================================
@@ -531,6 +673,18 @@ class ParityGuardProfile(BaseModel):
     critical_registers: Optional[List[str]] = None
 
 
+class AppIntentProfile(BaseModel):
+    model_config = ConfigDict(extra='allow')
+
+    enabled: Optional[bool] = None
+    critical_file_freeze: Optional[bool] = None
+    allow_llm_on_critical: Optional[bool] = None
+    task_library_path: Optional[str] = None
+    intent_refs_mode: Optional[Literal["proven_only", "include_unverified"]] = None
+    generate_firmware_pass: Optional[bool] = None
+    post_gen_max_tokens: Optional[int] = Field(default=None, ge=1024)
+
+
 class GenerationProfileYAML(BaseModel):
     """Schema for generation_profile.yaml."""
     model_config = ConfigDict(extra='allow')
@@ -549,6 +703,7 @@ class GenerationProfileYAML(BaseModel):
     bringup_mode: Optional[BringupModeProfile] = None
     startup_contract: Optional[StartupContractProfile] = None
     parity_guard: Optional[ParityGuardProfile] = None
+    app_intent: Optional[AppIntentProfile] = None
 
 
 # ==============================================================================
