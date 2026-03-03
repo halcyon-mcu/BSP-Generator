@@ -404,6 +404,27 @@ def load_generation_profile(path: Path) -> Dict[str, Any]:
             "enabled": bool(build_gate.get("allow_targeted_llm_rewrite", True))
         }
 
+    flash = data.get("flash", {})
+    if flash and not isinstance(flash, dict):
+        raise ValueError("generation_profile.yaml: 'flash' must be a mapping")
+    if "enabled" in flash and not isinstance(flash["enabled"], bool):
+        raise ValueError("generation_profile.yaml: 'flash.enabled' must be boolean")
+    if "command_template" in flash and not isinstance(flash["command_template"], str):
+        raise ValueError("generation_profile.yaml: 'flash.command_template' must be a string")
+    if "working_dir" in flash and not isinstance(flash["working_dir"], str):
+        raise ValueError("generation_profile.yaml: 'flash.working_dir' must be a string")
+    if "timeout_sec" in flash and (
+        not isinstance(flash["timeout_sec"], int) or flash["timeout_sec"] <= 0
+    ):
+        raise ValueError("generation_profile.yaml: 'flash.timeout_sec' must be a positive integer")
+    if "env" in flash:
+        env = flash["env"]
+        if not isinstance(env, dict):
+            raise ValueError("generation_profile.yaml: 'flash.env' must be a mapping")
+        for k, v in env.items():
+            if not isinstance(k, str) or not isinstance(v, str):
+                raise ValueError("generation_profile.yaml: 'flash.env' keys/values must be strings")
+
     return data
 
 

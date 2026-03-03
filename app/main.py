@@ -1,10 +1,12 @@
 import argparse
 import asyncio
+import builtins
 import inspect
 import json
 import os
 import re
 import signal
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, List, Dict, Optional
@@ -12,6 +14,7 @@ from typing import Any, List, Dict, Optional
 from config import YAMLS_DIR, TARGET_FILES, FACTS_CANON, PATTERN_SNIPS
 
 from modules.utils.file_io import (
+    evaluate_doxygen_output,
     normalize_generated_text,
     run_doxygen,
     split_and_write_files,
@@ -99,6 +102,93 @@ CORE_MANIFEST_ALIASES = {
     # Removed PLL->clock alias. PLL module provides clock APIs directly.
 }
 CRITICAL_BUILD_MODULES = {"SCI", "GIO", "PLL", "IOMM", "PCR"}
+ACTION_CHOICES = [
+    "generate",
+    "validate",
+    "postgen_prompt",
+    "postgen_generate",
+    "compile_only",
+    "docs_only",
+    "reflash",
+]
+
+_ORIGINAL_PRINT = builtins.print
+_COLORED_PRINT_INSTALLED = False
+_COLOR_PREFIX_RE = re.compile(r"^(\s*)\[(ok|warn|error)\]", re.IGNORECASE)
+
+
+def _stdout_supports_ansi_color() -> bool:
+    if os.getenv("NO_COLOR"):
+        return False
+
+    color_mode = str(os.getenv("BSP_COLOR_LOGS", "auto")).strip().lower()
+    if color_mode in {"0", "off", "false", "no"}:
+        return False
+    if color_mode not in {"1", "on", "true", "yes", "auto"}:
+        color_mode = "auto"
+
+    if color_mode == "auto" and not sys.stdout.isatty():
+        return False
+
+    if sys.platform != "win32":
+        return True
+
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+        if handle in (0, -1):
+            return False
+        mode = ctypes.c_uint()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)) == 0:
+            return False
+        enable_vt = 0x0004  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        processed = 0x0001  # ENABLE_PROCESSED_OUTPUT
+        new_mode = mode.value | enable_vt | processed
+        if kernel32.SetConsoleMode(handle, new_mode) == 0:
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def _colorize_prefixed_log_message(text: str) -> str:
+    if not isinstance(text, str) or not text:
+        return text
+    if "\033[" in text:
+        return text
+
+    match = _COLOR_PREFIX_RE.match(text)
+    if not match:
+        return text
+
+    level = match.group(2).lower()
+    color = {
+        "ok": "\033[32m",      # green
+        "warn": "\033[33m",    # yellow
+        "error": "\033[31m",   # red
+    }.get(level, "")
+    if not color:
+        return text
+    return f"{match.group(1)}{color}{text[len(match.group(1)):]}\033[0m"
+
+
+def _install_colored_print() -> None:
+    global _COLORED_PRINT_INSTALLED
+    if _COLORED_PRINT_INSTALLED:
+        return
+    if not _stdout_supports_ansi_color():
+        return
+
+    def _colored_print(*args, **kwargs):
+        if args:
+            first = args[0]
+            if isinstance(first, str):
+                args = (_colorize_prefixed_log_message(first),) + args[1:]
+        return _ORIGINAL_PRINT(*args, **kwargs)
+
+    builtins.print = _colored_print
+    _COLORED_PRINT_INSTALLED = True
 
 DEFAULT_GENERATION_PROFILE = {
     "target_board": "LAUNCHXL2-TMS57012-RM46",
@@ -169,6 +259,13 @@ DEFAULT_GENERATION_PROFILE = {
             "include_contract_context": True,
         },
     },
+    "flash": {
+        "enabled": False,
+        "command_template": "",
+        "working_dir": "",
+        "env": {},
+        "timeout_sec": 120,
+    },
     "contract_mode": "auto_fix_then_fail",
     "contract_lock_mode": "strict",
     "require_ccs_proof": True,
@@ -236,6 +333,265 @@ def _should_use_profile_module_selection(
     if not isinstance(profile_enabled_modules, list):
         return False
     return len(profile_enabled_modules) > 0
+
+
+def _should_open_auto_menu(argv: List[str], *, stdin_tty: bool, stdout_tty: bool, explicit_menu: bool) -> bool:
+    """
+    Auto-open interactive menu only for a bare interactive launch.
+    """
+    if explicit_menu:
+        return True
+    return bool(stdin_tty and stdout_tty and len(argv) == 0)
+
+
+def _read_json_file_if_exists(path: Path) -> Optional[Dict[str, Any]]:
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        return None
+    return None
+
+
+def _extract_output_tag(path: Path) -> str:
+    name = path.name
+    if name.startswith("output_"):
+        return name[len("output_"):]
+    return name
+
+
+def _derive_validation_status(validation: Dict[str, Any]) -> str:
+    """
+    Derive a user-facing validation status for UI summary:
+      PASS: no notable issues
+      WARN: non-blocking issues present
+      FAIL: blocking validation/build conditions
+      n/a: insufficient data
+    """
+    if not isinstance(validation, dict) or not validation:
+        return "n/a"
+
+    summary = validation.get("validation_summary", {}) if isinstance(validation.get("validation_summary", {}), dict) else {}
+    compile_contract = validation.get("compile_contract", {}) if isinstance(validation.get("compile_contract", {}), dict) else {}
+    startup_contract = validation.get("startup_contract", {}) if isinstance(validation.get("startup_contract", {}), dict) else {}
+    build_evidence = validation.get("build_evidence", {}) if isinstance(validation.get("build_evidence", {}), dict) else {}
+    runtime_invariants = validation.get("runtime_invariants", {}) if isinstance(validation.get("runtime_invariants", {}), dict) else {}
+
+    build_passes = build_evidence.get("passes")
+    if build_passes is False:
+        return "FAIL"
+
+    compile_contract_passes = compile_contract.get("passes")
+    if compile_contract_passes is False:
+        return "FAIL"
+
+    startup_gate_mode = str(runtime_invariants.get("startup_contract_gate_mode", "warn")).strip().lower()
+    startup_passes = startup_contract.get("passes")
+    if startup_passes is False and startup_gate_mode == "fail":
+        return "FAIL"
+
+    parity_mode = str(runtime_invariants.get("parity_guard_mode", "critical_only")).strip().lower()
+    parity_passes = runtime_invariants.get("parity_guard_passes")
+    if parity_passes is False and parity_mode == "strict":
+        return "FAIL"
+
+    try:
+        critical_errors = int(summary.get("critical_errors", 0) or 0)
+    except (TypeError, ValueError):
+        critical_errors = 0
+    try:
+        warnings = int(summary.get("warnings", 0) or 0)
+    except (TypeError, ValueError):
+        warnings = 0
+
+    if critical_errors > 0:
+        return "WARN"
+    if startup_passes is False and startup_gate_mode != "fail":
+        return "WARN"
+    if parity_passes is False and parity_mode != "strict":
+        return "WARN"
+    if warnings > 0:
+        return "WARN"
+
+    return "PASS"
+
+
+def _discover_recent_output_dirs(limit: int = 10, roots: Optional[List[Path]] = None) -> List[Path]:
+    if roots is None:
+        cwd = Path.cwd()
+        roots = [cwd, cwd / "app"]
+
+    found: Dict[Path, Path] = {}
+    for root in roots:
+        if not root.exists() or not root.is_dir():
+            continue
+        for child in root.iterdir():
+            if not child.is_dir():
+                continue
+            if not child.name.startswith("output_"):
+                continue
+            try:
+                resolved = child.resolve()
+            except Exception:
+                resolved = child
+            found[resolved] = child
+
+    def _sort_key(p: Path) -> tuple:
+        tag = _extract_output_tag(p)
+        ts_match = re.match(r"^\d{8}[_T]\d{6}$", tag)
+        try:
+            mtime = p.stat().st_mtime
+        except Exception:
+            mtime = 0.0
+        # Timestamp-style names sort lexicographically for recency.
+        return (1 if ts_match else 0, tag if ts_match else "", mtime)
+
+    sorted_paths = sorted(found.keys(), key=_sort_key, reverse=True)
+    if limit > 0:
+        sorted_paths = sorted_paths[:limit]
+    return sorted_paths
+
+
+def _summarize_output_dir(path: Path) -> Dict[str, Any]:
+    compile_gate = _read_json_file_if_exists(path / "compile_gate_report.json") or {}
+    validation = _read_json_file_if_exists(path / "validation_report.json") or {}
+    post_gen = _read_json_file_if_exists(path / "post_gen_firmware_report.json") or {}
+    docs_index = path / "docs" / "html" / "index.html"
+    docs_quality = _read_json_file_if_exists(path / "docs" / "doxygen_quality_report.json") or {}
+    validation_status = _derive_validation_status(validation)
+
+    return {
+        "path": str(path),
+        "name": path.name,
+        "tag": _extract_output_tag(path),
+        "timestamp": _extract_output_tag(path),
+        "compile_status": str(compile_gate.get("status", "n/a")),
+        "compile_passes": compile_gate.get("passes"),
+        "validation_status": validation_status,
+        "post_gen": bool(post_gen),
+        "docs_index": docs_index.exists(),
+        "docs_quality_passes": docs_quality.get("passes"),
+    }
+
+
+def _print_recent_outputs(limit: int = 10) -> List[Dict[str, Any]]:
+    outputs = [_summarize_output_dir(p) for p in _discover_recent_output_dirs(limit=limit)]
+    if not outputs:
+        print("[info] No output_* folders found.")
+        return []
+
+    print("\nRecent outputs:")
+    print("Idx | Folder                | Timestamp       | Compile        | Validation | PostGen | Docs")
+    print("----+-----------------------+-----------------+----------------+------------+---------+------")
+    for idx, item in enumerate(outputs, start=1):
+        folder = item["name"][:21].ljust(21)
+        timestamp = str(item.get("timestamp", ""))[:15].ljust(15)
+        comp = str(item["compile_status"])[:14].ljust(14)
+        val = str(item.get("validation_status", "n/a")).ljust(10)
+        pg = ("yes" if item["post_gen"] else "no").ljust(7)
+        docs = ("yes" if item["docs_index"] else "no").ljust(4)
+        print(f"{idx:>3} | {folder} | {timestamp} | {comp} | {val} | {pg} | {docs}")
+    print("")
+    return outputs
+
+
+def _resolve_output_dir_from_index(output_index: int, *, limit: int = 10) -> Optional[Path]:
+    outputs = _discover_recent_output_dirs(limit=limit)
+    if output_index < 1 or output_index > len(outputs):
+        return None
+    return outputs[output_index - 1]
+
+
+def _pick_output_dir_interactive(limit: int = 10) -> Optional[Path]:
+    outputs = _print_recent_outputs(limit=limit)
+    if not outputs and not sys.stdin.isatty():
+        return None
+
+    while True:
+        choice = input(
+            "[user] Select output index, or enter full path (blank to cancel): "
+        ).strip()
+        if not choice:
+            return None
+        if choice.isdigit():
+            idx = int(choice)
+            picked = _resolve_output_dir_from_index(idx, limit=limit)
+            if picked is None:
+                print(f"[warn] Invalid index: {idx}")
+                continue
+            return picked
+
+        candidate = Path(choice).expanduser()
+        if candidate.exists() and candidate.is_dir():
+            return candidate.resolve()
+        print(f"[warn] Output directory not found: {candidate}")
+
+
+def _apply_menu_selection(args: argparse.Namespace) -> bool:
+    """
+    Interactive action picker for bare runs.
+    Returns False when user cancels.
+    """
+    print("\nBSP Generator Menu")
+    print("1) Full generation")
+    print("2) Validate existing output")
+    print("3) Post-gen prompt only (existing output)")
+    print("4) Post-gen prompt + firmware generation (existing output)")
+    print("5) Compile gate only (existing output)")
+    print("6) Docs only (Doxygen + quality report)")
+    print("7) Reflash existing output")
+
+    selection = input("[user] Choose action [1-7] (blank to cancel): ").strip()
+    if not selection:
+        return False
+    if selection not in {"1", "2", "3", "4", "5", "6", "7"}:
+        print(f"[warn] Invalid selection: {selection}")
+        return False
+
+    menu_to_action = {
+        "1": "generate",
+        "2": "validate",
+        "3": "postgen_prompt",
+        "4": "postgen_generate",
+        "5": "compile_only",
+        "6": "docs_only",
+        "7": "reflash",
+    }
+    args.action = menu_to_action[selection]
+
+    if args.action in {"validate", "postgen_prompt", "postgen_generate", "compile_only", "docs_only", "reflash"}:
+        picked = _pick_output_dir_interactive(limit=10)
+        if picked is None:
+            print("[info] Menu canceled.")
+            return False
+        args.output_dir = str(picked)
+
+    if args.action == "postgen_prompt":
+        args.post_gen_prompt = True
+        args.post_gen_generate = False
+        args.validate_only = True
+    elif args.action == "postgen_generate":
+        args.post_gen_prompt = True
+        args.post_gen_generate = True
+        args.validate_only = True
+    elif args.action == "validate":
+        args.validate_only = True
+    return True
+
+
+def _resolve_action_from_args(args: argparse.Namespace) -> str:
+    if args.action:
+        return str(args.action)
+    if args.validate_only:
+        if args.post_gen_generate:
+            return "postgen_generate"
+        if args.post_gen_prompt:
+            return "postgen_prompt"
+        return "validate"
+    return "generate"
 
 
 def _resolve_optional_path(path_value: Optional[str], yaml_root: Path) -> Optional[Path]:
@@ -572,9 +928,25 @@ def _run_post_generation_intent_prompt(
     refs_mode: str,
     initial_intent: str = "",
     task_library_path: Optional[Path] = None,
+    progress_manager=None,
 ) -> Dict[str, Any]:
+    def _log(msg: str) -> None:
+        if progress_manager:
+            progress_manager.emit_message(msg, force_console=True)
+        else:
+            print(msg)
+
+    def _prompt(msg: str) -> str:
+        if progress_manager:
+            progress_manager.pause_for_input()
+            try:
+                return input(msg)
+            finally:
+                progress_manager.resume_after_input()
+        return input(msg)
+
     for line in format_allowed_references_for_console(capability_manifest, mode=refs_mode):
-        print(line)
+        _log(line)
 
     non_interactive = bool(initial_intent.strip())
     prompt = (
@@ -593,7 +965,7 @@ def _run_post_generation_intent_prompt(
 
     while True:
         if not intent_text:
-            intent_text = input(prompt).strip()
+            intent_text = _prompt(prompt).strip()
             if not intent_text:
                 cancelled = True
                 break
@@ -604,29 +976,29 @@ def _run_post_generation_intent_prompt(
             mode=refs_mode,
         )
         if validation_result.get("valid", False):
-            print(
+            _log(
                 "[ok] Intent references validated: "
                 + ", ".join(validation_result.get("recognized_refs", []))
             )
             break
 
         rejected = validation_result.get("rejected_refs", [])
-        print("[warn] Intent contains unknown or disallowed component references:")
+        _log("[warn] Intent contains unknown or disallowed component references:")
         for item in rejected:
             if not isinstance(item, dict):
                 continue
-            print(f"  - {item.get('reference')}: {item.get('reason')}")
+            _log(f"  - {item.get('reference')}: {item.get('reason')}")
         suggestions = validation_result.get("suggested_refs", {})
         if isinstance(suggestions, dict) and suggestions:
-            print("[info] Suggested references:")
+            _log("[info] Suggested references:")
             for token, values in suggestions.items():
                 if isinstance(values, list) and values:
-                    print(f"  - {token} -> {', '.join(values)}")
+                    _log(f"  - {token} -> {', '.join(values)}")
 
         if non_interactive:
             break
 
-        retry = input("[user] Re-enter app intent? [Y/n]: ").strip().lower()
+        retry = _prompt("[user] Re-enter app intent? [Y/n]: ").strip().lower()
         if retry in {"n", "no"}:
             cancelled = True
             break
@@ -643,7 +1015,7 @@ def _run_post_generation_intent_prompt(
                 if task_library_path.exists():
                     task_library_text = task_library_path.read_text(encoding="utf-8")
                 else:
-                    print(f"[warn] app_intent task library not found: {task_library_path}")
+                    _log(f"[warn] app_intent task library not found: {task_library_path}")
 
             prompt_text = build_post_generation_firmware_prompt(
                 intent_text=intent_text,
@@ -656,9 +1028,9 @@ def _run_post_generation_intent_prompt(
             artifacts_dir.mkdir(parents=True, exist_ok=True)
             firmware_prompt_path = artifacts_dir / f"post_gen_firmware_prompt_{_now_tag()}.txt"
             firmware_prompt_path.write_text(prompt_text, encoding="utf-8")
-            print(f"[ok] Post-generation firmware prompt written: {firmware_prompt_path}")
+            _log(f"[ok] Post-generation firmware prompt written: {firmware_prompt_path}")
         else:
-            print(
+            _log(
                 "[warn] Skipping post-generation firmware prompt build; missing "
                 f"{board_header_path}"
             )
@@ -1620,6 +1992,253 @@ def _discover_generated_modules(out_dir: Path) -> List[str]:
     return sorted(modules)
 
 
+def _resolve_yaml_root_for_args(args) -> Path:
+    yaml_root = Path(args.yamlpath)
+    if (yaml_root / "soc.yaml").exists():
+        return yaml_root
+    alt_yaml_root = Path("app") / args.yamlpath
+    if (alt_yaml_root / "soc.yaml").exists():
+        return alt_yaml_root
+    return yaml_root
+
+
+def _resolve_output_dir_for_action(args, *, interactive_fallback: bool = False) -> Optional[Path]:
+    if args.output_dir:
+        candidate = Path(args.output_dir).expanduser()
+        if candidate.exists() and candidate.is_dir():
+            return candidate.resolve()
+    if getattr(args, "output_index", None):
+        picked = _resolve_output_dir_from_index(int(args.output_index), limit=10)
+        if picked is not None:
+            return picked.resolve()
+    if interactive_fallback and sys.stdin.isatty():
+        return _pick_output_dir_interactive(limit=10)
+    return None
+
+
+def _load_bringup_contract_for_action(generation_profile: Dict[str, Any], yaml_root: Path) -> Optional[Dict[str, Any]]:
+    bringup_cfg = generation_profile.get("bringup", {}) if isinstance(generation_profile.get("bringup", {}), dict) else {}
+    configured_contract_file = bringup_cfg.get("contract_file")
+    candidates: List[Path] = []
+    if isinstance(configured_contract_file, str) and configured_contract_file.strip():
+        raw = Path(configured_contract_file.strip())
+        if raw.is_absolute():
+            candidates.append(raw)
+        else:
+            candidates.extend(
+                [
+                    Path.cwd() / raw,
+                    yaml_root / raw,
+                    yaml_root.parent / raw,
+                    yaml_root / raw.name,
+                ]
+            )
+    else:
+        candidates.append(yaml_root / "bringup_contract.yaml")
+
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except Exception:
+            resolved = candidate
+        if resolved.exists():
+            return load_bringup_contract(resolved)
+    return None
+
+
+def _load_generation_profile_for_action(args, yaml_root: Path) -> Dict[str, Any]:
+    if args.no_profile and args.profile:
+        print("[warn] --no-profile set; ignoring --profile.")
+    profile_data, loaded_profile_path = _load_profile_data(
+        args_profile=args.profile,
+        no_profile=bool(args.no_profile),
+        yaml_root=yaml_root,
+    )
+    if args.no_profile:
+        print("[info] --no-profile set: using in-code defaults (no generation profile loaded).")
+    elif loaded_profile_path is not None:
+        print(f"[info] Loaded generation profile: {loaded_profile_path}")
+    return _merge_generation_profile(profile_data)
+
+
+def _write_reflash_log(out_dir: Path, content: str) -> Path:
+    artifacts = out_dir / "_artifacts"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    path = artifacts / f"reflash_log_{_now_tag()}.txt"
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+async def _run_compile_only_action(args) -> int:
+    out_dir = _resolve_output_dir_for_action(args, interactive_fallback=sys.stdin.isatty())
+    if out_dir is None:
+        print("[error] compile_only requires --output-dir or --output-index.")
+        return 2
+    print(f"[info] Compile-only mode on output: {out_dir}")
+
+    yaml_root = _resolve_yaml_root_for_args(args)
+    generation_profile = _load_generation_profile_for_action(args, yaml_root)
+    build_gate_cfg = generation_profile.get("build_gate", {}) if isinstance(generation_profile.get("build_gate", {}), dict) else {}
+
+    workspace_seed = str(args.ccs_workspace or build_gate_cfg.get("external_workspace_path", "")).strip()
+    project_seed = str(args.ccs_project or build_gate_cfg.get("project_name", "")).strip()
+    workspace, project = _prompt_for_ccs_workspace_project(
+        workspace_seed,
+        project_seed,
+        context_label="compile-only gate",
+    )
+    if not workspace or not project:
+        print("[error] Missing CCS workspace/project for compile_only.")
+        return 2
+
+    bringup_contract = _load_bringup_contract_for_action(generation_profile, yaml_root)
+    api_contract_manifest = _read_json_file_if_exists(Path(out_dir) / "api_contract_manifest.json")
+    overrides = {
+        "ccs_workspace": workspace,
+        "ccs_project": project,
+        "ccs_config": args.ccs_config,
+        "build_gate": args.build_gate,
+        "build_gate_llm": args.build_gate_llm,
+        "build_gate_llm_top_k": args.build_gate_llm_top_k,
+        "build_gate_llm_model": args.build_gate_llm_model,
+        "model": args.model,
+    }
+    result = run_ccs_build_gate(
+        output_dir=out_dir,
+        generation_profile=generation_profile,
+        overrides=overrides,
+        api_contract_manifest=api_contract_manifest,
+        bringup_contract=bringup_contract,
+        run_model_name=args.model,
+        progress_callback=print,
+    )
+    print(
+        f"[info] Compile gate status: {result.get('status')} "
+        f"(passes={bool(result.get('passes', False))}, rounds={len(result.get('rounds', []))})"
+    )
+    return 3 if gate_should_fail_run(result) else 0
+
+
+def _emit_doxygen_quality_report(docs_dir: Path, report: Dict[str, Any]) -> Path:
+    out_path = docs_dir / "doxygen_quality_report.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return out_path
+
+
+def _print_doxygen_quality_summary(report: Dict[str, Any], *, log=print) -> None:
+    stats = report.get("stats", {}) if isinstance(report, dict) else {}
+    log(
+        "[info] Doxygen quality summary: "
+        f"passes={bool(report.get('passes', False))}, "
+        f"html={int(stats.get('html_files', 0))}, "
+        f"source_pages={int(stats.get('source_pages', 0))}, "
+        f"search_files={int(stats.get('search_files', 0))}"
+    )
+    for issue in list(report.get("issues", []) if isinstance(report, dict) else [])[:20]:
+        log(f"[warn] Doxygen quality issue: {issue}")
+
+
+async def _run_docs_only_action(args) -> int:
+    out_dir = _resolve_output_dir_for_action(args, interactive_fallback=sys.stdin.isatty())
+    if out_dir is None:
+        print("[error] docs_only requires --output-dir or --output-index.")
+        return 2
+    print(f"[info] Docs-only mode on output: {out_dir}")
+
+    docs_result = await _generate_documentation(out_dir, progress_manager=None)
+    report_path = str((docs_result or {}).get("report_path", ""))
+    if report_path:
+        print(f"[info] Doxygen quality report: {report_path}")
+    return 0
+
+
+async def _run_reflash_action(args) -> int:
+    out_dir = _resolve_output_dir_for_action(args, interactive_fallback=sys.stdin.isatty())
+    if out_dir is None:
+        print("[error] reflash requires --output-dir or --output-index.")
+        return 2
+
+    yaml_root = _resolve_yaml_root_for_args(args)
+    generation_profile = _load_generation_profile_for_action(args, yaml_root)
+    flash_cfg = generation_profile.get("flash", {}) if isinstance(generation_profile.get("flash", {}), dict) else {}
+    if not bool(flash_cfg.get("enabled", False)):
+        print("[error] flash.enabled is false in generation profile.")
+        return 2
+
+    command_template = str(flash_cfg.get("command_template", "")).strip()
+    if not command_template:
+        print("[error] Missing flash.command_template in generation profile.")
+        return 2
+
+    build_gate_cfg = generation_profile.get("build_gate", {}) if isinstance(generation_profile.get("build_gate", {}), dict) else {}
+    workspace = str(args.ccs_workspace or build_gate_cfg.get("external_workspace_path", "")).strip()
+    project = str(args.ccs_project or build_gate_cfg.get("project_name", "")).strip()
+    config = str(args.ccs_config or build_gate_cfg.get("configuration", "Debug")).strip() or "Debug"
+
+    values = {
+        "output_dir": str(Path(out_dir).resolve()),
+        "workspace": workspace,
+        "project": project,
+        "config": config,
+        "timestamp_tag": _extract_output_tag(Path(out_dir)),
+    }
+    try:
+        command = command_template.format(**values)
+    except KeyError as exc:
+        print(f"[error] flash.command_template contains unknown placeholder: {exc}")
+        return 2
+
+    working_dir_value = str(flash_cfg.get("working_dir", "")).strip()
+    working_dir = Path(working_dir_value).expanduser().resolve() if working_dir_value else Path.cwd()
+    if not working_dir.exists():
+        print(f"[error] flash.working_dir not found: {working_dir}")
+        return 2
+
+    env = os.environ.copy()
+    flash_env = flash_cfg.get("env", {})
+    if isinstance(flash_env, dict):
+        for k, v in flash_env.items():
+            env[str(k)] = str(v)
+
+    timeout_sec = int(flash_cfg.get("timeout_sec", 120) or 120)
+    print(f"[info] Reflash command: {command}")
+    print(f"[info] Working dir: {working_dir}")
+
+    try:
+        proc = subprocess.run(
+            command,
+            shell=True,
+            cwd=working_dir,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=timeout_sec,
+        )
+        output = ""
+        if proc.stdout:
+            output += proc.stdout
+        if proc.stderr:
+            if output and not output.endswith("\n"):
+                output += "\n"
+            output += proc.stderr
+        output += f"\n[info] exit_code={proc.returncode}\n"
+        log_path = _write_reflash_log(Path(out_dir), output)
+        print(f"[info] Reflash log: {log_path}")
+        if proc.returncode != 0:
+            print(f"[error] Reflash command failed with exit code {proc.returncode}")
+            return 4
+        print("[ok] Reflash command completed successfully.")
+        return 0
+    except subprocess.TimeoutExpired as exc:
+        timeout_output = (exc.stdout or "") + ("\n" + exc.stderr if exc.stderr else "")
+        timeout_output += f"\n[error] timeout after {timeout_sec}s\n"
+        log_path = _write_reflash_log(Path(out_dir), timeout_output)
+        print(f"[error] Reflash timed out after {timeout_sec}s. Log: {log_path}")
+        return 4
+
+
 async def _run_validation_only(args) -> int:
     if not args.output_dir:
         raise ValueError("--validate-only requires --output-dir <existing output_* directory>")
@@ -2161,6 +2780,7 @@ async def _run_validation_only(args) -> int:
             refs_mode=intent_refs_mode,
             initial_intent=str(args.app_intent or ""),
             task_library_path=app_intent_task_library_path,
+            progress_manager=None,
         )
         if not bool((intent_report or {}).get("intent_reference_validation", {}).get("valid", False)):
             print("[error] App intent reference validation failed in validate-only mode. See app_intent_report.json for details.")
@@ -2245,6 +2865,7 @@ async def _run_validation_only(args) -> int:
 async def main():
     # Setup signal handler for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)
+    _install_colored_print()
 
     parser = argparse.ArgumentParser(
         description="YAML-in -> Claude -> BSP-out (multi-peripheral BSP)"
@@ -2300,6 +2921,28 @@ async def main():
         "--include-tests",
         action="store_true",
         help="Include test harness in main.c (conditional on BSP_RUN_TESTS define)",
+    )
+    parser.add_argument(
+        "--menu",
+        action="store_true",
+        help="Open interactive run menu.",
+    )
+    parser.add_argument(
+        "--action",
+        default=None,
+        choices=ACTION_CHOICES,
+        help="Select high-level action flow (generate/validate/postgen/compile/docs/reflash).",
+    )
+    parser.add_argument(
+        "--list-outputs",
+        action="store_true",
+        help="List the most recent output folders and exit.",
+    )
+    parser.add_argument(
+        "--output-index",
+        type=int,
+        default=None,
+        help="Select output folder by index from --list-outputs (1-based).",
     )
     parser.add_argument(
         "--post-gen-prompt",
@@ -2400,8 +3043,52 @@ async def main():
     )
     args = parser.parse_args()
 
-    if args.validate_only:
+    if args.list_outputs:
+        _print_recent_outputs(limit=10)
+        return 0
+
+    if args.output_index is not None and not args.output_dir:
+        picked = _resolve_output_dir_from_index(int(args.output_index), limit=10)
+        if picked is None:
+            print(f"[error] --output-index {args.output_index} is out of range for recent outputs.")
+            return 2
+        args.output_dir = str(picked)
+
+    open_menu = _should_open_auto_menu(
+        sys.argv[1:],
+        stdin_tty=sys.stdin.isatty(),
+        stdout_tty=sys.stdout.isatty(),
+        explicit_menu=bool(args.menu),
+    )
+    if open_menu:
+        if not sys.stdin.isatty():
+            print("[warn] Interactive menu requested but stdin is not a TTY; continuing without menu.")
+        else:
+            if not _apply_menu_selection(args):
+                return 0
+
+    action = _resolve_action_from_args(args)
+    if action in {"validate", "postgen_prompt", "postgen_generate"}:
+        args.validate_only = True
+        if action == "postgen_prompt":
+            args.post_gen_prompt = True
+            args.post_gen_generate = False
+        elif action == "postgen_generate":
+            args.post_gen_prompt = True
+            args.post_gen_generate = True
+        if not args.output_dir:
+            out_dir = _resolve_output_dir_for_action(args, interactive_fallback=sys.stdin.isatty())
+            if out_dir is None:
+                print("[error] This action requires --output-dir or --output-index.")
+                return 2
+            args.output_dir = str(out_dir)
         return await _run_validation_only(args)
+    if action == "compile_only":
+        return await _run_compile_only_action(args)
+    if action == "docs_only":
+        return await _run_docs_only_action(args)
+    if action == "reflash":
+        return await _run_reflash_action(args)
 
     # Enable mock mode if requested
     if args.mock:
@@ -2431,7 +3118,16 @@ async def main():
     progress_mode = os.getenv("BSP_PROGRESS_MODE", "fancy")
     enable_fancy = progress_mode == "fancy" and sys.stdout.isatty()
 
-    passes = ["Discovery", "Implementation", "Platform", "Validation"]
+    passes = [
+        "Discovery",
+        "Implementation",
+        "Platform",
+        "Validation",
+        "Post-Gen Intent",
+        "Post-Gen Firmware",
+        "Post-Gen Compile",
+        "Docs",
+    ]
     progress_manager = UnifiedProgressManager(
         passes=passes,
         output_dir=out_dir,
@@ -3334,15 +4030,10 @@ async def main():
         if startup_gate_mode == "fail":
             bringup_contract_failed = True
 
-    # Check for shutdown request before documentation
+    docs_skipped_due_to_shutdown = False
     if _shutdown_requested:
-        print("[info] Shutdown requested. Skipping documentation generation.")
-        if validation_tracker and progress_manager:
-            progress_manager.complete_pass("Validation", success=False)
-        return
-
-    # Generate documentation
-    await _generate_documentation(out_dir, progress_manager)
+        docs_skipped_due_to_shutdown = True
+        print("[info] Shutdown requested. Documentation step will be skipped.")
 
     # --- FINAL VALIDATION REPORT ---
     if validation_tracker:
@@ -3570,9 +4261,6 @@ async def main():
             validation_tracker.increment_success()
             progress_manager.complete_pass("Validation", success=True)
 
-        # Cleanup progress display before printing validation results
-        progress_manager.cleanup()
-
         # Print console summary (always show final validation results)
         print_console_summary(final_report)
 
@@ -3632,13 +4320,64 @@ async def main():
         and post_gen_generate
     )
 
+    def _start_optional_tracker(pass_name: str, task_name: str, total_tasks: int = 1):
+        if not progress_manager:
+            return None
+        tracker = progress_manager.start_optional_pass(pass_name)
+        if tracker:
+            tracker.set_total_tasks(total_tasks)
+            if task_name:
+                tracker.update_task_name(task_name)
+        return tracker
+
+    def _complete_optional_tracker(pass_name: str, tracker, success: bool) -> None:
+        if tracker:
+            if success:
+                tracker.increment_success()
+            else:
+                tracker.increment_failure()
+        if progress_manager:
+            progress_manager.complete_pass(pass_name, success=success)
+
+    def _skip_optional(pass_name: str, reason: str) -> None:
+        if progress_manager:
+            progress_manager.skip_pass(pass_name, reason)
+
+    progress_cleanup_done = False
+
+    def _cleanup_progress_before_exit() -> None:
+        nonlocal progress_cleanup_done
+        if progress_cleanup_done or not progress_manager:
+            return
+        try:
+            stats_local = _cost_tracker.get_stats()
+            progress_manager.add_cost_info(
+                stats_local.get("total_tokens", 0),
+                stats_local.get("cost_usd", 0.0),
+                model_enum.name,
+            )
+        except Exception:
+            pass
+        progress_manager.cleanup()
+        progress_cleanup_done = True
+
     if startup_gate_mode == "fail" and bringup_contract_failed:
         print("[error] Startup/parity contract gate failed; see validation_report for details.")
+        _skip_optional("Post-Gen Intent", "Skipped due to startup/parity gate failure")
+        _skip_optional("Post-Gen Firmware", "Skipped due to startup/parity gate failure")
+        _skip_optional("Post-Gen Compile", "Skipped due to startup/parity gate failure")
+        _skip_optional("Docs", "Skipped due to startup/parity gate failure")
         _progress.stop_spinner()
+        _cleanup_progress_before_exit()
         return 2
     if build_gate_failed and not defer_initial_build_gate_failure:
         print("[error] Strict CCS compile gate failed; see compile_gate_report.json and ccs_build_log.txt for details.")
+        _skip_optional("Post-Gen Intent", "Skipped due to strict compile gate failure")
+        _skip_optional("Post-Gen Firmware", "Skipped due to strict compile gate failure")
+        _skip_optional("Post-Gen Compile", "Skipped due to strict compile gate failure")
+        _skip_optional("Docs", "Skipped due to strict compile gate failure")
         _progress.stop_spinner()
+        _cleanup_progress_before_exit()
         return 3
     if defer_initial_build_gate_failure:
         print(
@@ -3650,17 +4389,34 @@ async def main():
     _progress.stop_spinner()
 
     if app_intent_enabled and should_prompt_for_intent:
+        intent_tracker = _start_optional_tracker(
+            "Post-Gen Intent",
+            "Collecting and validating app intent",
+            total_tasks=1,
+        )
         intent_report = _run_post_generation_intent_prompt(
             out_dir,
             board_capability_manifest,
             refs_mode=intent_refs_mode,
             initial_intent=str(args.app_intent or ""),
             task_library_path=app_intent_task_library_path,
+            progress_manager=progress_manager,
         )
-        if not bool((intent_report or {}).get("intent_reference_validation", {}).get("valid", False)):
+        intent_valid = bool((intent_report or {}).get("intent_reference_validation", {}).get("valid", False))
+        _complete_optional_tracker("Post-Gen Intent", intent_tracker, success=intent_valid)
+        if not intent_valid:
+            _skip_optional("Post-Gen Firmware", "Skipped due to invalid app intent references")
+            _skip_optional("Post-Gen Compile", "Skipped because firmware pass did not run")
+            _skip_optional("Docs", "Skipped due to post-generation intent validation failure")
             print("[error] App intent reference validation failed. See app_intent_report.json for details.")
+            _cleanup_progress_before_exit()
             return 4
         if post_gen_generate:
+            firmware_tracker = _start_optional_tracker(
+                "Post-Gen Firmware",
+                "Generating app_intent firmware files",
+                total_tasks=1,
+            )
             post_gen_report = await _run_post_generation_firmware_pass(
                 out_dir=out_dir,
                 intent_report=intent_report,
@@ -3673,17 +4429,28 @@ async def main():
                 token_allocator=token_allocator,
                 progress_manager=progress_manager,
             )
-            if not bool((post_gen_report or {}).get("success", False)):
+            firmware_success = bool((post_gen_report or {}).get("success", False))
+            _complete_optional_tracker("Post-Gen Firmware", firmware_tracker, success=firmware_success)
+            if not firmware_success:
+                _skip_optional("Post-Gen Compile", "Skipped because firmware pass failed")
+                _skip_optional("Docs", "Skipped due to firmware generation failure")
                 print("[error] Post-generation firmware pass failed. See post_gen_firmware_report.json for details.")
+                _cleanup_progress_before_exit()
                 return 5
 
             # Compile gate was already run before post-gen modifications; rerun to verify new files.
             if build_gate_enabled:
+                post_gen_compile_tracker = _start_optional_tracker(
+                    "Post-Gen Compile",
+                    "Re-running compile gate after post-gen changes",
+                    total_tasks=1,
+                )
                 print("[info] Re-running external CCS compile gate after post-generation firmware pass...")
 
                 def _post_gen_build_gate_progress(msg: str) -> None:
                     if progress_manager:
-                        progress_manager.log_or_print(msg)
+                        progress_manager.set_current_task(str(msg).replace("[build-gate]", "").strip() or "Compile gate")
+                        progress_manager.emit_message(msg, force_console=True)
                     else:
                         print(msg)
 
@@ -3704,6 +4471,11 @@ async def main():
                 )
                 build_gate_result = post_gen_build_gate_result
                 build_gate_failed = gate_should_fail_run(build_gate_result)
+                _complete_optional_tracker(
+                    "Post-Gen Compile",
+                    post_gen_compile_tracker,
+                    success=not build_gate_failed,
+                )
                 _augment_compile_gate_report(
                     out_dir,
                     build_gate_result,
@@ -3723,19 +4495,43 @@ async def main():
                         "[error] Post-generation compile gate failed; see compile_gate_report.json "
                         "and ccs_build_log.txt for details."
                     )
+                    _skip_optional("Docs", "Skipped due to post-generation compile gate failure")
+                    _cleanup_progress_before_exit()
                     return 6
+            else:
+                _skip_optional("Post-Gen Compile", "Skipped because compile gate is disabled")
+        else:
+            _skip_optional("Post-Gen Firmware", "Skipped because post_gen_generate is disabled")
+            _skip_optional("Post-Gen Compile", "Skipped because post_gen_generate is disabled")
     elif should_prompt_for_intent and not app_intent_enabled:
         print("[warn] app_intent.enabled=false in profile; skipping post-generation intent prompt.")
+        _skip_optional("Post-Gen Intent", "Skipped because app_intent.enabled=false")
+        _skip_optional("Post-Gen Firmware", "Skipped because app_intent.enabled=false")
+        _skip_optional("Post-Gen Compile", "Skipped because app_intent.enabled=false")
+    else:
+        _skip_optional("Post-Gen Intent", "Skipped because no post-generation prompt was requested")
+        _skip_optional("Post-Gen Firmware", "Skipped because no post-generation prompt was requested")
+        _skip_optional("Post-Gen Compile", "Skipped because no post-generation prompt was requested")
+
+    if docs_skipped_due_to_shutdown:
+        _skip_optional("Docs", "Skipped due to shutdown request")
+    else:
+        docs_tracker = _start_optional_tracker("Docs", "Generating Doxygen docs and quality report", total_tasks=1)
+        docs_result = await _generate_documentation(out_dir, progress_manager)
+        docs_step_success = bool((docs_result or {}).get("step_success", True))
+        _complete_optional_tracker("Docs", docs_tracker, success=docs_step_success)
 
     # Update cost metrics and cleanup progress manager
     if progress_manager:
-        stats = _cost_tracker.get_stats()
-        total_tokens = stats.get("total_tokens", 0)
-        total_cost = stats.get("cost_usd", 0.0)
-        progress_manager.add_cost_info(total_tokens, total_cost, model_enum.name)
+        if not progress_cleanup_done:
+            stats = _cost_tracker.get_stats()
+            total_tokens = stats.get("total_tokens", 0)
+            total_cost = stats.get("cost_usd", 0.0)
+            progress_manager.add_cost_info(total_tokens, total_cost, model_enum.name)
+            progress_manager.cleanup()
+            progress_cleanup_done = True
 
-        # Print final messages (cleanup already called before validation output)
-        print(f"\n[info] Generation log saved to: {progress_manager.logger.log_file}")
+        # Print final messages
         print(f"\n[ok] BSP generation complete!")
         print(f"[info] Output directory: {out_dir}")
     else:
@@ -3746,54 +4542,85 @@ async def main():
         print("[debug] main() function returning...")
 
 
-async def _generate_documentation(out_dir: Path, progress_manager=None):
-    """Generate Doxygen documentation (optional, skipped if doxygen not available)"""
-    log = progress_manager.log_or_print if progress_manager else print
+async def _generate_documentation(out_dir: Path, progress_manager=None) -> Dict[str, Any]:
+    """Generate Doxygen documentation and always emit a quality report artifact."""
+    if progress_manager:
+        def log(message: str) -> None:
+            progress_manager.emit_message(message, force_console=True)
+    else:
+        log = print
 
-    log(f"\n[info] Creating documentation with Doxygen")
+    log("\n[info] Creating documentation with Doxygen")
 
     docs_dir = out_dir / "docs"
     docs_dir.mkdir(parents=True, exist_ok=True)
+    report: Dict[str, Any]
 
     try:
-        # Write Doxyfile to docs directory
         doxy_path = write_doxyfile(docs_dir)
         log(f"[info] Doxyfile created at {doxy_path}")
 
-        # Run doxygen from BSP root
         run_doxygen(out_dir, doxy_path)
 
-        # Verify output was created
+        report = evaluate_doxygen_output(docs_dir)
+        report_path = _emit_doxygen_quality_report(docs_dir, report)
+        _print_doxygen_quality_summary(report, log=log)
+
         html_dir = docs_dir / "html"
         index_file = html_dir / "index.html"
-
-        if not index_file.exists():
+        if index_file.exists():
+            html_files = list(html_dir.glob("*.html"))
+            log(f"[ok] Documentation generated: {len(html_files)} HTML files in {html_dir}")
+            log(f"[info] Open documentation at: file:///{index_file.resolve()}")
+        else:
             log(f"[warn] Doxygen completed but index.html not found at {index_file}")
-            return
-
-        # Count generated HTML files for sanity check
-        html_files = list(html_dir.glob("*.html"))
-        log(f"[ok] Documentation generated: {len(html_files)} HTML files in {html_dir}")
-
-        # Success metric: Should see 50+ HTML files for a complete BSP
-        if len(html_files) < 10:
-            log(f"[warn] Only {len(html_files)} HTML files generated - documentation may be incomplete")
-
-        abs_path = index_file.resolve()
-        log(f"[info] Open documentation at: file:///{abs_path}")
+        log(f"[info] Doxygen quality report: {report_path}")
+        return {
+            "step_success": True,
+            "status": "completed",
+            "report": report,
+            "report_path": str(report_path),
+        }
 
     except FileNotFoundError as e:
         if "doxygen" in str(e).lower():
-            log(f"[warn] Doxygen not found in system PATH. Install doxygen to generate documentation.")
-        else:
-            log(f"[warn] Documentation generation failed: {e}")
+            log("[warn] Doxygen not found in system PATH. Install doxygen to generate documentation.")
+            report = {
+                "passes": False,
+                "issues": ["Doxygen executable not found in PATH"],
+                "checks": [],
+                "stats": {"html_files": 0, "source_pages": 0, "search_files": 0},
+            }
+            report_path = _emit_doxygen_quality_report(docs_dir, report)
+            log(f"[info] Doxygen quality report: {report_path}")
+            return {
+                "step_success": True,
+                "status": "skipped_missing_doxygen",
+                "report": report,
+                "report_path": str(report_path),
+            }
+        log(f"[warn] Documentation generation failed: {e}")
     except RuntimeError as e:
-        # Specific doxygen or validation errors
         log(f"[warn] Doxygen generation failed: {e}")
-        log(f"[info] Documentation skipped. BSP code generation was successful.")
+        log("[info] Documentation skipped. BSP code generation was successful.")
     except Exception as e:
         log(f"[warn] Unexpected error during documentation generation: {e}")
-        log(f"[info] Documentation skipped. BSP code generation was successful.")
+        log("[info] Documentation skipped. BSP code generation was successful.")
+
+    report = {
+        "passes": False,
+        "issues": ["Documentation generation failed before quality checks completed"],
+        "checks": [],
+        "stats": {"html_files": 0, "source_pages": 0, "search_files": 0},
+    }
+    report_path = _emit_doxygen_quality_report(docs_dir, report)
+    log(f"[info] Doxygen quality report: {report_path}")
+    return {
+        "step_success": False,
+        "status": "failed",
+        "report": report,
+        "report_path": str(report_path),
+    }
 
 
 if __name__ == "__main__":

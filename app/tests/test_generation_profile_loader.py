@@ -234,3 +234,56 @@ app_intent:
 
     with pytest.raises(ValueError):
         load_generation_profile(profile_path)
+
+
+def test_load_generation_profile_accepts_flash_block(tmp_path: Path):
+    profile_path = _write_yaml(
+        tmp_path / "generation_profile.yaml",
+        """
+flash:
+  enabled: true
+  command_template: flash_tool --workspace "{workspace}" --project "{project}" --out "{output_dir}"
+  working_dir: C:/tools
+  timeout_sec: 180
+  env:
+    FLASH_PORT: COM4
+    TARGET: RM46
+        """,
+    )
+
+    data = load_generation_profile(profile_path)
+    assert data["flash"]["enabled"] is True
+    assert "{output_dir}" in data["flash"]["command_template"]
+    assert data["flash"]["timeout_sec"] == 180
+    assert data["flash"]["env"]["FLASH_PORT"] == "COM4"
+
+
+def test_load_generation_profile_rejects_invalid_flash_env(tmp_path: Path):
+    profile_path = _write_yaml(
+        tmp_path / "generation_profile.yaml",
+        """
+flash:
+  enabled: true
+  command_template: flash_tool
+  env:
+    PORT: 4
+        """,
+    )
+
+    with pytest.raises(ValueError):
+        load_generation_profile(profile_path)
+
+
+def test_load_generation_profile_rejects_invalid_flash_timeout(tmp_path: Path):
+    profile_path = _write_yaml(
+        tmp_path / "generation_profile.yaml",
+        """
+flash:
+  enabled: true
+  command_template: flash_tool
+  timeout_sec: 0
+        """,
+    )
+
+    with pytest.raises(ValueError):
+        load_generation_profile(profile_path)

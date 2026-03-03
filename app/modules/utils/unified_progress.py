@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 unified_progress.py
 
@@ -34,6 +34,7 @@ class PassStatus(Enum):
     IN_PROGRESS = auto()
     COMPLETE = auto()
     FAILED = auto()
+    SKIPPED = auto()
 
 
 @dataclass
@@ -129,11 +130,11 @@ class SimpleProgressTracker:
 class VisualElements:
     """Terminal visual elements with Unicode and ASCII fallbacks."""
 
-    # Box drawing characters (UTF-8)
+    # Box drawing characters
     BOX_UTF8 = {
-        'tl': '╔', 'tr': '╗', 'bl': '╚', 'br': '╝',
-        'h': '═', 'v': '║',
-        'ml': '╠', 'mr': '╣', 'mt': '╦', 'mb': '╩'
+        'tl': '\u2554', 'tr': '\u2557', 'bl': '\u255a', 'br': '\u255d',
+        'h': '\u2550', 'v': '\u2551',
+        'ml': '\u2560', 'mr': '\u2563', 'mt': '\u2566', 'mb': '\u2569'
     }
 
     # Box drawing fallback (ASCII)
@@ -144,20 +145,20 @@ class VisualElements:
     }
 
     # Progress bar characters
-    PROGRESS_FILLED = '█'
-    PROGRESS_EMPTY = '░'
+    PROGRESS_FILLED = '\u2588'
+    PROGRESS_EMPTY = '\u2591'
     PROGRESS_ASCII_FILLED = '#'
     PROGRESS_ASCII_EMPTY = '-'
 
     # Status symbols
-    STATUS_PENDING = '○'
-    STATUS_IN_PROGRESS = '⟳'
-    STATUS_COMPLETE = '✓'
-    STATUS_FAILED = '✗'
-    STATUS_WARNING = '⚠'
+    STATUS_PENDING = '\u25cb'
+    STATUS_IN_PROGRESS = '\u27f3'
+    STATUS_COMPLETE = '\u2713'
+    STATUS_FAILED = '\u2717'
+    STATUS_SKIPPED = '-'
 
     # Spinner frames (Braille Unicode)
-    SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+    SPINNER = ['\u280b', '\u2819', '\u2839', '\u2838', '\u283c', '\u2834', '\u2826', '\u2827', '\u2807', '\u280f']
     SPINNER_ASCII = ['|', '/', '-', '\\']
 
     # ANSI color codes (optional)
@@ -196,14 +197,16 @@ class VisualElements:
                 PassStatus.PENDING: ' ',
                 PassStatus.IN_PROGRESS: '*',
                 PassStatus.COMPLETE: '+',
-                PassStatus.FAILED: 'X'
+                PassStatus.FAILED: 'X',
+                PassStatus.SKIPPED: '-',
             }.get(status, ' ')
         else:
             symbol = {
                 PassStatus.PENDING: self.STATUS_PENDING,
                 PassStatus.IN_PROGRESS: self.STATUS_IN_PROGRESS,
                 PassStatus.COMPLETE: self.STATUS_COMPLETE,
-                PassStatus.FAILED: self.STATUS_FAILED
+                PassStatus.FAILED: self.STATUS_FAILED,
+                PassStatus.SKIPPED: self.STATUS_SKIPPED,
             }.get(status, self.STATUS_PENDING)
 
         # Apply color if enabled
@@ -212,6 +215,8 @@ class VisualElements:
                 return self.colorize(symbol, self.COLOR_SUCCESS)
             elif status == PassStatus.FAILED:
                 return self.colorize(symbol, self.COLOR_ERROR)
+            elif status == PassStatus.SKIPPED:
+                return self.colorize(symbol, self.COLOR_WARNING)
             elif status == PassStatus.IN_PROGRESS:
                 return self.colorize(symbol, self.COLOR_INFO)
             elif status == PassStatus.PENDING:
@@ -441,9 +446,10 @@ class UnifiedProgressManager:
         self.terminal_width, self.terminal_height = shutil.get_terminal_size(fallback=(80, 24))
         self.is_tty = sys.stdout.isatty()
         self.supports_ansi = self._check_ansi_support()
+        self.supports_unicode = self._check_unicode_support()
 
         # Visual elements
-        use_unicode = enable_fancy and self.supports_ansi
+        use_unicode = enable_fancy and self.supports_ansi and self.supports_unicode
         self.visuals = VisualElements(use_unicode=use_unicode, use_color=enable_color)
 
         # Metrics
@@ -478,6 +484,8 @@ class UnifiedProgressManager:
         # Animation thread for smooth spinner (in fancy mode)
         self.animation_thread = None
         self.animation_stop_event = threading.Event()
+        self.render_paused = False
+        self._pause_depth = 0
 
         # DON'T clear screen in __init__ - let main.py clear after user confirmation
         # Start animation thread for smooth spinner (in fancy mode)
@@ -493,16 +501,34 @@ class UnifiedProgressManager:
 
         # Windows detection
         if sys.platform == 'win32':
-            # Windows 10+ with UTF-8 support
             try:
                 import ctypes
                 kernel32 = ctypes.windll.kernel32
-                kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+                handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+                if handle in (0, -1):
+                    return False
+                mode = ctypes.c_uint()
+                if kernel32.GetConsoleMode(handle, ctypes.byref(mode)) == 0:
+                    return False
+                enable_vt = 0x0004  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+                processed = 0x0001  # ENABLE_PROCESSED_OUTPUT
+                new_mode = mode.value | enable_vt | processed
+                if kernel32.SetConsoleMode(handle, new_mode) == 0:
+                    return False
                 return True
-            except:
+            except Exception:
                 return False
 
         return True
+
+    def _check_unicode_support(self) -> bool:
+        """Best-effort check for Unicode glyph support on stdout."""
+        encoding = (getattr(sys.stdout, "encoding", None) or "").lower()
+        if not encoding:
+            return False
+        if "utf" in encoding or "65001" in encoding:
+            return True
+        return False
 
     def _determine_mode(self) -> str:
         """Determine display mode based on environment and capabilities."""
@@ -525,7 +551,7 @@ class UnifiedProgressManager:
             frame_start = time.time()
 
             # Update display if there's an active pass and not stopped
-            if self.current_pass_idx is not None and not self.stopped:
+            if self.current_pass_idx is not None and not self.stopped and not self.render_paused:
                 # Increment frame counter with lock
                 with self.lock:
                     self.animation_frame += 1
@@ -540,38 +566,64 @@ class UnifiedProgressManager:
             # Wait before next frame
             self.animation_stop_event.wait(sleep_time)
 
-    def start_pass(self, pass_name: str) -> Optional[SimpleProgressTracker]:
+    def _find_pass_index(self, pass_name: str) -> Optional[int]:
+        needle = str(pass_name).strip().replace("Pass ", "").replace(":", "")
+        for idx, pass_info in enumerate(self.passes):
+            if pass_info.short_name == needle or pass_info.name == pass_name:
+                return idx
+        return None
+
+    def _ensure_optional_pass(self, pass_name: str) -> int:
+        idx = self._find_pass_index(pass_name)
+        if idx is not None:
+            return idx
+        short_name = str(pass_name).strip().replace("Pass ", "").replace(":", "")
+        pass_info = PassInfo(
+            name=f"Pass {len(self.passes) + 1}: {short_name}",
+            short_name=short_name,
+        )
+        self.passes.append(pass_info)
+        return len(self.passes) - 1
+
+    def start_pass(self, pass_name: str, optional: bool = False) -> Optional[SimpleProgressTracker]:
         """
         Start a generation pass.
 
         Args:
             pass_name: Short name of the pass (e.g., "Discovery")
+            optional: If True, add pass dynamically when missing.
 
         Returns:
             SimpleProgressTracker instance for this pass, or None if pass not found
         """
         with self.lock:
-            # Find pass by short name
-            for idx, pass_info in enumerate(self.passes):
-                if pass_info.short_name == pass_name:
-                    pass_info.status = PassStatus.IN_PROGRESS
-                    pass_info.start_time = time.time()
-                    pass_info.tracker = SimpleProgressTracker(
-                        name=f"{pass_info.name}",
-                        total=0,
-                        update_callback=self._update_display
-                    )
-                    self.current_pass_idx = idx
+            idx = self._find_pass_index(pass_name)
+            if idx is None and optional:
+                idx = self._ensure_optional_pass(pass_name)
+            if idx is None:
+                return None
 
-                    # Log pass start
-                    self.logger.log_pass_start(pass_info.name)
+            pass_info = self.passes[idx]
+            pass_info.status = PassStatus.IN_PROGRESS
+            pass_info.start_time = time.time()
+            pass_info.tracker = SimpleProgressTracker(
+                name=f"{pass_info.name}",
+                total=0,
+                update_callback=self._update_display
+            )
+            self.current_pass_idx = idx
 
-                    # Update display
-                    self._update_display()
+            # Log pass start
+            self.logger.log_pass_start(pass_info.name)
 
-                    return pass_info.tracker
+            # Update display
+            self._update_display()
 
-            return None
+            return pass_info.tracker
+
+    def start_optional_pass(self, pass_name: str) -> Optional[SimpleProgressTracker]:
+        """Start an optional pass, creating it if needed."""
+        return self.start_pass(pass_name, optional=True)
 
     def complete_pass(self, pass_name: str, success: bool = True):
         """
@@ -582,27 +634,85 @@ class UnifiedProgressManager:
             success: Whether pass completed successfully
         """
         with self.lock:
-            for pass_info in self.passes:
-                if pass_info.short_name == pass_name:
-                    pass_info.status = PassStatus.COMPLETE if success else PassStatus.FAILED
-                    pass_info.end_time = time.time()
-                    pass_info.progress = 1.0
+            idx = self._find_pass_index(pass_name)
+            if idx is None:
+                return
+            pass_info = self.passes[idx]
+            pass_info.status = PassStatus.COMPLETE if success else PassStatus.FAILED
+            pass_info.end_time = time.time()
+            pass_info.progress = 1.0
 
-                    # Log pass completion
-                    if pass_info.start_time:
-                        duration = pass_info.end_time - pass_info.start_time
-                        self.logger.log_pass_complete(pass_info.name, duration, success)
+            # Log pass completion
+            if pass_info.start_time:
+                duration = pass_info.end_time - pass_info.start_time
+                self.logger.log_pass_complete(pass_info.name, duration, success)
 
-                    # Force immediate display update to show completion
-                    self._update_display(force=True)
+            # Force immediate display update to show completion
+            self._update_display(force=True)
 
-                    # Longer pause to let user see completion state
-                    import time as time_module
-                    time_module.sleep(1.0)
-                    break
+            # Longer pause to let user see completion state
+            import time as time_module
+            time_module.sleep(1.0)
 
             # Reset current pass
             self.current_pass_idx = None
+
+    def skip_pass(self, pass_name: str, reason: str = "") -> None:
+        """Mark a pass as skipped."""
+        with self.lock:
+            idx = self._ensure_optional_pass(pass_name)
+            pass_info = self.passes[idx]
+            now = time.time()
+            pass_info.status = PassStatus.SKIPPED
+            pass_info.start_time = pass_info.start_time or now
+            pass_info.end_time = now
+            pass_info.progress = 1.0
+            pass_info.tracker = None
+            if reason:
+                self.logger.log_event("SKIP", f"{pass_info.name}: {reason}", level="INFO")
+            self._update_display(force=True)
+
+    def set_current_task(self, task_name: str) -> None:
+        """Update current task label for active pass."""
+        with self.lock:
+            if self.current_pass_idx is None:
+                return
+            pass_info = self.passes[self.current_pass_idx]
+            if pass_info.tracker is None:
+                pass_info.tracker = SimpleProgressTracker(
+                    name=f"{pass_info.name}",
+                    total=0,
+                    update_callback=self._update_display,
+                )
+            pass_info.tracker.update_task_name(task_name)
+
+    def pause_for_input(self) -> None:
+        """Pause rendering before interactive prompts to prevent flicker."""
+        if self.mode != "fancy":
+            return
+        with self.lock:
+            self._pause_depth += 1
+            if self._pause_depth > 1:
+                return
+            self.render_paused = True
+            if self.supports_ansi:
+                sys.stdout.write('\033[2J')
+                sys.stdout.write('\033[H')
+                sys.stdout.write('\033[?25h')
+                sys.stdout.flush()
+
+    def resume_after_input(self) -> None:
+        """Resume rendering after interactive prompts."""
+        if self.mode != "fancy":
+            return
+        with self.lock:
+            if self._pause_depth <= 0:
+                return
+            self._pause_depth -= 1
+            if self._pause_depth > 0:
+                return
+            self.render_paused = False
+        self._update_display(force=True)
 
     def add_cost_info(self, tokens: int, cost: float, model: str = ""):
         """
@@ -632,8 +742,8 @@ class UnifiedProgressManager:
         Args:
             force: If True, bypass rate limiting (for animation)
         """
-        # Check if we've been stopped - if so, don't render anything
-        if self.stopped:
+        # Check if we've been stopped/paused - if so, don't render anything
+        if self.stopped or self.render_paused:
             return
 
         current_time = time.time()
@@ -679,7 +789,10 @@ class UnifiedProgressManager:
         lines.append(v.box['ml'] + v.box['h'] * (self.terminal_width - 2) + v.box['mr'])
 
         # Global progress
-        completed = sum(1 for p in self.passes if p.status == PassStatus.COMPLETE)
+        completed = sum(
+            1 for p in self.passes
+            if p.status in {PassStatus.COMPLETE, PassStatus.FAILED, PassStatus.SKIPPED}
+        )
         total = len(self.passes)
         global_progress = completed / total if total > 0 else 0.0
         progress_bar_width = min(30, self.terminal_width - 40)
@@ -821,7 +934,10 @@ class UnifiedProgressManager:
 
     def _render_simple(self):
         """Render simple line-based progress."""
-        completed = sum(1 for p in self.passes if p.status == PassStatus.COMPLETE)
+        completed = sum(
+            1 for p in self.passes
+            if p.status in {PassStatus.COMPLETE, PassStatus.FAILED, PassStatus.SKIPPED}
+        )
         total = len(self.passes)
 
         if self.current_pass_idx is not None:
@@ -848,18 +964,30 @@ class UnifiedProgressManager:
             message: Message to log/print
             level: Log level (INFO, WARN, ERROR, DEBUG, SUCCESS)
         """
-        if self.mode == "fancy":
-            # In fancy mode, only log to file (don't clutter display)
-            self.logger.log_event("MESSAGE", message, level)
-        else:
-            # In simple/quiet mode, print as normal
-            print(message)
+        self.emit_message(message, level=level, force_console=False)
+
+    def emit_message(self, message: str, level: str = "INFO", force_console: bool = False):
+        """
+        Emit a message via logger and optionally force console output in fancy mode.
+        """
+        self.logger.log_event("MESSAGE", message, level)
+        if self.mode == "fancy" and not force_console:
+            return
+        if self.mode == "fancy" and force_console:
+            self.pause_for_input()
+            try:
+                print(message)
+            finally:
+                self.resume_after_input()
+            return
+        print(message)
 
     def cleanup(self):
         """Clean up resources and finalize display."""
         # STEP 1: Stop animation thread FIRST (before anything else)
         # Set stopped flag immediately to prevent any more rendering
         self.stopped = True
+        self.render_paused = True
 
         # Stop animation thread and wait for it to fully exit
         if self.animation_thread and self.animation_thread.is_alive():
@@ -901,3 +1029,4 @@ class UnifiedProgressManager:
             # Print log location
             if self.mode != "quiet":
                 print(f"\n[info] Generation log saved to: {self.logger.log_file}")
+
