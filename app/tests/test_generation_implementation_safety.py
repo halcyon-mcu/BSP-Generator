@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from modules.generation.implementation import (
-    _ensure_driver_helper_declarations,
+    _ensure_driver_header_source_declaration_parity,
     _postprocess_generated_code,
     _sanitize_prompt_context_text,
 )
@@ -37,7 +37,7 @@ def test_postprocess_normalizes_pcr_alias_to_header_macro(tmp_path: Path):
     assert "PCR->PSPWRDWNCLR0" in processed
 
 
-def test_ensure_driver_helper_declarations_adds_enablepins_prototype(tmp_path: Path):
+def test_ensure_driver_header_source_declaration_parity_adds_missing_module_prototypes(tmp_path: Path):
     include_dir = tmp_path / "include"
     source_dir = tmp_path / "source"
     include_dir.mkdir(parents=True, exist_ok=True)
@@ -51,15 +51,48 @@ def test_ensure_driver_helper_declarations_adds_enablepins_prototype(tmp_path: P
         encoding="utf-8",
     )
     source_path.write_text(
-        "void LIN_EnablePins(void)\n{\n}\n",
+        "void LIN_EnablePins(void)\n{\n}\n"
+        "lin_status_t LIN_SendData(const uint8_t* data, uint32_t len)\n{\n"
+        "    (void)data;\n"
+        "    (void)len;\n"
+        "    return LIN_STATUS_OK;\n"
+        "}\n",
         encoding="utf-8",
     )
 
-    actions = _ensure_driver_helper_declarations(
+    result = _ensure_driver_header_source_declaration_parity(
         module_name="LIN",
         header_path=header_path,
         source_path=source_path,
     )
     patched = header_path.read_text(encoding="utf-8")
-    assert actions
+    assert result["actions"]
+    assert "void LIN_EnablePins(void);" in patched
+    assert "lin_status_t LIN_SendData(const uint8_t* data, uint32_t len);" in patched
+
+
+def test_declaration_parity_ignores_comment_only_mentions(tmp_path: Path):
+    include_dir = tmp_path / "include"
+    source_dir = tmp_path / "source"
+    include_dir.mkdir(parents=True, exist_ok=True)
+    source_dir.mkdir(parents=True, exist_ok=True)
+
+    header_path = include_dir / "lin_driver.h"
+    source_path = source_dir / "lin_driver.c"
+
+    header_path.write_text(
+        "#ifndef LIN_DRIVER_H\n#define LIN_DRIVER_H\n"
+        "/**\n * app intent recipe:\n * 1) LIN_EnablePins (if available)\n */\n"
+        "#endif /* LIN_DRIVER_H */\n",
+        encoding="utf-8",
+    )
+    source_path.write_text("void LIN_EnablePins(void)\n{\n}\n", encoding="utf-8")
+
+    result = _ensure_driver_header_source_declaration_parity(
+        module_name="LIN",
+        header_path=header_path,
+        source_path=source_path,
+    )
+    patched = header_path.read_text(encoding="utf-8")
+    assert result["actions"]
     assert "void LIN_EnablePins(void);" in patched

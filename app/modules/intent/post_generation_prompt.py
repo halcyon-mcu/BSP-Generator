@@ -59,6 +59,7 @@ def build_post_generation_firmware_prompt(
         "- Prefer existing BSP peripheral driver APIs over manual protocol/register operations.",
         "- Do NOT include reg_* headers and do NOT access peripheral registers directly.",
         "- Do NOT invent new peripheral API names; only call functions that exist in provided contract/header context.",
+        "- Use exact symbol names from API/header/source-symbol context; do NOT synthesize compound helper names (e.g., IOMM_LINEnablePins).",
         "- APP_INTENT_Step must be non-blocking (no delay loops / no infinite TX wait loops).",
         "- For terminal output path, use the provided driver API route (LIN-vs-SCI) from board macros.",
         "- If BOARD_TERMINAL_UART_OVER_LIN == 1 and BOARD_TERMINAL_UART_MODE_SCI == 1 and LIN_MODE_SCI exists, configure LIN with LIN_MODE_SCI (not LIN_MODE_LIN).",

@@ -202,3 +202,34 @@ def test_contract_checker_ignores_comment_only_function_call_mentions(tmp_path: 
 
     result = check_generated_module_contract("GIO", header, source, contract)
     assert result["passed"] is True
+
+
+def test_contract_checker_flags_source_defined_public_function_missing_in_header(tmp_path: Path):
+    contract = {
+        "modules": {
+            "LIN": {
+                "functions": {
+                    "LIN_Init": {"arity": 0},
+                },
+                "types": {},
+                "compatibility_wrappers": [],
+            }
+        }
+    }
+    header = _write(
+        tmp_path / "lin_driver.h",
+        """
+        void LIN_Init(void);
+        """,
+    )
+    source = _write(
+        tmp_path / "lin_driver.c",
+        """
+        void LIN_Init(void) { }
+        void LIN_EnablePins(void) { }
+        """,
+    )
+
+    result = check_generated_module_contract("LIN", header, source, contract)
+    assert result["passed"] is False
+    assert any("LIN_EnablePins" in err and "missing declaration" in err for err in result["errors"])

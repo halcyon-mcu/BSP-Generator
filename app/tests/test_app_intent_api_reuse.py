@@ -229,6 +229,37 @@ void APP_INTENT_Init(void)
     assert "GIO_WritePin(1U, 2U, true);" in updated
 
 
+def test_sanitize_adds_forward_decl_for_called_driver_symbol_missing_from_headers(tmp_path: Path):
+    out_dir = tmp_path
+    include_dir = out_dir / "include"
+    source_dir = out_dir / "source"
+    include_dir.mkdir(parents=True, exist_ok=True)
+    source_dir.mkdir(parents=True, exist_ok=True)
+
+    (include_dir / "lin_driver.h").write_text("void LIN_Init(void);\n", encoding="utf-8")
+    (source_dir / "lin_driver.c").write_text("void LIN_EnablePins(void)\n{\n}\n", encoding="utf-8")
+
+    app_text = """
+#include "app_intent.h"
+#include "lin_driver.h"
+void APP_INTENT_Init(void)
+{
+    LIN_EnablePins();
+    LIN_Init();
+}
+"""
+    result = sanitize_app_intent_generated_source(
+        out_dir=out_dir,
+        app_intent_text=app_text,
+        driver_source_symbols={"lin_driver.c": ["LIN_EnablePins", "LIN_Init"]},
+        gio_header_text="",
+    )
+    updated = str(result["text"])
+    assert result["changed"] is True
+    assert "void LIN_EnablePins(void);" in updated
+    assert any("called driver symbol LIN_EnablePins" in action for action in result["actions"])
+
+
 def test_lint_warns_on_led_toggle_without_visible_timing_gate():
     recipe = resolve_app_intent_api_reuse_recipe(
         bringup_contract=_bringup_contract(),

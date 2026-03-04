@@ -1370,6 +1370,45 @@ async def _run_post_generation_firmware_pass(
         for warning in api_reuse_warnings:
             print(f"[warn] Post-gen API reuse: {warning}")
 
+    app_intent_forward_decls_added = [
+        action
+        for action in api_reuse_fix_actions
+        if str(action).startswith("Added forward declaration")
+    ]
+
+    def _collect_driver_header_parity_failures_for_report(output_root: Path) -> List[str]:
+        failures: List[str] = []
+        include_dir = Path(output_root) / "include"
+        source_symbols = _extract_driver_source_symbols(Path(output_root))
+        proto_re = re.compile(
+            r"(?m)^\s*(?:extern\s+)?[A-Za-z_][\w\s\*]*?\b([A-Za-z_]\w*)\s*\([^;{}]*\)\s*;\s*$"
+        )
+        strip_re_block = re.compile(r"/\*.*?\*/", flags=re.DOTALL)
+        strip_re_line = re.compile(r"//[^\n]*")
+
+        for source_name, symbols in source_symbols.items():
+            if not source_name.endswith("_driver.c"):
+                continue
+            module_lower = source_name.replace("_driver.c", "")
+            header_path = include_dir / f"{module_lower}_driver.h"
+            if not header_path.exists():
+                continue
+            header_text = header_path.read_text(encoding="utf-8", errors="ignore")
+            header_text = strip_re_line.sub("", strip_re_block.sub("", header_text))
+            declared = {str(m.group(1)) for m in proto_re.finditer(header_text)}
+            module_upper = module_lower.upper()
+            for symbol in symbols:
+                if not str(symbol).startswith(f"{module_upper}_"):
+                    continue
+                if symbol not in declared:
+                    failures.append(
+                        f"{module_upper}: source-defined public function {symbol} missing declaration in {header_path.name}"
+                    )
+        return sorted(set(failures))
+
+    driver_header_sync_actions: List[str] = []
+    driver_header_sync_failures = _collect_driver_header_parity_failures_for_report(Path(out_dir))
+
     report = {
         "enabled": True,
         "success": len(missing_expected) == 0 and len(written_files or []) > 0,
@@ -1382,6 +1421,10 @@ async def _run_post_generation_firmware_pass(
         "api_reuse_policy_mode": api_reuse_policy_mode,
         "api_reuse_fix_actions": api_reuse_fix_actions,
         "api_reuse_warnings": api_reuse_warnings,
+        "driver_header_sync_actions": driver_header_sync_actions,
+        "driver_header_sync_failures": driver_header_sync_failures,
+        "app_intent_forward_decls_added": app_intent_forward_decls_added,
+        "app_intent_forward_decls_added_count": len(app_intent_forward_decls_added),
     }
     report_path = Path(out_dir) / "post_gen_firmware_report.json"
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")

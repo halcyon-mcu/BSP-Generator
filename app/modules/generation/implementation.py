@@ -2,7 +2,7 @@ import asyncio
 import logging
 import json
 import re
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set, Tuple
 from pathlib import Path
 
 from .prompt import build_pass2_driver_h_prompt, build_pass2_driver_c_prompt, invoke_model, Model
@@ -183,50 +183,105 @@ def _ensure_pcr_enable_all_definition(source_code: str, output_dir: Optional[Pat
     return source_code + ("" if source_code.endswith("\n") else "\n") + snippet
 
 
-def _ensure_driver_helper_declarations(
+_PROTO_DECL_RE = re.compile(
+    r"(?m)^\s*(?:extern\s+)?[A-Za-z_][\w\s\*]*?\b([A-Za-z_]\w*)\s*\([^;{}]*\)\s*;\s*$"
+)
+
+
+def _strip_c_comments(text: str) -> str:
+    stripped = re.sub(r"/\*.*?\*/", "", str(text or ""), flags=re.DOTALL)
+    stripped = re.sub(r"//[^\n]*", "", stripped)
+    return stripped
+
+
+def _extract_module_source_function_prototypes(
+    *,
+    module_name: str,
+    source_text: str,
+) -> Tuple[Dict[str, str], List[str]]:
+    module_upper = str(module_name or "").upper()
+    if not module_upper:
+        return {}, []
+
+    functions: Dict[str, str] = {}
+    failures: List[str] = []
+    pattern = re.compile(
+        rf"(?ms)^\s*(?!static\b)([A-Za-z_][\w\s\*]*?)\s+({re.escape(module_upper)}_[A-Za-z_]\w*)\s*\(([^;{{}}]*)\)\s*\{{"
+    )
+    for match in pattern.finditer(str(source_text or "")):
+        ret_type = " ".join(str(match.group(1) or "").split())
+        func_name = str(match.group(2) or "").strip()
+        args = " ".join(str(match.group(3) or "").split())
+        if not ret_type or not func_name:
+            failures.append(f"{module_upper}: could not derive prototype for source function near '{func_name or '<unknown>'}'")
+            continue
+        if not args:
+            args = "void"
+        functions[func_name] = f"{ret_type} {func_name}({args});"
+
+    return functions, failures
+
+
+def _extract_declared_function_names_from_header(header_text: str) -> Set[str]:
+    names: Set[str] = set()
+    stripped = _strip_c_comments(header_text)
+    for match in _PROTO_DECL_RE.finditer(stripped):
+        names.add(str(match.group(1)))
+    return names
+
+
+def _inject_declarations_before_endif(header_text: str, declarations: List[str]) -> str:
+    if not declarations:
+        return header_text
+    block = "\n".join(declarations).rstrip() + "\n"
+    match = re.search(r"(?m)^\s*#endif\b.*$", header_text)
+    if not match:
+        tail = "" if header_text.endswith("\n") else "\n"
+        return f"{header_text}{tail}\n{block}"
+    insert_at = match.start()
+    prefix = header_text[:insert_at].rstrip()
+    suffix = header_text[insert_at:]
+    return f"{prefix}\n\n{block}{suffix}"
+
+
+def _ensure_driver_header_source_declaration_parity(
     *,
     module_name: str,
     header_path: Optional[Path],
     source_path: Optional[Path],
-) -> List[str]:
+) -> Dict[str, List[str]]:
     """
-    Ensure common helper APIs implemented in source are declared in module header.
+    Ensure all non-static MODULE_* source functions are declared in module header.
     """
     if not header_path or not source_path or not header_path.exists() or not source_path.exists():
-        return []
+        return {"actions": [], "failures": []}
 
     module_upper = str(module_name or "").upper()
     if not module_upper:
-        return []
+        return {"actions": [], "failures": []}
 
-    helper_names = [f"{module_upper}_EnablePins"]
     source_text = source_path.read_text(encoding="utf-8", errors="ignore")
     header_text = header_path.read_text(encoding="utf-8", errors="ignore")
-    updated = header_text
+    source_funcs, failures = _extract_module_source_function_prototypes(
+        module_name=module_upper,
+        source_text=source_text,
+    )
+    declared_names = _extract_declared_function_names_from_header(header_text)
+    missing_names = sorted(name for name in source_funcs.keys() if name not in declared_names)
+    if not missing_names:
+        return {"actions": [], "failures": failures}
+
+    declarations = [source_funcs[name] for name in missing_names]
+    updated = _inject_declarations_before_endif(header_text, declarations)
     actions: List[str] = []
-
-    for helper in helper_names:
-        source_sig = re.search(
-            rf"(?m)^\s*(?!static\b)([A-Za-z_][\w\s\*]*?)\s+({re.escape(helper)})\s*\(([^;{{}}]*)\)\s*\{{",
-            source_text,
-        )
-        if not source_sig:
-            continue
-        if re.search(rf"\b{re.escape(helper)}\s*\(", updated):
-            continue
-
-        ret_type = " ".join(source_sig.group(1).split())
-        args = " ".join(str(source_sig.group(3) or "").split())
-        if not args:
-            args = "void"
-        decl = f"{ret_type} {helper}({args});\n"
-        updated = _inject_before_header_endif(updated, decl, f"{module_upper}_DRIVER_H")
-        actions.append(f"{module_upper}: added missing header declaration for {helper}()")
+    actions.append(
+        f"{module_upper}: added {len(missing_names)} missing header declaration(s): {', '.join(missing_names)}"
+    )
 
     if updated != header_text:
         header_path.write_text(normalize_generated_text(updated, header_path), encoding="utf-8")
 
-    return actions
+    return {"actions": actions, "failures": failures}
 
 
 def _ensure_iomm_one_hot_encoding(source_code: str) -> str:
@@ -1265,11 +1320,6 @@ async def run_implementation_pass(
 
             # Write File
             if type_tag == "h":
-                clean_code = inject_driver_usage_recipe_comment(
-                    header_text=clean_code,
-                    module_name=mod_name,
-                    recipe=api_reuse_recipe,
-                )
                 fname = f"{mod_name.lower()}_driver.h"
                 fpath = inc_dir / fname
 
@@ -1363,16 +1413,54 @@ async def run_implementation_pass(
 
         module_contract_result = None
         module_autofix_actions: List[str] = []
-        helper_decl_actions = _ensure_driver_helper_declarations(
-            module_name=mod_name,
-            header_path=module_header_path,
-            source_path=module_source_path,
-        )
-        if helper_decl_actions:
-            for action in helper_decl_actions:
+        driver_header_sync_actions: List[str] = []
+        driver_header_sync_failures: List[str] = []
+        if (
+            module_header_path
+            and module_source_path
+            and module_header_path.exists()
+            and module_source_path.exists()
+        ):
+            sync_result_pre = _ensure_driver_header_source_declaration_parity(
+                module_name=mod_name,
+                header_path=module_header_path,
+                source_path=module_source_path,
+            )
+            driver_header_sync_actions.extend(sync_result_pre.get("actions", []))
+            driver_header_sync_failures.extend(sync_result_pre.get("failures", []))
+
+            # Keep usage recipe comments, then re-run parity sync as a safety no-op.
+            header_text_current = module_header_path.read_text(encoding="utf-8", errors="ignore")
+            header_with_recipe = inject_driver_usage_recipe_comment(
+                header_text=header_text_current,
+                module_name=mod_name,
+                recipe=api_reuse_recipe,
+            )
+            if header_with_recipe != header_text_current:
+                module_header_path.write_text(
+                    normalize_generated_text(header_with_recipe, module_header_path),
+                    encoding="utf-8",
+                )
+
+            sync_result_post = _ensure_driver_header_source_declaration_parity(
+                module_name=mod_name,
+                header_path=module_header_path,
+                source_path=module_source_path,
+            )
+            driver_header_sync_actions.extend(sync_result_post.get("actions", []))
+            driver_header_sync_failures.extend(sync_result_post.get("failures", []))
+
+        if driver_header_sync_actions:
+            for action in driver_header_sync_actions:
                 logger.info(action)
                 if tracker:
                     tracker.add_message(action, level="info")
+        if driver_header_sync_failures:
+            for failure in driver_header_sync_failures:
+                logger.error(failure)
+                if tracker:
+                    tracker.add_message(failure, level="error")
+
         if (
             api_contract_manifest
             and module_header_path
@@ -1407,6 +1495,11 @@ async def run_implementation_pass(
                     module_source_path,
                     api_contract_manifest,
                 )
+
+            if driver_header_sync_failures:
+                module_contract_result.setdefault("errors", [])
+                module_contract_result["errors"].extend(driver_header_sync_failures)
+                module_contract_result["passed"] = False
 
             if module_contract_result and not module_contract_result.get("passed", True):
                 for err in module_contract_result.get("errors", []):
@@ -1466,6 +1559,8 @@ async def run_implementation_pass(
 
                 setattr(validation_result, "compile_contract", module_contract_result)
                 setattr(validation_result, "autofix_actions", module_autofix_actions)
+                setattr(validation_result, "driver_header_sync_actions", driver_header_sync_actions)
+                setattr(validation_result, "driver_header_sync_failures", driver_header_sync_failures)
 
                 validation_results.append((mod_name, validation_result))
 

@@ -103,6 +103,27 @@ def _parse_function_map(text: str, pattern: re.Pattern[str]) -> Dict[str, Dict[s
     return funcs
 
 
+def _extract_public_module_source_functions(source_text: str, module_upper: str) -> Dict[str, Dict[str, Any]]:
+    funcs: Dict[str, Dict[str, Any]] = {}
+    pattern = re.compile(
+        rf"(?ms)^\s*(?!static\b)([A-Za-z_][\w\s\*]*?)\s+({re.escape(module_upper)}_[A-Za-z_]\w*)\s*\(([^;{{}}]*)\)\s*\{{"
+    )
+    for match in pattern.finditer(source_text):
+        ret, name, params = match.groups()
+        proto = f"{str(ret).strip()} {str(name).strip()}({str(params).strip()});"
+        parsed = parse_prototype(proto)
+        if not parsed:
+            parsed = {
+                "name": str(name).strip(),
+                "return_type": str(ret).strip(),
+                "params": [],
+                "arity": _param_arity(str(params)),
+                "prototype": proto,
+            }
+        funcs[str(name).strip()] = parsed
+    return funcs
+
+
 def _collect_callsites(text: str, module_prefixes: List[str]) -> Dict[str, List[int]]:
     callsites: Dict[str, List[int]] = {}
     if not module_prefixes:
@@ -160,6 +181,7 @@ def check_generated_module_contract(
 
     header_funcs = _parse_function_map(header_text, PROTOTYPE_RE)
     source_funcs = _parse_function_map(source_text, DEFINITION_RE)
+    source_public_module_funcs = _extract_public_module_source_functions(source_text, module_upper)
     expected_funcs = module_contract.get("functions", {})
 
     for fname, expected in expected_funcs.items():
@@ -191,6 +213,14 @@ def check_generated_module_contract(
             errors.append(
                 f"{module_upper}: Header/source prototype drift for {fname} "
                 f"({header_decl.get('arity')} args vs {source_def.get('arity')} args)"
+            )
+
+    # Hard parity check independent of manifest coverage:
+    # every public non-static MODULE_* source function must have a header declaration.
+    for fname in sorted(source_public_module_funcs.keys()):
+        if fname not in header_funcs:
+            errors.append(
+                f"{module_upper}: Source-defined public function {fname} missing declaration in header"
             )
 
     source_text_no_comments = _strip_comments(source_text)

@@ -328,6 +328,42 @@ def _extract_c_function_definition_span(source_text: str, function_name: str) ->
     return None
 
 
+def _strip_c_comments(text: str) -> str:
+    stripped = re.sub(r"/\*.*?\*/", "", str(text or ""), flags=re.DOTALL)
+    stripped = re.sub(r"//[^\n]*", "", stripped)
+    return stripped
+
+
+def _collect_declared_function_symbols(text: str) -> set[str]:
+    stripped = _strip_c_comments(text)
+    names: set[str] = set()
+    for match in re.finditer(
+        r"(?m)^\s*(?:extern\s+)?[A-Za-z_][\w\s\*]*?\b([A-Za-z_]\w*)\s*\([^;{}]*\)\s*;\s*$",
+        stripped,
+    ):
+        names.add(str(match.group(1)))
+    return names
+
+
+def _extract_local_include_names(text: str) -> List[str]:
+    return [str(m.group(1)) for m in re.finditer(r'(?m)^\s*#include\s+"([^"]+)"', str(text or ""))]
+
+
+def _read_include_file(out_dir: Path, include_name: str) -> str:
+    include = str(include_name or "").strip()
+    if not include:
+        return ""
+    candidates = [
+        Path(out_dir) / include,
+        Path(out_dir) / "include" / include,
+        Path(out_dir) / "source" / include,
+    ]
+    for path in candidates:
+        if path.exists():
+            return path.read_text(encoding="utf-8", errors="ignore")
+    return ""
+
+
 def _inject_after_includes(source_text: str, snippet: str) -> str:
     include_block = re.search(r"^(\s*#include[^\n]*\n)+", source_text, flags=re.MULTILINE)
     if include_block:
@@ -463,13 +499,20 @@ def sanitize_app_intent_generated_source(
         actions.append(f"Removed local app-intent definition of driver API {symbol}.")
 
     declaration_lines: List[str] = []
-    for symbol in removed_symbols:
+    declared_local = _collect_declared_function_symbols(updated)
+    declared_from_includes: set[str] = set()
+    for include_name in _extract_local_include_names(updated):
+        include_text = _read_include_file(Path(out_dir), include_name)
+        if include_text:
+            declared_from_includes.update(_collect_declared_function_symbols(include_text))
+
+    for symbol in driver_symbols:
+        if symbol in {"APP_INTENT_Init", "APP_INTENT_Step"}:
+            continue
         has_call = re.search(rf"\b{re.escape(symbol)}\s*\(", updated) is not None
-        has_decl = re.search(
-            rf"(?m)^\s*(?:extern\s+)?[A-Za-z_][\w\s\*]*\b{re.escape(symbol)}\s*\([^;{{}}]*\)\s*;",
-            updated,
-        ) is not None
-        if not has_call or has_decl:
+        if not has_call:
+            continue
+        if symbol in declared_local or symbol in declared_from_includes:
             continue
         proto = _extract_driver_prototype(
             out_dir=Path(out_dir),
@@ -479,7 +522,11 @@ def sanitize_app_intent_generated_source(
         if not proto:
             continue
         declaration_lines.append(proto)
-        actions.append(f"Added forward declaration for {symbol}.")
+        declared_local.add(symbol)
+        if symbol in removed_symbols:
+            actions.append(f"Added forward declaration for {symbol}.")
+        else:
+            actions.append(f"Added forward declaration for called driver symbol {symbol}.")
 
     if declaration_lines:
         decl_block = "\n".join(sorted(set(declaration_lines)))

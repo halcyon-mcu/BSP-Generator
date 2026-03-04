@@ -55,6 +55,7 @@ def test_build_post_generation_prompt_includes_api_first_policy_and_header_conte
 
     assert "API-first implementation policy" in prompt
     assert "Do NOT include reg_* headers" in prompt
+    assert "Use exact symbol names from API/header/source-symbol context" in prompt
     assert "LIN_MODE_SCI (not LIN_MODE_LIN)" in prompt
     assert "LIN_EnablePins" in prompt
     assert "Do NOT define or redefine any function whose name appears in DRIVER_SOURCE_SYMBOLS" in prompt
