@@ -21,6 +21,17 @@ error #10234-D: unresolved symbols remain
     assert any(d.file_path == "" and d.code == "10234-D" for d in diags)
 
 
+def test_parse_ti_diagnostics_parses_fatal_error_with_file_context():
+    log = '"../source/gio_driver.c", line 12: fatal error #1965: cannot open source file "vim.h"'
+    diags = parse_ti_diagnostics(log)
+    assert len(diags) == 1
+    diag = diags[0]
+    assert diag.file_path.endswith("gio_driver.c")
+    assert diag.severity == "error"
+    assert diag.code == "1965"
+    assert "cannot open source file" in diag.message
+
+
 def test_apply_deterministic_fixes_repairs_system_pcr_and_lin(tmp_path: Path):
     system_c = tmp_path / "system.c"
     system_c.write_text(
@@ -163,3 +174,80 @@ void PLL_Init(void)
     assert "uint32_t clkcntl_value;" in pll_text
     assert "clkcntl_value = SYSREG->CLKCNTL;" in pll_text
     assert "clkcntl_value &= ~(SYSTEM_CLKCNTL_VCLKR_MASK | SYSTEM_CLKCNTL_VCLK2R_MASK);" in pll_text
+
+
+def test_apply_deterministic_fixes_normalizes_driver_base_alias_to_canonical_macro(tmp_path: Path):
+    include_dir = tmp_path / "include"
+    source_dir = tmp_path / "source"
+    include_dir.mkdir(parents=True, exist_ok=True)
+    source_dir.mkdir(parents=True, exist_ok=True)
+
+    (include_dir / "reg_pcr.h").write_text(
+        "typedef struct { volatile unsigned int PSPWRDWNCLR0; } PCR_REG_MAP_t;\n"
+        "#define PCR ((PCR_REG_MAP_t *)0xFFFFE000U)\n",
+        encoding="utf-8",
+    )
+    (source_dir / "pcr_driver.c").write_text(
+        '#include "reg_pcr.h"\n'
+        "void PCR_Init(void)\n"
+        "{\n"
+        "    pcrREG->PSPWRDWNCLR0 = 0xFFFFFFFFU;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    result = apply_deterministic_fixes(tmp_path, diagnostics=[])
+    assert result["applied"] is True
+    updated = (source_dir / "pcr_driver.c").read_text(encoding="utf-8")
+    assert "pcrREG->" not in updated
+    assert "PCR->PSPWRDWNCLR0" in updated
+
+
+def test_apply_deterministic_fixes_canonicalizes_vim_filenames_and_includes(tmp_path: Path):
+    include_dir = tmp_path / "include"
+    source_dir = tmp_path / "source"
+    include_dir.mkdir(parents=True, exist_ok=True)
+    source_dir.mkdir(parents=True, exist_ok=True)
+
+    (include_dir / "vim.h").write_text("void vim_init(void);\n", encoding="utf-8")
+    (source_dir / "vim.c").write_text('#include "vim.h"\nvoid vim_init(void) {}\n', encoding="utf-8")
+    (source_dir / "gio_driver.c").write_text('#include "vim.h"\n', encoding="utf-8")
+
+    result = apply_deterministic_fixes(tmp_path, diagnostics=[])
+    assert result["applied"] is True
+    assert (include_dir / "vim_driver.h").exists()
+    assert (source_dir / "vim_driver.c").exists()
+    assert not (include_dir / "vim.h").exists()
+    assert not (source_dir / "vim.c").exists()
+    gio_text = (source_dir / "gio_driver.c").read_text(encoding="utf-8")
+    assert '#include "vim_driver.h"' in gio_text
+
+
+def test_apply_deterministic_fixes_injects_lin_zero_timeout_nonblocking_branch(tmp_path: Path):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    lin_c = source_dir / "lin_driver.c"
+    lin_c.write_text(
+        """
+static bool wait_rx_ready(uint32_t timeout_ms)
+{
+    uint32_t elapsed_ms;
+    elapsed_ms = 0U;
+    while (elapsed_ms < timeout_ms) {
+        if ((LIN->SCIFLR & LIN_SCIFLR_RXRDY) != 0U) {
+            return true;
+        }
+        elapsed_ms++;
+    }
+    return false;
+}
+        """.strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = apply_deterministic_fixes(tmp_path, diagnostics=[])
+    assert result["applied"] is True
+    updated = lin_c.read_text(encoding="utf-8")
+    assert "if (timeout_ms == 0U)" in updated
+    assert "return ((LIN->SCIFLR & LIN_SCIFLR_RXRDY) != 0U);" in updated

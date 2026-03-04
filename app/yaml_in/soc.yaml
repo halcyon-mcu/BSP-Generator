@@ -2403,6 +2403,26 @@ soc:
     regs_ref: PCR
     clock_ref: VCLK
     x-ext:
+      init_note: PCR_Init is a power-up init path; use CLR registers to bring domains up. DO NOT initialize with PSPWRDWNSET* or PCSPWRDWNSET*. DO NOT REFERNCE THESE REGISTERS IF NOT DEFINED.
+      init:
+      - reg: PSPWRDWNCLR0
+        op: set_bits
+        value: '0xFFFFFFFF'
+      - reg: PSPWRDWNCLR1
+        op: set_bits
+        value: '0xFFFFFFFF'
+      - reg: PSPWRDWNCLR2
+        op: set_bits
+        value: '0xFFFFFFFF'
+      - reg: PSPWRDWNCLR3
+        op: set_bits
+        value: '0xFFFFFFFF'
+      - reg: PCSPWRDWNCLR0
+        op: set_bits
+        value: '0xFFFFFFFF'
+      - reg: PCSPWRDWNCLR1
+        op: set_bits
+        value: '0xFFFFFFFF'
       base_address:
         base: '0xFFFFE000'
         size: '0x100'

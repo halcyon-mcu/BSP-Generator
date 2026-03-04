@@ -575,6 +575,42 @@ class BringupStartupContract(BaseModel):
     required_order: List[str] = Field(default_factory=list)
 
 
+class BringupAppIntentPinInitPolicy(BaseModel):
+    """App-intent pin initialization policy."""
+    model_config = ConfigDict(extra='allow')
+
+    prefer_enable_pins: bool = True
+    call_enable_pins_before_init: bool = True
+    allow_iomm_fallback: bool = True
+
+
+class BringupAppIntentTxStringPolicy(BaseModel):
+    """App-intent string transmission policy."""
+    model_config = ConfigDict(extra='allow')
+
+    prefer_capability: Literal["tx_buffer", "tx_byte"] = "tx_buffer"
+    fallback_capability: Literal["tx_buffer", "tx_byte"] = "tx_byte"
+    forbid_manual_byte_loop_when_tx_buffer_exists: bool = True
+    forbid_busy_wait_loops_in_step_path: bool = True
+
+
+class BringupAppIntentApiReusePolicy(BaseModel):
+    """App-intent API reuse policy."""
+    model_config = ConfigDict(extra='allow')
+
+    mode: Literal["warn_only", "hard_fail", "prompt_only"] = "warn_only"
+    docs_target: Literal["both", "prompt_only", "headers_only"] = "both"
+    pin_init: BringupAppIntentPinInitPolicy = Field(default_factory=BringupAppIntentPinInitPolicy)
+    tx_string: BringupAppIntentTxStringPolicy = Field(default_factory=BringupAppIntentTxStringPolicy)
+
+
+class BringupAppIntentContract(BaseModel):
+    """App-intent bring-up constraints."""
+    model_config = ConfigDict(extra='allow')
+
+    api_reuse: BringupAppIntentApiReusePolicy = Field(default_factory=BringupAppIntentApiReusePolicy)
+
+
 class BringupContractYAML(BaseModel):
     """Root schema for bringup_contract.yaml (optional)."""
     model_config = ConfigDict(extra='allow')
@@ -585,6 +621,7 @@ class BringupContractYAML(BaseModel):
     pll: Optional[BringupPllContract] = None
     flash: Optional[BringupFlashContract] = None
     startup: Optional[BringupStartupContract] = None
+    app_intent: Optional[BringupAppIntentContract] = None
 
 
 # ==============================================================================

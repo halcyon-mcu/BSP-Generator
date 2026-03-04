@@ -18,6 +18,7 @@ def build_post_generation_firmware_prompt(
     task_library_text: str = "",
     task_library_source: str = "",
     driver_headers_context: str = "",
+    app_intent_api_usage_recipe: str = "",
 ) -> str:
     """
     Build a deterministic firmware-generation prompt from app intent.
@@ -33,6 +34,7 @@ def build_post_generation_firmware_prompt(
     tasks = str(task_library_text or "").strip()
     task_source = str(task_library_source or "").strip()
     header_ctx = str(driver_headers_context or "").strip()
+    api_recipe = str(app_intent_api_usage_recipe or "").strip()
 
     api_shortlist_lines = _extract_api_shortlist(contract_json)
 
@@ -65,6 +67,15 @@ def build_post_generation_firmware_prompt(
         "- Minimize mutable file-scope globals; prefer function-local/static state where practical.",
         "- Do NOT rely on a lone global init flag (e.g., s_initialized). If persistent state is required, use a single static state struct with an explicit guard value set in APP_INTENT_Init and checked in APP_INTENT_Step before use.",
         "- If no safe API exists for a needed action, emit a TODO and return safely instead of raw register code.",
+        "- Follow APP_INTENT_API_USAGE_RECIPE as authoritative API selection guidance when provided.",
+        "- If recipe provides preferred tx_buffer API, do NOT implement manual per-byte string loops via tx_byte.",
+        "- If recipe shows <MODULE>_EnablePins, call it before <MODULE>_Init for that module.",
+        "- Use direct IOMM pin configuration only when no module-level EnablePins API is available.",
+        "- Do NOT define or redefine any function whose name appears in DRIVER_SOURCE_SYMBOLS; call existing driver APIs directly.",
+        "- If a symbol appears in DRIVER_SOURCE_SYMBOLS but is missing from headers, add only a forward declaration (extern prototype), never a local stub implementation.",
+        "- BOARD_*_GIO_PORT is a character code and BOARD_*_GIO_PORT_INDEX is numeric (A=0, B=1). Match the GIO API signature: use index for uint8_t port APIs, and use GIO_PORT_A/GIO_PORT_B for gio_port_t APIs.",
+        "- Do NOT pass raw character literals like 'A'/'B' into numeric GIO port APIs.",
+        "- Heartbeat LED behavior must be visibly slow to humans (roughly 1-2 Hz) while staying non-blocking.",
         "",
         "Required output format (strict):",
         "1. FACTS MIRROR listing every BOARD_* macro used.",
@@ -137,6 +148,16 @@ def build_post_generation_firmware_prompt(
                 "===== BEGIN DRIVER_HEADERS_CONTEXT =====",
                 header_ctx,
                 "===== END DRIVER_HEADERS_CONTEXT =====",
+            ]
+        )
+
+    if api_recipe:
+        lines.extend(
+            [
+                "",
+                "===== BEGIN APP_INTENT_API_USAGE_RECIPE =====",
+                api_recipe,
+                "===== END APP_INTENT_API_USAGE_RECIPE =====",
             ]
         )
 

@@ -49,6 +49,8 @@ parity_guard:
     - PSPWRDWNCLR1
     - PSPWRDWNCLR2
     - PSPWRDWNCLR3
+    - PCSPWRDWNCLR0
+    - PCSPWRDWNCLR1
 bsp_validation:
   enabled: false
   baud: 9600

@@ -1184,7 +1184,7 @@ def _generate_bsp_validate_module(
         "#include <stddef.h>",
         "",
         "#include \"iomm_driver.h\"",
-        "#include \"vim.h\"",
+        "#include \"vim_driver.h\"",
         "#include \"gio_driver.h\"",
         "#include \"sci_driver.h\"",
         "#include \"lin_driver.h\"",
@@ -1786,7 +1786,7 @@ def generate_main_c(
             elif node.module_type == "pll":
                 lines.append("#include \"pll_driver.h\"")
             elif node.module_type == "vim":
-                lines.append("#include \"vim.h\"")
+                lines.append("#include \"vim_driver.h\"")
             else:
                 # Peripheral driver
                 header_name = f"{module_name.lower()}_driver.h"

@@ -128,6 +128,7 @@ def run_ccs_build_gate(
         "llm_rewrite_target_files": [],
         "llm_rewrite_tokens": {"input_tokens": 0, "output_tokens": 0},
         "llm_rewrite_failure_reason": "",
+        "llm_rewrite_rounds": [],
         "required": mode == "strict" or fail_on_compile_error,
         "startup_contract_status": {
             "status": "not_evaluated",
@@ -223,6 +224,26 @@ def run_ccs_build_gate(
         )
         diagnostics = parse_ti_diagnostics(log_text)
         summary = summarize_ti_diagnostics(diagnostics)
+        fatal_diags = [
+            {
+                "file": Path(d.file_path).name if d.file_path else "",
+                "line": int(d.line),
+                "code": d.code,
+                "message": d.message,
+            }
+            for d in diagnostics
+            if "fatal error" in str(d.raw).lower()
+        ]
+        error_file_counts: Dict[str, int] = {}
+        for diag in diagnostics:
+            if diag.severity != "error" or not diag.file_path:
+                continue
+            name = Path(diag.file_path).name
+            error_file_counts[name] = error_file_counts.get(name, 0) + 1
+        ranked_error_files = [
+            {"file": name, "error_count": count}
+            for name, count in sorted(error_file_counts.items(), key=lambda item: (-item[1], item[0].lower()))
+        ]
 
         round_entry: Dict[str, Any] = {
             "attempt": attempt,
@@ -231,7 +252,14 @@ def run_ccs_build_gate(
             "fix_stage": "none",
             "fix_actions": [],
             "fix_files": [],
+            "llm_apply_decision": "not_applicable",
+            "llm_rejection_reason": "",
             "log_file": f"ccs_build_log_round{attempt}.txt",
+            "fatal_diagnostics": fatal_diags,
+            "target_selection_reason": {
+                "ranked_error_files": ranked_error_files,
+                "top_diagnostic_file": ranked_error_files[0]["file"] if ranked_error_files else "",
+            },
         }
         report["rounds"].append(round_entry)
 
@@ -296,6 +324,22 @@ def run_ccs_build_gate(
                 "response": str(response_file),
                 "apply_report": str(apply_file),
             }
+            round_entry["target_selection_reason"]["llm_target_files"] = [
+                Path(p).name for p in report["llm_rewrite_target_files"]
+            ]
+            llm_applied = bool(fix_result.get("applied", False))
+            llm_reject_reason = "" if llm_applied else str(fix_result.get("failure_reason", "") or "")
+            round_entry["llm_apply_decision"] = "applied" if llm_applied else "rejected"
+            round_entry["llm_rejection_reason"] = llm_reject_reason
+            report["llm_rewrite_rounds"].append(
+                {
+                    "attempt": attempt,
+                    "target_files": list(fix_result.get("target_files", [])),
+                    "artifacts": dict(round_entry.get("llm_artifacts", {})),
+                    "apply_decision": round_entry["llm_apply_decision"],
+                    "rejection_reason": llm_reject_reason,
+                }
+            )
             if report["llm_rewrite_target_files"]:
                 _log(
                     progress_callback,

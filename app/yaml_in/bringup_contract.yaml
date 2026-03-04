@@ -80,3 +80,16 @@ startup:
     - PCR_EnableAllPeripherals
     - flash_waitstates
     - PLL_Init
+app_intent:
+  api_reuse:
+    mode: warn_only
+    docs_target: both
+    pin_init:
+      prefer_enable_pins: true
+      call_enable_pins_before_init: true
+      allow_iomm_fallback: true
+    tx_string:
+      prefer_capability: tx_buffer
+      fallback_capability: tx_byte
+      forbid_manual_byte_loop_when_tx_buffer_exists: true
+      forbid_busy_wait_loops_in_step_path: true

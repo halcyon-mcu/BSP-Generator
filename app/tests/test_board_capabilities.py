@@ -112,4 +112,5 @@ def test_build_board_capability_header_contains_terminal_uart_and_led_macros():
     assert "#define BOARD_TERMINAL_UART_MODE_SCI 1U" in header
     assert "#define BOARD_LED2_HAS_GIO 1U" in header
     assert "#define BOARD_LED2_GIO_PORT 'B'" in header
+    assert "#define BOARD_LED2_GIO_PORT_INDEX 1U" in header
     assert "#define BOARD_LED2_GIO_PIN 2U" in header

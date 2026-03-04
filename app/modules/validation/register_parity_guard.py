@@ -22,7 +22,8 @@ _STARTUP_FILE_ORDER = [
     "pcr_driver.c",
     "iomm_driver.c",
     "pll_driver.c",
-    "vim.c",
+    "vim_driver.c",
+    "vim.c",  # legacy fallback
     "gio_driver.c",
     "sci_driver.c",
     "lin_driver.c",

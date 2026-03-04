@@ -313,6 +313,23 @@ class TestBringupContractSchema:
                 },
             },
             "startup": {"required_order": ["PCR_Init", "PCR_EnableAllPeripherals", "flash_waitstates", "PLL_Init"]},
+            "app_intent": {
+                "api_reuse": {
+                    "mode": "warn_only",
+                    "docs_target": "both",
+                    "pin_init": {
+                        "prefer_enable_pins": True,
+                        "call_enable_pins_before_init": True,
+                        "allow_iomm_fallback": True,
+                    },
+                    "tx_string": {
+                        "prefer_capability": "tx_buffer",
+                        "fallback_capability": "tx_byte",
+                        "forbid_manual_byte_loop_when_tx_buffer_exists": True,
+                        "forbid_busy_wait_loops_in_step_path": True,
+                    },
+                }
+            },
         }
         is_valid, errors = validate_yaml_schema(data, BringupContractYAML)
         assert is_valid

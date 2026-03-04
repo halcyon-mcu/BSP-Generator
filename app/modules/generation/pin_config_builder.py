@@ -144,6 +144,25 @@ def find_signal_in_pin(pin_data: Dict, signal_hint: str) -> Optional[Dict]:
     return None
 
 
+def find_signal_in_pinmux(pinmux_data: List[Dict], signal_hint: str) -> Optional[tuple[Dict, Dict]]:
+    """
+    Find a pin/function pair in pinmux by matching signal name.
+
+    Returns:
+        Tuple of (pin_dict, function_dict) when found, otherwise None.
+    """
+    signal_upper = parse_signal_name(signal_hint).upper()
+    if not signal_upper:
+        return None
+
+    for pin in pinmux_data:
+        for func in pin.get('functions', []):
+            func_signal = parse_signal_name(func.get('signal', '')).upper()
+            if func_signal == signal_upper:
+                return pin, func
+    return None
+
+
 def extract_can_instances(board_data: Dict, pinmux_data: List[Dict], iomm_manifest: Optional[Dict] = None) -> Dict[str, List[PinMapping]]:
     """
     Extract CAN peripheral instances (DCAN1, DCAN2, DCAN3).
@@ -519,27 +538,37 @@ def extract_gpio_instances(board_data: Dict, pinmux_data: List[Dict], iomm_manif
 
         if pin_num and gpio_name:
             pin_data = find_pin_in_pinmux(pin_num, pinmux_data)
+            fallback_match = None
 
             if pin_data:
-                # For GPIO, we might need to find the GPIO function
-                # Look for GIOA, GIOB, GIOC, GIOD in signal names
-                func = None
-                for f in pin_data.get('functions', []):
-                    if 'GIO' in f.get('signal', '').upper():
-                        func = f
-                        break
+                func = find_signal_in_pin(pin_data, gpio_name)
+                if (not func or not func.get('mux')):
+                    fallback_match = find_signal_in_pinmux(pinmux_data, gpio_name)
+                    if fallback_match:
+                        fallback_pin, fallback_func = fallback_match
+                        if fallback_pin.get('package_pin') != pin_num:
+                            logger.warning(
+                                "GPIO mapping conflict for LED '%s': board mcu_pin=%s but signal %s resolves to pin %s in pinmux. "
+                                "Using signal fallback.",
+                                led.get('designator', '?'),
+                                pin_num,
+                                gpio_name,
+                                fallback_pin.get('package_pin'),
+                            )
+                        pin_data = fallback_pin
+                        func = fallback_func
 
                 if func and func.get('mux'):
                     mux = func['mux']
                     af_num = int(func.get('af', 0))
                     pins.append(PinMapping(
-                        package_pin=pin_num,
+                        package_pin=int(pin_data.get('package_pin', pin_num)),
                         signal=gpio_name,
                         register=mux.get('register'),
                         bit=mux.get('bit'),
                         af_number=af_num,
                         af_enum=get_af_enum_name(af_num, iomm_manifest),
-                        data_source="pinmux_complete"
+                        data_source="pinmux_signal_fallback" if fallback_match else "pinmux_complete"
                     ))
                 else:
                     pins.append(PinMapping(
@@ -573,25 +602,37 @@ def extract_gpio_instances(board_data: Dict, pinmux_data: List[Dict], iomm_manif
 
         if pin_num and gpio_name:
             pin_data = find_pin_in_pinmux(pin_num, pinmux_data)
+            fallback_match = None
 
             if pin_data:
-                func = None
-                for f in pin_data.get('functions', []):
-                    if 'GIO' in f.get('signal', '').upper():
-                        func = f
-                        break
+                func = find_signal_in_pin(pin_data, gpio_name)
+                if (not func or not func.get('mux')):
+                    fallback_match = find_signal_in_pinmux(pinmux_data, gpio_name)
+                    if fallback_match:
+                        fallback_pin, fallback_func = fallback_match
+                        if fallback_pin.get('package_pin') != pin_num:
+                            logger.warning(
+                                "GPIO mapping conflict for button '%s': board mcu_pin=%s but signal %s resolves to pin %s in pinmux. "
+                                "Using signal fallback.",
+                                button.get('designator', '?'),
+                                pin_num,
+                                gpio_name,
+                                fallback_pin.get('package_pin'),
+                            )
+                        pin_data = fallback_pin
+                        func = fallback_func
 
                 if func and func.get('mux'):
                     mux = func['mux']
                     af_num = int(func.get('af', 0))
                     pins.append(PinMapping(
-                        package_pin=pin_num,
+                        package_pin=int(pin_data.get('package_pin', pin_num)),
                         signal=gpio_name,
                         register=mux.get('register'),
                         bit=mux.get('bit'),
                         af_number=af_num,
                         af_enum=get_af_enum_name(af_num, iomm_manifest),
-                        data_source="pinmux_complete"
+                        data_source="pinmux_signal_fallback" if fallback_match else "pinmux_complete"
                     ))
                 else:
                     pins.append(PinMapping(
@@ -711,6 +752,12 @@ def format_instance_data_for_llm(instance_pin_config: Dict[str, List[PinMapping]
                     pin_info += f" ({pin.register}[{pin.bit}], {pin.af_enum})"
                 else:
                     pin_info += f" ({pin.register}[{pin.bit}], AF{pin.af_number})"
+            elif pin.data_source == "pinmux_signal_fallback":
+                if pin.af_enum:
+                    pin_info += f" ({pin.register}[{pin.bit}], {pin.af_enum})"
+                else:
+                    pin_info += f" ({pin.register}[{pin.bit}], AF{pin.af_number})"
+                pin_info += " [Signal fallback: board pin mismatch corrected via pinmux signal mapping]"
             elif pin.data_source == "pinmux_partial":
                 if pin.register and pin.bit is not None:
                     pin_info += f" ({pin.register}[{pin.bit}]"

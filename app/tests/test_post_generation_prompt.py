@@ -50,13 +50,18 @@ def test_build_post_generation_prompt_includes_api_first_policy_and_header_conte
         board_capabilities_header="#define BOARD_LED2_PRESENT 1U",
         api_contract_manifest_json='{"modules":{"LIN":{"functions":{"LIN_Init":{"arity":1},"LIN_SendByte":{"arity":1}}}}}',
         driver_headers_context="===== BEGIN HEADER: include/lin_driver.h =====\nlin_status_t LIN_Init(const lin_config_t *);\n===== END HEADER: include/lin_driver.h =====",
+        app_intent_api_usage_recipe="LIN.tx.preferred: LIN_SendData (tx_buffer)",
     )
 
     assert "API-first implementation policy" in prompt
     assert "Do NOT include reg_* headers" in prompt
     assert "LIN_MODE_SCI (not LIN_MODE_LIN)" in prompt
     assert "LIN_EnablePins" in prompt
+    assert "Do NOT define or redefine any function whose name appears in DRIVER_SOURCE_SYMBOLS" in prompt
+    assert "BOARD_*_GIO_PORT is a character code and BOARD_*_GIO_PORT_INDEX is numeric" in prompt
     assert "Do NOT rely on a lone global init flag" in prompt
     assert "API shortlist extracted from contract" in prompt
     assert "- LIN: LIN_Init, LIN_SendByte" in prompt
     assert "===== BEGIN DRIVER_HEADERS_CONTEXT =====" in prompt
+    assert "===== BEGIN APP_INTENT_API_USAGE_RECIPE =====" in prompt
+    assert "LIN.tx.preferred: LIN_SendData (tx_buffer)" in prompt

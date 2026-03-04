@@ -62,6 +62,12 @@ from modules.intent.board_capabilities import (
     validate_intent_references,
 )
 from modules.intent.post_generation_prompt import build_post_generation_firmware_prompt
+from modules.intent.app_intent_api_reuse import (
+    build_app_intent_api_recipe_text,
+    lint_app_intent_api_reuse,
+    resolve_app_intent_api_reuse_recipe,
+    sanitize_app_intent_generated_source,
+)
 from modules.validation.startup_contract_validator import validate_startup_contract
 from modules.validation.register_parity_guard import (
     default_critical_registers,
@@ -1050,7 +1056,10 @@ def _run_post_generation_intent_prompt(
     return report
 
 
-def _build_driver_headers_context(out_dir: Path) -> str:
+def _build_driver_headers_context(
+    out_dir: Path,
+    source_symbols: Optional[Dict[str, List[str]]] = None,
+) -> str:
     """
     Collect key driver headers so post-generation prompt can call existing APIs
     instead of inventing low-level/manual operations.
@@ -1064,7 +1073,7 @@ def _build_driver_headers_context(out_dir: Path) -> str:
         "gio_driver.h",
         "lin_driver.h",
         "sci_driver.h",
-        "vim.h",
+        "vim_driver.h",
     ]
     sections: List[str] = []
     for name in header_names:
@@ -1082,11 +1091,11 @@ def _build_driver_headers_context(out_dir: Path) -> str:
             ]
         )
 
-    source_symbols = _extract_driver_source_symbols(Path(out_dir))
-    if source_symbols:
+    symbol_map = source_symbols if isinstance(source_symbols, dict) else _extract_driver_source_symbols(Path(out_dir))
+    if symbol_map:
         sections.append("===== BEGIN DRIVER_SOURCE_SYMBOLS =====")
-        for filename in sorted(source_symbols.keys()):
-            symbols = source_symbols.get(filename, [])
+        for filename in sorted(symbol_map.keys()):
+            symbols = symbol_map.get(filename, [])
             if not symbols:
                 continue
             preview = ", ".join(symbols[:40])
@@ -1114,7 +1123,8 @@ def _extract_driver_source_symbols(out_dir: Path) -> Dict[str, List[str]]:
         "pll_driver.c",
         "pcr_driver.c",
         "system.c",
-        "vim.c",
+        "vim_driver.c",
+        "vim.c",  # legacy fallback for older outputs
     ]
     func_re = re.compile(
         r"^\s*(?!static\b)[A-Za-z_][\w\s\*]*?\s+([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{",
@@ -1256,7 +1266,11 @@ async def _run_post_generation_firmware_pass(
         }
 
     board_header_text = board_header_path.read_text(encoding="utf-8")
-    driver_headers_context = _build_driver_headers_context(Path(out_dir))
+    driver_source_symbols = _extract_driver_source_symbols(Path(out_dir))
+    driver_headers_context = _build_driver_headers_context(
+        Path(out_dir),
+        source_symbols=driver_source_symbols,
+    )
     task_library_text = ""
     if isinstance(task_library_path, Path) and task_library_path.exists():
         task_library_text = task_library_path.read_text(encoding="utf-8")
@@ -1274,6 +1288,12 @@ async def _run_post_generation_firmware_pass(
 
     contract_slice = _build_post_gen_contract_slice(api_contract_manifest)
     contract_slice_json = json.dumps(contract_slice, indent=2) if contract_slice else ""
+    api_reuse_recipe = resolve_app_intent_api_reuse_recipe(
+        bringup_contract=bringup_contract,
+        api_contract_manifest=api_contract_manifest,
+        driver_source_symbols=driver_source_symbols,
+    )
+    api_reuse_recipe_text = build_app_intent_api_recipe_text(api_reuse_recipe)
 
     main_c_text = ""
     main_c_path = Path(out_dir) / "main.c"
@@ -1288,6 +1308,7 @@ async def _run_post_generation_firmware_pass(
         generation_profile_yaml=profile_yaml,
         existing_main_c=main_c_text,
         driver_headers_context=driver_headers_context,
+        app_intent_api_usage_recipe=api_reuse_recipe_text,
         task_library_text=task_library_text,
         task_library_source=str(task_library_path) if isinstance(task_library_path, Path) else "",
     )
@@ -1316,6 +1337,39 @@ async def _run_post_generation_firmware_pass(
     if main_wired:
         print(f"[ok] Wired APP_INTENT hooks into {Path(out_dir) / 'main.c'}")
 
+    api_reuse_warnings: List[str] = []
+    api_reuse_fix_actions: List[str] = []
+    app_intent_source_path = Path(out_dir) / "source" / "app_intent.c"
+    api_reuse_policy_mode = str((api_reuse_recipe.get("policy") or {}).get("mode", "warn_only"))
+    if app_intent_source_path.exists() and api_reuse_policy_mode != "prompt_only":
+        app_intent_text = app_intent_source_path.read_text(encoding="utf-8", errors="ignore")
+        gio_header_path = Path(out_dir) / "include" / "gio_driver.h"
+        gio_header_text = gio_header_path.read_text(encoding="utf-8", errors="ignore") if gio_header_path.exists() else ""
+
+        sanitize_result = sanitize_app_intent_generated_source(
+            out_dir=Path(out_dir),
+            app_intent_text=app_intent_text,
+            driver_source_symbols=driver_source_symbols,
+            gio_header_text=gio_header_text,
+        )
+        api_reuse_fix_actions = list(sanitize_result.get("actions", []))
+        if bool(sanitize_result.get("changed", False)):
+            app_intent_text = str(sanitize_result.get("text", app_intent_text))
+            app_intent_source_path.write_text(
+                normalize_generated_text(app_intent_text, app_intent_source_path),
+                encoding="utf-8",
+            )
+            for action in api_reuse_fix_actions:
+                print(f"[info] Post-gen API reuse fix: {action}")
+
+        api_reuse_warnings = lint_app_intent_api_reuse(
+            app_intent_text,
+            api_reuse_recipe,
+            gio_header_text=gio_header_text,
+        )
+        for warning in api_reuse_warnings:
+            print(f"[warn] Post-gen API reuse: {warning}")
+
     report = {
         "enabled": True,
         "success": len(missing_expected) == 0 and len(written_files or []) > 0,
@@ -1325,6 +1379,9 @@ async def _run_post_generation_firmware_pass(
         "main_hook_injected": main_wired,
         "expected_files": sorted(str(path) for path in expected),
         "max_tokens": int(max_tokens),
+        "api_reuse_policy_mode": api_reuse_policy_mode,
+        "api_reuse_fix_actions": api_reuse_fix_actions,
+        "api_reuse_warnings": api_reuse_warnings,
     }
     report_path = Path(out_dir) / "post_gen_firmware_report.json"
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -3375,7 +3432,7 @@ async def main():
     #   - IOMM driver provides pin multiplexing (IOMM_Init, IOMM_ConfigurePin)
     #   - PCR driver provides power control (PCR_Init, PCR_EnablePeripheral)
     #   - SYSTEM and VIM are platform files (Pass 3)
-    # - Pass 3 (Platform): Always generate system.c, vim.c, entry.c, start.s, linker.cmd
+    # - Pass 3 (Platform): Always generate system.c, vim_driver.c, entry.c, start.s, linker.cmd
 
     user_selected_peripherals = []  # User-chosen peripherals only
     pass1_modules = list(CORE_MODULES)  # Pass 1: Always include core for manifest

@@ -25,7 +25,7 @@ class TiDiagnostic:
 
 _TI_C_DIAG_RE = re.compile(
     r'^"(?P<file>[^"]+)",\s*line\s*(?P<line>\d+):\s*'
-    r'(?P<severity>warning|error)\s*'
+    r'(?P<severity>warning|error|fatal error)\s*'
     r'(?P<code>#?[A-Za-z0-9_-]+)?'
     r':?\s*(?P<message>.*)$',
     re.IGNORECASE,
@@ -50,11 +50,14 @@ def parse_ti_diagnostics(log_text: str) -> List[TiDiagnostic]:
 
         c_match = _TI_C_DIAG_RE.match(line)
         if c_match:
+            sev = c_match.group("severity").lower()
+            if sev == "fatal error":
+                sev = "error"
             diagnostics.append(
                 TiDiagnostic(
                     file_path=c_match.group("file"),
                     line=int(c_match.group("line")),
-                    severity=c_match.group("severity").lower(),
+                    severity=sev,
                     code=(c_match.group("code") or "").lstrip("#"),
                     message=c_match.group("message").strip(),
                     raw=raw_line,
@@ -124,8 +127,12 @@ def apply_deterministic_fixes(
         _fix_bsp_validate_gio_level_token(output_dir),
         _fix_start_reset_vector_branch(output_dir),
         _fix_start_asm_literal_loads(output_dir),
+        _fix_vim_filename_drift(output_dir),
+        _fix_vim_include_name_drift(output_dir),
         _fix_lin_clear_interrupt_macro_drift(output_dir),
+        _fix_lin_zero_timeout_nonblocking(output_dir),
         _fix_gio_base_alias_drift(output_dir),
+        _fix_driver_base_alias_drift(output_dir),
         _apply_contract_autofixes(output_dir, diagnostics, api_contract_manifest),
     ):
         if not result:
@@ -160,10 +167,19 @@ def apply_targeted_rewrite(
             return result
         return _fix_missing_flash_waitstate_helper(output_dir)
     if top == "pcr_driver.c":
+        result = _fix_driver_base_alias_drift(output_dir)
+        if result.get("applied"):
+            return result
         return _fix_pcr_enable_all_semantics(output_dir)
     if top == "lin_driver.c":
+        result = _fix_lin_zero_timeout_nonblocking(output_dir)
+        if result.get("applied"):
+            return result
         return _fix_lin_clear_interrupt_macro_drift(output_dir)
     if top == "gio_driver.c":
+        result = _fix_vim_include_name_drift(output_dir)
+        if result.get("applied"):
+            return result
         return _fix_gio_base_alias_drift(output_dir)
     if top == "entry.c":
         return _fix_entry_data_bss_copy_sizes(output_dir)
@@ -188,6 +204,58 @@ def _first_existing(paths: Iterable[Path]) -> Optional[Path]:
 
 def _write_normalized(path: Path, text: str) -> None:
     path.write_text(normalize_generated_text(text, path), encoding="utf-8")
+
+
+def _extract_canonical_base_macro_from_reg_header(output_dir: Path, module_name: str) -> Optional[str]:
+    module_upper = str(module_name or "").upper()
+    if not module_upper:
+        return None
+    reg_h = _first_existing(_candidate_paths(output_dir, f"reg_{module_upper.lower()}.h"))
+    if not reg_h:
+        return None
+
+    header = reg_h.read_text(encoding="utf-8", errors="ignore")
+    macro_lines = re.findall(r"^\s*#define\s+([A-Za-z_]\w*)\s+(.+)$", header, flags=re.MULTILINE)
+    typedef_hint = f"{module_upper}_REG_MAP_t"
+    candidates: List[str] = []
+    for name, body in macro_lines:
+        body_str = str(body)
+        if typedef_hint in body_str and "*" in body_str:
+            candidates.append(name)
+
+    if not candidates:
+        return None
+    preferred = [module_upper, f"{module_upper}REG", f"{module_upper}_REG"]
+    for token in preferred:
+        if token in candidates:
+            return token
+    return candidates[0]
+
+
+def _normalize_module_base_alias_source(
+    source: str,
+    *,
+    module_name: str,
+    canonical_macro: str,
+) -> tuple[str, int]:
+    module_lower = str(module_name or "").lower()
+    aliases = sorted(set(re.findall(r"\b([A-Za-z_]\w*)\s*->", source)))
+    updated = source
+    replacements = 0
+
+    for alias in aliases:
+        if alias == canonical_macro:
+            continue
+        if not alias.upper().endswith("REG"):
+            continue
+        if module_lower and module_lower not in alias.lower():
+            continue
+        if re.search(rf"^\s*#define\s+{re.escape(alias)}\b", updated, flags=re.MULTILINE):
+            continue
+        updated, n = re.subn(rf"\b{re.escape(alias)}\s*->", f"{canonical_macro}->", updated)
+        replacements += n
+
+    return updated, replacements
 
 
 def _fix_missing_flash_waitstate_helper(output_dir: Path) -> Dict[str, Any]:
@@ -314,7 +382,10 @@ def _fix_pcr_enable_all_semantics(output_dir: Path) -> Dict[str, Any]:
     if not clear_regs:
         return {"actions": [], "files": [], "applied": False}
 
-    register_lines = [f"    pcrREG->PSPWRDWNCLR{idx} = 0xFFFFFFFFU;" for idx in clear_regs]
+    pcr_base_macro = _extract_canonical_base_macro_from_reg_header(output_dir, "PCR")
+    if not pcr_base_macro:
+        pcr_base_macro = "pcrREG" if re.search(r"\bpcrREG\s*->", source) else "PCR"
+    register_lines = [f"    {pcr_base_macro}->PSPWRDWNCLR{idx} = 0xFFFFFFFFU;" for idx in clear_regs]
     replacement = (
         "void PCR_EnableAllPeripherals(void)\n"
         "{\n"
@@ -357,6 +428,38 @@ def _fix_pcr_enable_all_semantics(output_dir: Path) -> Dict[str, Any]:
             actions.append("Added PCR_EnableAllPeripherals() declaration to pcr_driver.h")
 
     return {"actions": actions, "files": touched, "applied": True}
+
+
+def _fix_driver_base_alias_drift(output_dir: Path) -> Dict[str, Any]:
+    """
+    Normalize ad-hoc base aliases (e.g. pcrREG->) to header canonical macros.
+    """
+    touched: List[str] = []
+    actions: List[str] = []
+    source_dir = Path(output_dir) / "source"
+    if not source_dir.exists():
+        return {"actions": [], "files": [], "applied": False}
+
+    for src_path in sorted(source_dir.glob("*_driver.c")):
+        module = src_path.stem.replace("_driver", "").upper()
+        canonical = _extract_canonical_base_macro_from_reg_header(output_dir, module)
+        if not canonical:
+            continue
+
+        source = src_path.read_text(encoding="utf-8", errors="ignore")
+        updated, replaced = _normalize_module_base_alias_source(
+            source,
+            module_name=module,
+            canonical_macro=canonical,
+        )
+        if replaced <= 0:
+            continue
+
+        _write_normalized(src_path, updated)
+        touched.append(str(src_path))
+        actions.append(f"{module}: normalized {replaced} base-alias register accesses to {canonical}->")
+
+    return {"actions": actions, "files": touched, "applied": bool(actions)}
 
 
 def _fix_entry_data_bss_copy_sizes(output_dir: Path) -> Dict[str, Any]:
@@ -655,6 +758,183 @@ def _fix_start_asm_literal_loads(output_dir: Path) -> Dict[str, Any]:
     return {
         "actions": ["Converted TI-unsupported LDR literal forms in start.s to MOVW/MOVT"],
         "files": [str(start_s)],
+        "applied": True,
+    }
+
+
+def _fix_vim_filename_drift(output_dir: Path) -> Dict[str, Any]:
+    """
+    Canonicalize legacy VIM filenames to vim_driver.h / vim_driver.c.
+    """
+    actions: List[str] = []
+    changed_files: List[str] = []
+    roots = [output_dir, output_dir / "include", output_dir / "source"]
+
+    for legacy_name, canonical_name in (("vim.h", "vim_driver.h"), ("vim.c", "vim_driver.c")):
+        for root in roots:
+            if not root.exists():
+                continue
+            legacy = root / legacy_name
+            canonical = root / canonical_name
+            if not legacy.exists():
+                continue
+
+            if canonical.exists():
+                legacy_text = legacy.read_text(encoding="utf-8", errors="ignore")
+                canonical_text = canonical.read_text(encoding="utf-8", errors="ignore")
+                if legacy_text == canonical_text:
+                    legacy.unlink(missing_ok=True)
+                    actions.append(f"Removed duplicate legacy VIM file {legacy.name}")
+                    changed_files.append(str(legacy))
+                else:
+                    actions.append(
+                        f"Retained legacy VIM file {legacy.name} due content mismatch with {canonical.name}"
+                    )
+                continue
+
+            legacy.rename(canonical)
+            actions.append(f"Canonicalized VIM file {legacy.name} -> {canonical.name}")
+            changed_files.append(str(canonical))
+
+    if not changed_files:
+        return {"actions": actions, "files": [], "applied": False}
+
+    return {
+        "actions": actions,
+        "files": sorted(set(changed_files)),
+        "applied": True,
+    }
+
+
+def _fix_vim_include_name_drift(output_dir: Path) -> Dict[str, Any]:
+    """
+    Canonicalize legacy VIM include name drift (vim.h -> vim_driver.h).
+    """
+    canonical_vim_h = _first_existing(_candidate_paths(output_dir, "vim_driver.h"))
+    if not canonical_vim_h:
+        return {"actions": [], "files": [], "applied": False}
+
+    include_re = re.compile(r'(#\s*include\s+")vim\.h("\s*)')
+    changed_files: List[str] = []
+    total_replacements = 0
+
+    search_roots = [
+        output_dir,
+        output_dir / "source",
+        output_dir / "include",
+    ]
+    seen: set[Path] = set()
+    for root in search_roots:
+        if not root.exists():
+            continue
+        for ext in ("*.c", "*.h"):
+            for path in sorted(root.glob(ext)):
+                resolved = path.resolve()
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+
+                original = path.read_text(encoding="utf-8", errors="ignore")
+                updated, n = include_re.subn(r'\1vim_driver.h\2', original)
+                if n <= 0:
+                    continue
+                _write_normalized(path, updated)
+                changed_files.append(str(path))
+                total_replacements += n
+
+    if not changed_files:
+        return {"actions": [], "files": [], "applied": False}
+
+    return {
+        "actions": [f"Canonicalized {total_replacements} VIM includes to vim_driver.h"],
+        "files": sorted(set(changed_files)),
+        "applied": True,
+    }
+
+
+def _find_function_span(source: str, function_name: str) -> Optional[tuple[int, int]]:
+    sig = re.search(
+        rf"(?m)^\s*(?:static\s+)?[A-Za-z_][\w\s\*]*\b{re.escape(function_name)}\s*\([^;{{}}]*\)\s*\{{",
+        source,
+    )
+    if not sig:
+        return None
+    open_brace = source.find("{", sig.start())
+    if open_brace < 0:
+        return None
+    depth = 0
+    idx = open_brace
+    while idx < len(source):
+        ch = source[idx]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return sig.start(), idx + 1
+        idx += 1
+    return None
+
+
+def _inject_nonblocking_zero_timeout_wait_rx_ready(function_text: str) -> str:
+    if re.search(r"timeout_ms\s*==\s*0U?", function_text):
+        return function_text
+
+    open_brace = function_text.find("{")
+    if open_brace < 0:
+        return function_text
+    body = function_text[open_brace + 1 : -1]
+    body_lines = body.splitlines()
+
+    decl_re = re.compile(
+        r"^(?:const\s+|volatile\s+|signed\s+|unsigned\s+|long\s+|short\s+|struct\s+\w+\s+|enum\s+\w+\s+|"
+        r"[A-Za-z_]\w*(?:\s*\*+)?)\s+[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s*;\s*$"
+    )
+    insert_idx = 0
+    for idx, line in enumerate(body_lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("/*") or stripped.startswith("*") or stripped.startswith("//"):
+            continue
+        if decl_re.match(stripped):
+            insert_idx = idx + 1
+            continue
+        break
+
+    branch = [
+        "",
+        "    if (timeout_ms == 0U) {",
+        "        return ((LIN->SCIFLR & LIN_SCIFLR_RXRDY) != 0U);",
+        "    }",
+        "",
+    ]
+    body_lines[insert_idx:insert_idx] = branch
+    new_body = "\n".join(body_lines)
+    return function_text[: open_brace + 1] + new_body + "}"
+
+
+def _fix_lin_zero_timeout_nonblocking(output_dir: Path) -> Dict[str, Any]:
+    lin_c = _first_existing(_candidate_paths(output_dir, "lin_driver.c"))
+    if not lin_c:
+        return {"actions": [], "files": [], "applied": False}
+
+    source = lin_c.read_text(encoding="utf-8", errors="ignore")
+    span = _find_function_span(source, "wait_rx_ready")
+    if not span:
+        return {"actions": [], "files": [], "applied": False}
+
+    start, end = span
+    original_func = source[start:end]
+    updated_func = _inject_nonblocking_zero_timeout_wait_rx_ready(original_func)
+    if updated_func == original_func:
+        return {"actions": [], "files": [], "applied": False}
+
+    updated = source[:start] + updated_func + source[end:]
+    _write_normalized(lin_c, updated)
+    return {
+        "actions": ["Inserted timeout_ms==0U non-blocking branch in wait_rx_ready()"],
+        "files": [str(lin_c)],
         "applied": True,
     }
 

@@ -187,8 +187,10 @@ def _looks_like_generated_bsp_file(filename: str) -> bool:
         "linker.cmd",
         "bsp_validate.c",
         "bsp_validate.h",
-        "vim.c",
-        "vim.h",
+        "vim_driver.c",
+        "vim_driver.h",
+        "vim.c",   # legacy fallback
+        "vim.h",   # legacy fallback
         "pll_driver.c",
         "pll_driver.h",
         "iomm_driver.c",

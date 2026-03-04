@@ -38,6 +38,12 @@ def _normalize_manifest_entry(manifest: Dict[str, Any], module_name: str) -> Dic
     normalized.setdefault("dependencies", [])
     normalized.setdefault("categories", [])
 
+    # Canonical VIM naming contract: always use *_driver filenames.
+    if mod == "VIM":
+        normalized["driver_header_file"] = "vim_driver.h"
+        normalized["header_file"] = "vim_driver.h"
+        normalized["source_file"] = "vim_driver.c"
+
     if not isinstance(normalized.get("types"), list):
         normalized["types"] = []
     if not isinstance(normalized.get("dependencies"), list):

@@ -107,7 +107,7 @@ def test_gpio_collection(board_data, pinmux_data):
 
     Verifies:
     - GIO has single "gio" instance
-    - Contains at least LED2 (pin 142, GIOB[2])
+    - Contains at least LED2 (signal-resolved pin for GIOB[2])
     - Contains at least LED3 (pin 133, GIOB[1])
     """
     instances = extract_peripheral_instances(board_data, pinmux_data, "GIO")
@@ -119,7 +119,7 @@ def test_gpio_collection(board_data, pinmux_data):
     assert len(gio_pins) >= 2, "GIO should have at least 2 pins (LED2, LED3)"
 
     pin_numbers = {pin.package_pin for pin in gio_pins}
-    assert 142 in pin_numbers, "GIO should include LED2 pin (142)"
+    assert 55 in pin_numbers, "GIO should include LED2 signal-resolved pin (55)"
     assert 133 in pin_numbers, "GIO should include LED3 pin (133)"
 
     # Verify GPIO signals
@@ -168,6 +168,7 @@ def test_data_source_tracking(board_data, pinmux_data):
 
     Verifies:
     - Pins with complete data have "pinmux_complete"
+    - Pins with signal fallback have "pinmux_signal_fallback"
     - Pins with partial data have "pinmux_partial"
     - Pins with no pinmux data have "board_only"
     """
@@ -176,8 +177,12 @@ def test_data_source_tracking(board_data, pinmux_data):
     if instances:
         for instance_name, pins in instances.items():
             for pin in pins:
-                assert pin.data_source in ["pinmux_complete", "pinmux_partial", "board_only"], \
-                    f"Invalid data source: {pin.data_source}"
+                assert pin.data_source in [
+                    "pinmux_complete",
+                    "pinmux_signal_fallback",
+                    "pinmux_partial",
+                    "board_only",
+                ], f"Invalid data source: {pin.data_source}"
 
                 # If data_source is pinmux_complete, register and bit should be set
                 if pin.data_source == "pinmux_complete":
@@ -211,8 +216,8 @@ def test_lin_instances_direct(board_data, pinmux_data):
         assert len(lin1_pins) == 2, "LIN1 should have 2 pins (RX + TX)"
 
         pin_numbers = {pin.package_pin for pin in lin1_pins}
-        assert 131 in pin_numbers, "LIN1 should have pin 131 (RX)"
-        assert 132 in pin_numbers, "LIN1 should have pin 132 (TX)"
+        assert 38 in pin_numbers, "LIN1 should have pin 38 (RX)"
+        assert 39 in pin_numbers, "LIN1 should have pin 39 (TX)"
 
 
 def test_sci_instances_direct(board_data, pinmux_data):
@@ -248,6 +253,7 @@ def test_pin_mapping_dataclass():
         register="PINMMR15",
         bit=8,
         af_number=1,
+        af_enum="IOMM_PIN_FUNC_ALT1",
         data_source="pinmux_complete"
     )
 
@@ -256,6 +262,7 @@ def test_pin_mapping_dataclass():
     assert pin.register == "PINMMR15"
     assert pin.bit == 8
     assert pin.af_number == 1
+    assert pin.af_enum == "IOMM_PIN_FUNC_ALT1"
     assert pin.data_source == "pinmux_complete"
 
 

@@ -233,6 +233,14 @@ def _get_sibling_file(path: Path, output_dir: Path) -> Optional[Path]:
     return _first_existing(_candidate_paths(output_dir, sibling_name))
 
 
+def _get_related_register_header(path: Path, output_dir: Path) -> Optional[Path]:
+    module = _module_for_file(path)
+    if not module or module in {"BSP_VALIDATE", "ENTRY", "STARTUP"}:
+        return None
+    reg_name = f"reg_{module.lower()}.h"
+    return _first_existing(_candidate_paths(output_dir, reg_name))
+
+
 def _build_rewrite_prompt(
     *,
     output_dir: Path,
@@ -251,6 +259,7 @@ def _build_rewrite_prompt(
     lines.append("- Do NOT create new files.")
     lines.append("- Keep edits minimal and compilation-focused.")
     lines.append("- Preserve API contracts; do not change public signatures unless required by diagnostics and still contract-compatible.")
+    lines.append("- Do NOT add include directives for headers that do not exist in this output folder.")
     lines.append("")
     lines.append("ALLOWED FILES:")
     for rel in rel_targets:
@@ -309,6 +318,12 @@ def _build_rewrite_prompt(
             lines.append("")
             lines.append(f"===== SIBLING CONTEXT: {sibling_rel} =====")
             lines.append(sibling.read_text(encoding="utf-8", errors="ignore"))
+        related_reg_h = _get_related_register_header(path, output_dir)
+        if related_reg_h:
+            reg_rel = related_reg_h.relative_to(output_dir).as_posix()
+            lines.append("")
+            lines.append(f"===== RELATED REGISTER HEADER: {reg_rel} =====")
+            lines.append(related_reg_h.read_text(encoding="utf-8", errors="ignore"))
 
     return "\n".join(lines).strip() + "\n"
 
@@ -456,6 +471,89 @@ def _apply_hunks_to_lines(original: List[str], hunks: List[Tuple[str, List[str]]
     return current, errors
 
 
+def _extract_local_includes(source_text: str) -> set[str]:
+    return {
+        match.group(1)
+        for match in re.finditer(r'^\s*#include\s+"([^"]+)"', source_text, flags=re.MULTILINE)
+    }
+
+
+def _include_exists_in_output(output_dir: Path, include_name: str) -> bool:
+    include_name = str(include_name or "").strip()
+    if not include_name:
+        return False
+    candidates = [
+        output_dir / include_name,
+        output_dir / "include" / include_name,
+        output_dir / "source" / include_name,
+    ]
+    return any(path.exists() for path in candidates)
+
+
+def _extract_canonical_base_macro(output_dir: Path, module_name: str) -> Optional[str]:
+    module = str(module_name or "").upper()
+    if not module:
+        return None
+    reg_h = _first_existing(_candidate_paths(output_dir, f"reg_{module.lower()}.h"))
+    if not reg_h:
+        return None
+    header = reg_h.read_text(encoding="utf-8", errors="ignore")
+    macro_lines = re.findall(r"^\s*#define\s+([A-Za-z_]\w*)\s+(.+)$", header, flags=re.MULTILINE)
+    typedef_hint = f"{module}_REG_MAP_t"
+    candidates: List[str] = []
+    for name, body in macro_lines:
+        body_str = str(body)
+        if typedef_hint in body_str and "*" in body_str:
+            candidates.append(name)
+    if not candidates:
+        return None
+    for preferred in (module, f"{module}REG", f"{module}_REG"):
+        if preferred in candidates:
+            return preferred
+    return candidates[0]
+
+
+def _collect_member_access_tokens(source_text: str) -> set[str]:
+    return set(re.findall(r"\b([A-Za-z_]\w*)\s*->", source_text))
+
+
+def _validate_rewrite_candidate(
+    *,
+    output_dir: Path,
+    target_path: Path,
+    old_text: str,
+    new_text: str,
+) -> Optional[str]:
+    old_includes = _extract_local_includes(old_text)
+    new_includes = _extract_local_includes(new_text)
+    introduced_includes = sorted(new_includes - old_includes)
+    for inc in introduced_includes:
+        if not _include_exists_in_output(output_dir, inc):
+            return f"introduced_missing_include: {inc}"
+
+    module = _module_for_file(target_path)
+    if not module:
+        return None
+    canonical = _extract_canonical_base_macro(output_dir, module)
+    if not canonical:
+        return None
+
+    old_tokens = _collect_member_access_tokens(old_text)
+    new_tokens = _collect_member_access_tokens(new_text)
+    introduced = sorted(new_tokens - old_tokens)
+    for token in introduced:
+        if token == canonical:
+            continue
+        if not token.upper().endswith("REG"):
+            continue
+        if module.lower() not in token.lower():
+            continue
+        if re.search(rf"^\s*#define\s+{re.escape(token)}\b", new_text, flags=re.MULTILINE):
+            continue
+        return f"introduced_undeclared_base_alias: {token} (expected {canonical})"
+    return None
+
+
 def _try_apply_unified_diff(response_text: str, output_dir: Path, allowed: set[Path]) -> Dict[str, Any]:
     lines = _strip_markdown_fences(response_text).splitlines()
     errors: List[str] = []
@@ -508,7 +606,8 @@ def _try_apply_unified_diff(response_text: str, output_dir: Path, allowed: set[P
             errors.append(f"no_hunks_for_target: {target_path.name}")
             return {"applied": False, "errors": errors, "touched_files": []}
 
-        original_lines = target_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        original_text = target_path.read_text(encoding="utf-8", errors="ignore")
+        original_lines = original_text.splitlines()
         patched_lines, patch_errors = _apply_hunks_to_lines(original_lines, hunks)
         if patch_errors:
             return {"applied": False, "errors": patch_errors, "touched_files": []}
@@ -518,6 +617,15 @@ def _try_apply_unified_diff(response_text: str, output_dir: Path, allowed: set[P
         new_text = "\n".join(patched_lines) + "\n"
         if not new_text.strip():
             errors.append(f"empty_file_after_patch: {target_path.name}")
+            return {"applied": False, "errors": errors, "touched_files": []}
+        candidate_error = _validate_rewrite_candidate(
+            output_dir=output_dir,
+            target_path=target_path,
+            old_text=original_text,
+            new_text=new_text,
+        )
+        if candidate_error:
+            errors.append(candidate_error)
             return {"applied": False, "errors": errors, "touched_files": []}
         target_path.write_text(normalize_generated_text(new_text, target_path), encoding="utf-8")
         touched.append(target_path)
@@ -618,8 +726,18 @@ def _try_apply_full_file_blocks(response_text: str, output_dir: Path, allowed: s
             errors.append(f"file_block_empty_content: {rel_path}")
             continue
 
+        old_content = target.read_text(encoding="utf-8", errors="ignore")
         if not new_content.endswith("\n"):
             new_content += "\n"
+        candidate_error = _validate_rewrite_candidate(
+            output_dir=output_dir,
+            target_path=target,
+            old_text=old_content,
+            new_text=new_content,
+        )
+        if candidate_error:
+            errors.append(candidate_error)
+            continue
         target.write_text(normalize_generated_text(new_content, target), encoding="utf-8")
         touched.append(target)
 
@@ -657,8 +775,12 @@ def _quick_signature_sanity(
                 header_path = _first_existing(_candidate_paths(output_dir, "system.h"))
                 source_path = _first_existing(_candidate_paths(output_dir, "system.c"))
             elif module == "VIM":
-                header_path = _first_existing(_candidate_paths(output_dir, "vim.h"))
-                source_path = _first_existing(_candidate_paths(output_dir, "vim.c"))
+                header_path = _first_existing(_candidate_paths(output_dir, "vim_driver.h")) or _first_existing(
+                    _candidate_paths(output_dir, "vim.h")
+                )
+                source_path = _first_existing(_candidate_paths(output_dir, "vim_driver.c")) or _first_existing(
+                    _candidate_paths(output_dir, "vim.c")
+                )
         if not header_path or not source_path:
             continue
 

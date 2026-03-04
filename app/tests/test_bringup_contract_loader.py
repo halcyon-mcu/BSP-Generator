@@ -28,6 +28,19 @@ pll:
   required_sequence: [CSDISSET, CSVSTAT, GHVSRC]
 startup:
   required_order: [PCR_Init, PCR_EnableAllPeripherals, flash_waitstates, PLL_Init]
+app_intent:
+  api_reuse:
+    mode: warn_only
+    docs_target: both
+    pin_init:
+      prefer_enable_pins: true
+      call_enable_pins_before_init: true
+      allow_iomm_fallback: true
+    tx_string:
+      prefer_capability: tx_buffer
+      fallback_capability: tx_byte
+      forbid_manual_byte_loop_when_tx_buffer_exists: true
+      forbid_busy_wait_loops_in_step_path: true
 """.strip()
         + "\n",
         encoding="utf-8",
@@ -37,6 +50,7 @@ startup:
     assert data["serial"]["primary_path"] == "LIN_SCI_MODE"
     assert data["serial"]["primary_tx_only"] == "LIN"
     assert data["lin"]["required_registers"]["SCIPIO0"]["required_value"] == "0x00000006"
+    assert data["app_intent"]["api_reuse"]["mode"] == "warn_only"
 
 
 def test_load_generation_profile_with_bringup_options(tmp_path: Path):

@@ -526,9 +526,12 @@ def build_api_contract_manifest(
     for module_name in sorted(api_catalog.keys(), key=lambda n: n.upper()):
         entry = api_catalog[module_name] or {}
         module_upper = module_name.upper()
+        driver_header = entry.get("driver_header_file", f"{module_name.lower()}_driver.h")
+        if module_upper == "VIM":
+            driver_header = "vim_driver.h"
         module_contract: Dict[str, Any] = {
             "module_name": module_upper,
-            "driver_header_file": entry.get("driver_header_file", f"{module_name.lower()}_driver.h"),
+            "driver_header_file": driver_header,
             "functions": {},
             "types": _extract_types(entry),
             "compatibility_wrappers": [],
@@ -585,6 +588,14 @@ def hydrate_contract_from_generated_headers(
             out_dir / header_name,
             out_dir / "source" / header_name,
         ]
+        if str(module_name).upper() == "VIM":
+            candidates.extend(
+                [
+                    out_dir / "include" / "vim.h",
+                    out_dir / "vim.h",
+                    out_dir / "source" / "vim.h",
+                ]
+            )
         header_path = next((p for p in candidates if p.exists()), None)
         if not header_path:
             continue

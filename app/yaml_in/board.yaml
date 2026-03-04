@@ -213,7 +213,7 @@ leds:
 - designator: LED2
   function: USER LED
   color: GRN
-  mcu_pin: 142
+  mcu_pin: 55
   gpio: GIOB[2]
   net_name: GIOB_2
   series_resistor: 2.2kΩ
@@ -794,7 +794,7 @@ connectors:
 gpio_mapping:
   GIOB[2]:
     function: USER LED
-    pin: 142
+    pin: 55
     component: LED2
     type: output
   GIOB[1]:

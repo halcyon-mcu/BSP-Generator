@@ -892,8 +892,8 @@ You MUST obey the global FACTS POLICY, HARD OUTPUT CONTRACT, and CODING RULES fr
 TASK OVERVIEW
 -------------
 Generate exactly TWO files:
-1) vim.h
-2) vim.c
+1) vim_driver.h
+2) vim_driver.c
 
 The VIM driver is system-level and MUST:
 - Initialize the VIM interrupt vector table in VIM RAM (vectored mode support)
@@ -961,7 +961,7 @@ Before emitting any files, you MUST populate the FACTS MIRROR with every numeric
 
 If required numeric values are not provided, add TODOs and STOP after the FACTS MIRROR.
 
-REQUIRED PUBLIC API (vim.h)
+REQUIRED PUBLIC API (vim_driver.h)
 ---------------------------
 You MUST implement these public APIs:
 
@@ -993,7 +993,7 @@ You MUST implement a static default handler:
 - void vim_default_isr(void);
 The vector table is initialized to this handler.
 
-IMPLEMENTATION REQUIREMENTS (vim.c)
+IMPLEMENTATION REQUIREMENTS (vim_driver.c)
 -----------------------------------
 - Use REG32 macro for register access.
 - Use only FACTS MIRROR constants for addresses/offsets.
@@ -1014,10 +1014,10 @@ OUTPUT CONTRACT
 ---------------
 After the FACTS MIRROR, emit exactly TWO files:
 
-  ===== FILE: include/vim.h =====
+  ===== FILE: include/vim_driver.h =====
   ...
 
-  ===== FILE: source/vim.c =====
+  ===== FILE: source/vim_driver.c =====
   ...
 
 Do NOT emit any other files.
@@ -2978,13 +2978,17 @@ INCLUDE REQUIREMENTS:
 REGISTER ACCESS REQUIREMENTS:
 - **CRITICAL:** Look at INPUT CONTEXT 3 to find the exact typedef name (e.g., `sciBASE_t` or `SYSTEM_RegMap_t`)
 - **CRITICAL:** Use the EXACT member names from Context 3 (e.g., `GCR0`, `FLR`)
-- Base Address: Use the specific memory address from the YAML (e.g. `sciREG1`)
-- Instance Definition:
-  - Create the base pointer definition casting the address to the Struct Type found in Context 3
-  - Example: `#define {module_name.lower()}REG ((volatile <STRUCT_TYPE_FROM_CTX3> *)0xFFF7E400U)`
-- If `reg_<module>.h` already defines a base macro (for example `GIO_BASE_ADDRESS`), reuse that macro.
-- Do NOT redefine existing base-address macros from included register headers.
-- Prefer macro-based base pointers over new hardcoded numeric address literals when such macros exist.
+- Base Address policy (MANDATORY):
+  - Prefer the canonical base macro/pointer already defined in `reg_<module>.h`.
+  - Access registers using `->` only (example: `PCR->PSPWRDWNCLR0 = 0xFFFFFFFFU;`).
+  - Do NOT invent ad-hoc alias names that are not declared in the included headers.
+  - If no canonical base macro exists in `reg_<module>.h`, define one local base macro exactly once and use it consistently.
+- Canonical example (PCR):
+  - `#define PCR_BASE_ADDR (0xFFFFE000U)`
+  - `#define PCR ((PCR_REG_MAP_t *)PCR_BASE_ADDR)`
+  - `PCR->PSPWRDWNCLR0 = 0xFFFFFFFFU;`
+- Forbidden example:
+  - `pcrREG->...` when `pcrREG` is not declared in `reg_pcr.h` or in the source file.
 
 CLOCK SERVICE INTEGRATION (MANDATORY):
 --------------------------------------
@@ -3318,6 +3322,10 @@ FUNCTION IMPLEMENTATION REQUIREMENTS:
   * If Manifest lists "PLL" dependency, MUST follow CLOCK SERVICE INTEGRATION rules above
   * If Manifest lists "PCR" dependency, assume `PCR_EnablePeripheral(id)` is available
   * If Manifest lists "VIM" dependency, assume VIM APIs are available for interrupt management
+- LIN non-blocking RX contract (mandatory when implementing LIN_ReceiveByte with timeout):
+  * `timeout_ms == 0U` MUST be treated as a non-blocking poll.
+  * In non-blocking mode, return success only if RX data is already ready; otherwise return timeout/busy without waiting.
+  * Do NOT busy-wait when `timeout_ms == 0U`.
 
 **ABSOLUTE TYPE SAFETY RULES (CRITICAL - VIOLATIONS WILL CAUSE COMPILATION ERRORS):**
 1. **Enum Usage:**

@@ -13,8 +13,86 @@ from ..utils.file_locking import FileLock
 from ..utils.file_io import normalize_generated_text
 from ..contracts.contract_checker import check_generated_module_contract
 from ..contracts.contract_autofix import autofix_module_contract
+from ..intent.app_intent_api_reuse import (
+    inject_driver_usage_recipe_comment,
+    resolve_app_intent_api_reuse_recipe,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_prompt_context_text(text: str) -> str:
+    """
+    Sanitize prompt context text so descriptive YAML notes cannot terminate C comments.
+
+    This only affects prompt payload strings, never source YAML files on disk.
+    """
+    if not text:
+        return text
+    # Neutralize C block comment terminators that can be copied verbatim into Doxygen.
+    return text.replace("*/", "* /")
+
+
+def _extract_header_canonical_base_macro(module_name: str, output_dir: Optional[Path]) -> Optional[str]:
+    """
+    Discover canonical register base macro from reg_<module>.h.
+    """
+    if not output_dir:
+        return None
+    module_upper = str(module_name or "").upper()
+    if not module_upper:
+        return None
+    reg_header = Path(output_dir) / "include" / f"reg_{module_upper.lower()}.h"
+    if not reg_header.exists():
+        return None
+
+    header_text = reg_header.read_text(encoding="utf-8", errors="ignore")
+    macro_lines = re.findall(r"^\s*#define\s+([A-Za-z_]\w*)\s+(.+)$", header_text, flags=re.MULTILINE)
+    candidates: List[str] = []
+    typedef_hint = f"{module_upper}_REG_MAP_t"
+    for name, body in macro_lines:
+        body_str = str(body)
+        if typedef_hint in body_str and "*" in body_str:
+            candidates.append(name)
+
+    if not candidates:
+        return None
+    preferred = [module_upper, f"{module_upper}REG", f"{module_upper}_REG"]
+    for token in preferred:
+        if token in candidates:
+            return token
+    return candidates[0]
+
+
+def _normalize_driver_base_alias_usage(
+    module_name: str,
+    source_code: str,
+    output_dir: Optional[Path],
+) -> str:
+    """
+    Normalize ad-hoc module base aliases (e.g. pcrREG->) to canonical header macro.
+    """
+    canonical = _extract_header_canonical_base_macro(module_name, output_dir)
+    if not canonical:
+        return source_code
+
+    module_lower = str(module_name or "").lower()
+    aliases = sorted(set(re.findall(r"\b([A-Za-z_]\w*)\s*->", source_code)))
+    updated = source_code
+    for alias in aliases:
+        if alias == canonical:
+            continue
+        # Keep normalization conservative: only module-like register aliases.
+        if not alias.upper().endswith("REG"):
+            continue
+        if module_lower and module_lower not in alias.lower():
+            continue
+        # If alias is defined locally in file, leave it as-is.
+        if re.search(rf"^\s*#define\s+{re.escape(alias)}\b", updated, flags=re.MULTILINE):
+            continue
+        updated = re.sub(rf"\b{re.escape(alias)}\s*->", f"{canonical}->", updated)
+
+    return updated
 
 
 def _inject_include_if_missing(code: str, include_line: str) -> str:
@@ -50,7 +128,7 @@ def _ensure_pcr_enable_all_declaration(header_code: str) -> str:
     return _inject_before_header_endif(header_code, decl, "PCR_DRIVER_H")
 
 
-def _ensure_pcr_enable_all_definition(source_code: str) -> str:
+def _ensure_pcr_enable_all_definition(source_code: str, output_dir: Optional[Path] = None) -> str:
     if "void PCR_EnableAllPeripherals(void)" in source_code:
         return source_code
     if "PCR_EnablePeripheral(" in source_code and "PCR_PERIPHERAL_EMIF" in source_code:
@@ -73,7 +151,10 @@ def _ensure_pcr_enable_all_definition(source_code: str) -> str:
     else:
         clear_regs = sorted(set(re.findall(r"\bPSPWRDWNCLR(\d+)\b", source_code)))
         if clear_regs:
-            writes = "".join([f"    pcrREG->PSPWRDWNCLR{idx} = 0xFFFFFFFFU;\n" for idx in clear_regs])
+            base_sym = _extract_header_canonical_base_macro("PCR", output_dir)
+            if not base_sym:
+                base_sym = "pcrREG" if re.search(r"\bpcrREG\s*->", source_code) else "PCR"
+            writes = "".join([f"    {base_sym}->PSPWRDWNCLR{idx} = 0xFFFFFFFFU;\n" for idx in clear_regs])
             snippet = (
                 "\n"
                 "/**\n"
@@ -100,6 +181,52 @@ def _ensure_pcr_enable_all_definition(source_code: str) -> str:
                 "}\n"
             )
     return source_code + ("" if source_code.endswith("\n") else "\n") + snippet
+
+
+def _ensure_driver_helper_declarations(
+    *,
+    module_name: str,
+    header_path: Optional[Path],
+    source_path: Optional[Path],
+) -> List[str]:
+    """
+    Ensure common helper APIs implemented in source are declared in module header.
+    """
+    if not header_path or not source_path or not header_path.exists() or not source_path.exists():
+        return []
+
+    module_upper = str(module_name or "").upper()
+    if not module_upper:
+        return []
+
+    helper_names = [f"{module_upper}_EnablePins"]
+    source_text = source_path.read_text(encoding="utf-8", errors="ignore")
+    header_text = header_path.read_text(encoding="utf-8", errors="ignore")
+    updated = header_text
+    actions: List[str] = []
+
+    for helper in helper_names:
+        source_sig = re.search(
+            rf"(?m)^\s*(?!static\b)([A-Za-z_][\w\s\*]*?)\s+({re.escape(helper)})\s*\(([^;{{}}]*)\)\s*\{{",
+            source_text,
+        )
+        if not source_sig:
+            continue
+        if re.search(rf"\b{re.escape(helper)}\s*\(", updated):
+            continue
+
+        ret_type = " ".join(source_sig.group(1).split())
+        args = " ".join(str(source_sig.group(3) or "").split())
+        if not args:
+            args = "void"
+        decl = f"{ret_type} {helper}({args});\n"
+        updated = _inject_before_header_endif(updated, decl, f"{module_upper}_DRIVER_H")
+        actions.append(f"{module_upper}: added missing header declaration for {helper}()")
+
+    if updated != header_text:
+        header_path.write_text(normalize_generated_text(updated, header_path), encoding="utf-8")
+
+    return actions
 
 
 def _ensure_iomm_one_hot_encoding(source_code: str) -> str:
@@ -295,7 +422,12 @@ def _normalize_system_flash_register_access(source_code: str) -> str:
     return updated
 
 
-def _postprocess_generated_code(mod_name: str, type_tag: str, code: str) -> str:
+def _postprocess_generated_code(
+    mod_name: str,
+    type_tag: str,
+    code: str,
+    output_dir: Optional[Path] = None,
+) -> str:
     """
     Apply deterministic compile-safety rewrites for known TI compiler pitfalls.
     """
@@ -325,9 +457,16 @@ def _postprocess_generated_code(mod_name: str, type_tag: str, code: str) -> str:
         elif mod_name.upper() == "PLL":
             processed = _ensure_pll_bringup_tokens(processed)
         elif mod_name.upper() == "PCR":
-            processed = _ensure_pcr_enable_all_definition(processed)
+            processed = _ensure_pcr_enable_all_definition(processed, output_dir=output_dir)
         elif mod_name.upper() == "SYSTEM":
             processed = _normalize_system_flash_register_access(processed)
+
+        # Enforce canonical base macro usage when header defines one (arrow access preserved).
+        processed = _normalize_driver_base_alias_usage(
+            mod_name,
+            processed,
+            output_dir=output_dir,
+        )
 
     return processed
 
@@ -846,6 +985,12 @@ async def run_implementation_pass(
     inc_dir.mkdir(parents=True, exist_ok=True)
     src_dir.mkdir(parents=True, exist_ok=True)
 
+    api_reuse_recipe = resolve_app_intent_api_reuse_recipe(
+        bringup_contract=bringup_contract,
+        api_contract_manifest=api_contract_manifest,
+        driver_source_symbols=None,
+    )
+
     tasks = []
 
     async def _generate_header(mod_name: str, mod_data: Dict, reg_content: str):
@@ -940,9 +1085,9 @@ async def run_implementation_pass(
                     mod_name,
                     json.dumps(mod_data, indent=2),
                     reg_content,
-                    soc_slice,
-                    bus_slice,
-                    pinmux_slice,
+                    _sanitize_prompt_context_text(soc_slice),
+                    _sanitize_prompt_context_text(bus_slice),
+                    _sanitize_prompt_context_text(pinmux_slice),
                     manifest=manifest,
                     instance_pin_config=instance_pin_config,
                     dependency_manifests=dependency_manifests,
@@ -1111,10 +1256,20 @@ async def run_implementation_pass(
                 match = re.search(r"```c?(.*?)```", content, re.DOTALL)
                 if match:
                     clean_code = match.group(1).strip()
-            clean_code = _postprocess_generated_code(mod_name, type_tag, clean_code)
+            clean_code = _postprocess_generated_code(
+                mod_name,
+                type_tag,
+                clean_code,
+                output_dir=output_dir,
+            )
 
             # Write File
             if type_tag == "h":
+                clean_code = inject_driver_usage_recipe_comment(
+                    header_text=clean_code,
+                    module_name=mod_name,
+                    recipe=api_reuse_recipe,
+                )
                 fname = f"{mod_name.lower()}_driver.h"
                 fpath = inc_dir / fname
 
@@ -1208,6 +1363,16 @@ async def run_implementation_pass(
 
         module_contract_result = None
         module_autofix_actions: List[str] = []
+        helper_decl_actions = _ensure_driver_helper_declarations(
+            module_name=mod_name,
+            header_path=module_header_path,
+            source_path=module_source_path,
+        )
+        if helper_decl_actions:
+            for action in helper_decl_actions:
+                logger.info(action)
+                if tracker:
+                    tracker.add_message(action, level="info")
         if (
             api_contract_manifest
             and module_header_path

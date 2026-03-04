@@ -1,6 +1,10 @@
 from pathlib import Path
 
-from modules.build.llm_rewrite import _select_target_files, apply_llm_rewrite_response
+from modules.build.llm_rewrite import (
+    _build_rewrite_prompt,
+    _select_target_files,
+    apply_llm_rewrite_response,
+)
 from modules.build.ti_diagnostics import TiDiagnostic
 
 
@@ -114,3 +118,98 @@ def test_target_selection_prefers_high_signal_compile_files(tmp_path: Path):
     # bsp_validate.c is intentionally excluded from LLM rewrite target selection.
     assert len(targets) == 1
     assert targets[0].name == "lin_driver.c"
+
+
+def test_rewrite_prompt_includes_related_register_header(tmp_path: Path):
+    src = tmp_path / "source"
+    inc = tmp_path / "include"
+    src.mkdir(parents=True, exist_ok=True)
+    inc.mkdir(parents=True, exist_ok=True)
+    pcr_c = src / "pcr_driver.c"
+    pcr_h = inc / "pcr_driver.h"
+    reg_pcr_h = inc / "reg_pcr.h"
+    pcr_c.write_text('#include "pcr_driver.h"\nvoid PCR_Init(void){ PCR->PSPWRDWNCLR0 = 1U; }\n', encoding="utf-8")
+    pcr_h.write_text("void PCR_Init(void);\n", encoding="utf-8")
+    reg_pcr_h.write_text(
+        "typedef struct { volatile unsigned int PSPWRDWNCLR0; } PCR_REG_MAP_t;\n"
+        "#define PCR ((PCR_REG_MAP_t *)0xFFFFE000U)\n",
+        encoding="utf-8",
+    )
+
+    prompt = _build_rewrite_prompt(
+        output_dir=tmp_path,
+        target_files=[pcr_c],
+        diagnostics=[_diag("../pcr_driver.c", "error", "identifier undefined", line=3)],
+        api_contract_manifest=None,
+        bringup_contract=None,
+        include_contract_context=False,
+    )
+
+    assert "===== RELATED REGISTER HEADER: include/reg_pcr.h =====" in prompt
+    assert "Do NOT add include directives for headers that do not exist in this output folder." in prompt
+
+
+def test_rewrite_guard_rejects_missing_include(tmp_path: Path):
+    target = tmp_path / "app_intent.c"
+    target.write_text('#include "app_intent.h"\nint x = 1;\n', encoding="utf-8")
+    (tmp_path / "app_intent.h").write_text("void APP_INTENT_Init(void);\n", encoding="utf-8")
+    diff = "\n".join(
+        [
+            "--- a/app_intent.c",
+            "+++ b/app_intent.c",
+            "@@ -1,2 +1,3 @@",
+            " #include \"app_intent.h\"",
+            "+#include \"sys_pinmux.h\"",
+            " int x = 1;",
+            "",
+        ]
+    )
+
+    result = apply_llm_rewrite_response(
+        output_dir=tmp_path,
+        response_text=diff,
+        allowed_files=[target],
+        apply_policy="diff_only",
+        api_contract_manifest=None,
+    )
+
+    assert result["touched_files"] == []
+    assert any("introduced_missing_include" in err for err in result["errors"])
+    assert '#include "sys_pinmux.h"' not in target.read_text(encoding="utf-8")
+
+
+def test_rewrite_guard_rejects_undeclared_base_alias(tmp_path: Path):
+    src = tmp_path / "source"
+    inc = tmp_path / "include"
+    src.mkdir(parents=True, exist_ok=True)
+    inc.mkdir(parents=True, exist_ok=True)
+    target = src / "pcr_driver.c"
+    target.write_text("void PCR_Init(void){ PCR->PSPWRDWNCLR0 = 1U; }\n", encoding="utf-8")
+    (inc / "reg_pcr.h").write_text(
+        "typedef struct { volatile unsigned int PSPWRDWNCLR0; } PCR_REG_MAP_t;\n"
+        "#define PCR ((PCR_REG_MAP_t *)0xFFFFE000U)\n",
+        encoding="utf-8",
+    )
+
+    diff = "\n".join(
+        [
+            "--- a/source/pcr_driver.c",
+            "+++ b/source/pcr_driver.c",
+            "@@ -1,1 +1,1 @@",
+            "-void PCR_Init(void){ PCR->PSPWRDWNCLR0 = 1U; }",
+            "+void PCR_Init(void){ pcrREG->PSPWRDWNCLR0 = 1U; }",
+            "",
+        ]
+    )
+
+    result = apply_llm_rewrite_response(
+        output_dir=tmp_path,
+        response_text=diff,
+        allowed_files=[target],
+        apply_policy="diff_only",
+        api_contract_manifest=None,
+    )
+
+    assert result["touched_files"] == []
+    assert any("introduced_undeclared_base_alias" in err for err in result["errors"])
+    assert "pcrREG->" not in target.read_text(encoding="utf-8")
