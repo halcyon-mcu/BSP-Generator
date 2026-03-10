@@ -45,6 +45,16 @@ def _get_policy(bringup_contract: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def _get_init_gate_policy(bringup_contract: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    contract = _as_dict(bringup_contract)
+    app_intent = _as_dict(contract.get("app_intent"))
+    init_gate = _as_dict(app_intent.get("init_gate"))
+    return {
+        "mode": str(init_gate.get("mode", "auto_fix_then_fail")).strip() or "auto_fix_then_fail",
+        "enforce_pre_use_init": bool(init_gate.get("enforce_pre_use_init", True)),
+    }
+
+
 def _derive_primary_serial_module(bringup_contract: Optional[Dict[str, Any]]) -> Optional[str]:
     serial = _as_dict(_as_dict(bringup_contract).get("serial"))
     primary = str(serial.get("primary_path", "")).upper()
@@ -186,6 +196,43 @@ def resolve_app_intent_api_reuse_recipe(
         },
     }
     return recipe
+
+
+def resolve_app_intent_init_gate_contract(
+    *,
+    bringup_contract: Optional[Dict[str, Any]],
+    api_contract_manifest: Optional[Dict[str, Any]],
+    timing_recipe: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Resolve module init functions that must exist when module APIs are used by app_intent.c.
+    """
+    policy = _get_init_gate_policy(bringup_contract)
+    modules_contract = _as_dict(_as_dict(api_contract_manifest).get("modules"))
+    selected_timing_module = str(_as_dict(timing_recipe).get("selected_module", "")).upper()
+    module_names = ["GIO", "LIN", "SCI", "IOMM", "RTI", "VIM", "PLL"]
+    if selected_timing_module and selected_timing_module not in module_names:
+        module_names.append(selected_timing_module)
+
+    module_init_map: Dict[str, Dict[str, Any]] = {}
+    for module_name in module_names:
+        module_contract = _as_dict(modules_contract.get(module_name))
+        capabilities = _as_dict(module_contract.get("capabilities"))
+        functions = _as_dict(module_contract.get("functions"))
+        init_name = str(capabilities.get("init") or "").strip()
+        if not init_name:
+            continue
+        arity_raw = _as_dict(functions.get(init_name)).get("arity")
+        arity = int(arity_raw) if isinstance(arity_raw, int) else None
+        module_init_map[module_name] = {
+            "init": init_name,
+            "arity": arity,
+        }
+
+    return {
+        "policy": policy,
+        "modules": module_init_map,
+    }
 
 
 def _preferred_tx_for_module(module_recipe: Dict[str, Any], policy: Dict[str, Any]) -> Dict[str, Optional[str]]:
@@ -406,6 +453,141 @@ def _extract_driver_prototype(
     return None
 
 
+def _extract_app_intent_function(source_text: str, function_name: str) -> Optional[Dict[str, Any]]:
+    span = _extract_c_function_definition_span(source_text, function_name)
+    if not span:
+        return None
+    start, end = span
+    fn_text = source_text[start:end]
+    open_brace_rel = fn_text.find("{")
+    close_brace_rel = fn_text.rfind("}")
+    if open_brace_rel < 0 or close_brace_rel <= open_brace_rel:
+        return None
+    body_start = start + open_brace_rel + 1
+    body_end = start + close_brace_rel
+    return {
+        "start": start,
+        "end": end,
+        "body_start": body_start,
+        "body_end": body_end,
+        "text": fn_text,
+        "body": source_text[body_start:body_end],
+    }
+
+
+def _extract_statement_span(body_text: str, call_name: str) -> Optional[Tuple[int, int]]:
+    pattern = re.compile(rf"(?m)^[ \t]*{re.escape(call_name)}\s*\([^;{{}}]*\)\s*;\s*$")
+    match = pattern.search(body_text)
+    if not match:
+        return None
+    return (match.start(), match.end())
+
+
+def _insert_init_call_at_top(body_text: str, call_name: str) -> str:
+    lines = body_text.splitlines()
+    indent = "    "
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        leading = line[: len(line) - len(line.lstrip())]
+        indent = leading or indent
+        break
+    prefix = "\n" if body_text and not body_text.startswith("\n") else ""
+    return f"{prefix}{indent}{call_name}();\n{body_text.lstrip()}"
+
+
+def _module_api_used(text_no_comments: str, module_name: str, init_name: str) -> bool:
+    prefix = f"{module_name.upper()}_"
+    call_re = re.compile(rf"\b({re.escape(prefix)}[A-Za-z_]\w*)\s*\(")
+    for match in call_re.finditer(text_no_comments):
+        name = str(match.group(1))
+        if name == init_name:
+            continue
+        return True
+    return False
+
+
+def _enforce_init_before_use(
+    source_text: str,
+    *,
+    module_init_contract: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    cfg = _as_dict(module_init_contract)
+    policy = _as_dict(cfg.get("policy"))
+    modules = _as_dict(cfg.get("modules"))
+    enforce = bool(policy.get("enforce_pre_use_init", True))
+    if not enforce or not modules:
+        return {
+            "text": source_text,
+            "changed": False,
+            "actions": [],
+            "failures": [],
+        }
+
+    working = str(source_text or "")
+    changed = False
+    actions: List[str] = []
+    failures: List[str] = []
+    text_no_comments = _strip_c_comments(working)
+    init_fn = _extract_app_intent_function(working, "APP_INTENT_Init")
+    if not init_fn:
+        if any(
+            _module_api_used(text_no_comments, module_name, str(_as_dict(entry).get("init") or ""))
+            for module_name, entry in modules.items()
+            if str(_as_dict(entry).get("init") or "").strip()
+        ):
+            failures.append("Missing APP_INTENT_Init; cannot enforce module init-before-use invariants.")
+        return {
+            "text": working,
+            "changed": changed,
+            "actions": actions,
+            "failures": failures,
+        }
+
+    for module_name, entry in modules.items():
+        module_info = _as_dict(entry)
+        init_name = str(module_info.get("init") or "").strip()
+        if not init_name:
+            continue
+        init_arity = module_info.get("arity")
+        if not _module_api_used(text_no_comments, module_name, init_name):
+            continue
+
+        init_fn = _extract_app_intent_function(working, "APP_INTENT_Init")
+        if not init_fn:
+            failures.append(f"{module_name}: APP_INTENT_Init missing while {module_name}_* APIs are used.")
+            continue
+        init_call_exists_anywhere = re.search(rf"\b{re.escape(init_name)}\s*\(", text_no_comments) is not None
+        if init_call_exists_anywhere:
+            continue
+
+        init_body = str(init_fn.get("body") or "")
+        if init_arity == 0:
+            new_body = _insert_init_call_at_top(init_body, init_name)
+            if new_body != init_body:
+                working = (
+                    working[: int(init_fn["body_start"])]
+                    + new_body
+                    + working[int(init_fn["body_end"]) :]
+                )
+                changed = True
+                actions.append(f"Inserted missing {init_name}() in APP_INTENT_Init.")
+                text_no_comments = _strip_c_comments(working)
+                continue
+
+        failures.append(
+            f"{module_name}: missing required init call {init_name}() while {module_name}_* APIs are used."
+        )
+
+    return {
+        "text": working,
+        "changed": changed,
+        "actions": actions,
+        "failures": failures,
+    }
+
+
 def _gio_port_mode(gio_header_text: str) -> str:
     text = str(gio_header_text or "")
     if re.search(r"\bGIO_(?:ConfigurePin|WritePin|ReadPin|TogglePin)\s*\(\s*uint8_t\s+port\b", text):
@@ -468,6 +650,7 @@ def sanitize_app_intent_generated_source(
     app_intent_text: str,
     driver_source_symbols: Optional[Dict[str, List[str]]],
     gio_header_text: str = "",
+    module_init_contract: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Apply deterministic safety fixes to generated app_intent.c.
@@ -537,10 +720,74 @@ def sanitize_app_intent_generated_source(
     updated = normalized_ports
     actions.extend(port_actions)
 
+    init_gate_result = _enforce_init_before_use(
+        updated,
+        module_init_contract=module_init_contract,
+    )
+    updated = str(init_gate_result.get("text", updated))
+    actions.extend(list(init_gate_result.get("actions", [])))
+    init_gate_failures = list(init_gate_result.get("failures", []))
+
     return {
         "text": updated,
         "changed": updated != text,
         "actions": actions,
+        "init_gate_actions": list(init_gate_result.get("actions", [])),
+        "init_gate_failures": init_gate_failures,
+    }
+
+
+def validate_intent_behavior_alignment(
+    *,
+    intent_text: str,
+    app_intent_c_text: str,
+    board_capabilities_header_text: str = "",
+) -> Dict[str, Any]:
+    """
+    Intent-derived behavior validation without fixed command grammar assumptions.
+    """
+    intent = str(intent_text or "").lower()
+    text = str(app_intent_c_text or "")
+    header = str(board_capabilities_header_text or "")
+
+    aliases_available = (
+        re.search(r"#define\s+BOARD_USER_LED_A_PRESENT\s+1U", header) is not None
+        and re.search(r"#define\s+BOARD_USER_LED_B_PRESENT\s+1U", header) is not None
+    )
+    requested_aliases: List[str] = []
+    if re.search(r"\bled\s*a\b|\bled_a\b", intent):
+        requested_aliases.append("LED_A")
+    if re.search(r"\bled\s*b\b|\bled_b\b", intent):
+        requested_aliases.append("LED_B")
+
+    if not requested_aliases and ("led2" in intent or "led 2" in intent):
+        requested_aliases.append("LED_A")
+    if not requested_aliases and ("led3" in intent or "led 3" in intent):
+        requested_aliases.append("LED_B")
+
+    if not requested_aliases and "heartbeat" in intent and aliases_available:
+        requested_aliases.append("LED_B")
+
+    used_aliases: List[str] = []
+    if re.search(r"\bBOARD_USER_LED_A_", text):
+        used_aliases.append("LED_A")
+    if re.search(r"\bBOARD_USER_LED_B_", text):
+        used_aliases.append("LED_B")
+
+    failures: List[str] = []
+    warnings: List[str] = []
+    for alias in requested_aliases:
+        if alias not in used_aliases and aliases_available:
+            failures.append(f"Intent references {alias.replace('_', ' ')}, but generated code does not use {alias} alias macros.")
+    if not requested_aliases:
+        warnings.append("No explicit LED alias target inferred from intent text; behavior check kept generic.")
+
+    return {
+        "requested_aliases": requested_aliases,
+        "used_aliases": used_aliases,
+        "passed": len(failures) == 0,
+        "failures": failures,
+        "warnings": warnings,
     }
 
 
@@ -549,6 +796,8 @@ def lint_app_intent_api_reuse(
     recipe: Dict[str, Any],
     *,
     gio_header_text: str = "",
+    board_capabilities_header_text: str = "",
+    timing_recipe: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     """
     Warn-only checks for post-generated app_intent.c drift from API reuse recipe.
@@ -564,6 +813,7 @@ def lint_app_intent_api_reuse(
     modules = _as_dict(recipe.get("modules"))
     primary_module = str(recipe.get("primary_serial_module") or "").upper()
     module_candidates = [primary_module] if primary_module in {"LIN", "SCI"} else ["LIN", "SCI"]
+    timing_cfg = _as_dict(timing_recipe)
 
     step_body = _extract_c_function_body(text, "APP_INTENT_Step")
 
@@ -661,6 +911,59 @@ def lint_app_intent_api_reuse(
             warnings.append(
                 "APP_INTENT: LED state change in APP_INTENT_Step has no visible timing gate; "
                 "tight-loop blink may be too fast to observe."
+            )
+        if timing_cfg:
+            selected_source = str(timing_cfg.get("selected_source", "")).strip().lower()
+            selected_apis = _as_dict(timing_cfg.get("selected_apis"))
+            timer_calls = [
+                str(selected_apis.get("get_time_ms") or ""),
+                str(selected_apis.get("get_tick") or ""),
+                str(selected_apis.get("elapsed_ms") or ""),
+            ]
+            timer_calls = [name for name in timer_calls if name]
+            has_timer_call = any(re.search(rf"\b{re.escape(name)}\s*\(", text) for name in timer_calls)
+            has_counter_based_gate = re.search(
+                r"(tick|counter|heartbeat|blink)\w*\s*(\+\+|=\s*\w+\s*\+\s*1)",
+                step_body,
+                flags=re.IGNORECASE,
+            ) is not None
+            if selected_source == "hardware_timer" and has_led_write and not has_timer_call:
+                warnings.append(
+                    "APP_INTENT: timing recipe selected hardware timer source, but APP_INTENT_Step "
+                    "does not call resolved timer APIs."
+                )
+            if selected_source == "hardware_timer" and has_counter_based_gate and not has_timer_call:
+                warnings.append(
+                    "APP_INTENT: counter/divider timing detected while hardware timer recipe is selected."
+                )
+
+    header_text = str(board_capabilities_header_text or "")
+    aliases_present = (
+        re.search(r"#define\s+BOARD_USER_LED_A_PRESENT\s+1U", header_text) is not None
+        and re.search(r"#define\s+BOARD_USER_LED_B_PRESENT\s+1U", header_text) is not None
+    )
+    if aliases_present and re.search(r"\bBOARD_LED[23]_", text):
+        warnings.append(
+            "APP_INTENT: direct BOARD_LED2_/BOARD_LED3_ macro usage detected while BOARD_USER_LED_A/B aliases are available."
+        )
+
+    for alias in ("A", "B"):
+        uses_alias_pin = re.search(
+            rf"\bBOARD_USER_LED_{alias}_GIO_(?:PORT_INDEX|PORT)\b", text
+        ) is not None and re.search(
+            rf"\bBOARD_USER_LED_{alias}_GIO_PIN\b", text
+        ) is not None
+        uses_alias_polarity = re.search(
+            rf"\bBOARD_USER_LED_{alias}_ACTIVE_(?:LOW|HIGH)\b", text
+        ) is not None
+        raw_write = re.search(
+            rf"\bGIO_WritePin\s*\([^;]*BOARD_USER_LED_{alias}_GIO_[^;]*,\s*BOARD_USER_LED_{alias}_GIO_PIN\s*,\s*(?:true|false|0U|1U|0|1)\s*\)",
+            text,
+        )
+        if aliases_present and uses_alias_pin and raw_write and not uses_alias_polarity:
+            warnings.append(
+                f"APP_INTENT: LED {alias} write path appears to ignore alias polarity macros "
+                f"(BOARD_USER_LED_{alias}_ACTIVE_LOW/HIGH)."
             )
 
     return warnings

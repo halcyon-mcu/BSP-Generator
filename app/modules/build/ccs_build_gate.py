@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from .llm_rewrite import RewriteConfig, run_llm_targeted_rewrite
 from .ti_diagnostics import (
@@ -123,6 +123,8 @@ def run_ccs_build_gate(
         "removed_stale_files": 0,
         "sync_fingerprint": {},
         "sync_verified": False,
+        "compile_input_audit": {},
+        "generated_header_basenames": [],
         "llm_rewrite_attempted": False,
         "llm_rewrite_applied": False,
         "llm_rewrite_target_files": [],
@@ -188,6 +190,9 @@ def run_ccs_build_gate(
         _log(progress_callback, f"[build-gate] Reconciled {reconciled_refs} generated source/object makefile references")
     report["sync_fingerprint"] = dict(sync.get("fingerprint", {}) or {})
     report["sync_verified"] = bool(report["sync_fingerprint"].get("matches", False))
+    report["generated_header_basenames"] = _collect_generated_h_basenames(Path(output_dir))
+    compile_input_audit = _audit_compile_inputs(layout.configuration_path, Path(output_dir))
+    report["compile_input_audit"] = compile_input_audit
     if not report["sync_verified"]:
         report["status"] = "sync_fingerprint_mismatch"
         report["error_summary"] = {
@@ -196,6 +201,19 @@ def run_ccs_build_gate(
             ],
             "mismatch_files": report["sync_fingerprint"].get("mismatch_files", []),
         }
+        _write_gate_report(output_dir, report)
+        return report
+    if not bool(compile_input_audit.get("exact_match", False)):
+        report["status"] = "compile_input_mismatch"
+        report["error_summary"] = {
+            "errors": [
+                "CCS compile input mismatch: compiler source list does not exactly match generated C files."
+            ],
+            "missing_generated": compile_input_audit.get("missing_generated", []),
+            "unexpected_non_generated": compile_input_audit.get("unexpected_non_generated", []),
+        }
+        if "compile_input_mismatch" not in report["blocking_reasons"]:
+            report["blocking_reasons"].append("compile_input_mismatch")
         _write_gate_report(output_dir, report)
         return report
     gmake_bin = _resolve_gmake_binary()
@@ -379,6 +397,9 @@ def run_ccs_build_gate(
             report["reconciled_make_refs"] = int(report.get("reconciled_make_refs", 0)) + int(reconciled_refs)
             report["sync_fingerprint"] = dict(sync.get("fingerprint", {}) or {})
             report["sync_verified"] = bool(report["sync_fingerprint"].get("matches", False))
+            report["generated_header_basenames"] = _collect_generated_h_basenames(Path(output_dir))
+            compile_input_audit = _audit_compile_inputs(layout.configuration_path, Path(output_dir))
+            report["compile_input_audit"] = compile_input_audit
             _log(progress_callback, f"[build-gate] Re-synced {len(sync.get('copied_files', []))} files after fixes")
             if pruned_refs > 0:
                 _log(progress_callback, f"[build-gate] Pruned {pruned_refs} stale bsp_validate makefile references")
@@ -392,6 +413,18 @@ def run_ccs_build_gate(
                     ],
                     "mismatch_files": report["sync_fingerprint"].get("mismatch_files", []),
                 }
+                break
+            if not bool(compile_input_audit.get("exact_match", False)):
+                report["status"] = "compile_input_mismatch_after_fix"
+                report["error_summary"] = {
+                    "errors": [
+                        "CCS compile input mismatch after fixes: source list does not exactly match generated C files."
+                    ],
+                    "missing_generated": compile_input_audit.get("missing_generated", []),
+                    "unexpected_non_generated": compile_input_audit.get("unexpected_non_generated", []),
+                }
+                if "compile_input_mismatch" not in report["blocking_reasons"]:
+                    report["blocking_reasons"].append("compile_input_mismatch")
                 break
 
     if not report["passes"] and not any_fix_actions:
@@ -502,6 +535,77 @@ def _collect_generated_c_basenames(output_dir: Path) -> list[str]:
     return sorted(names)
 
 
+def _collect_generated_h_basenames(output_dir: Path) -> list[str]:
+    names: set[str] = set()
+    pools = [Path(output_dir), Path(output_dir) / "include"]
+    for folder in pools:
+        if not folder.exists():
+            continue
+        for entry in folder.iterdir():
+            if not entry.is_file() or entry.suffix.lower() != ".h":
+                continue
+            names.add(entry.stem)
+    return sorted(names)
+
+
+def _parse_var_block_entries(text: str, var_name: str) -> List[str]:
+    lines = text.splitlines()
+    start = -1
+    for idx, line in enumerate(lines):
+        if line.strip().startswith(f"{var_name} +="):
+            start = idx
+            break
+    if start < 0:
+        return []
+    end = start + 1
+    while end < len(lines) and lines[end].strip() != "":
+        end += 1
+    entries: List[str] = []
+    for idx in range(start + 1, end):
+        token = lines[idx].strip().rstrip("\\").strip()
+        if token:
+            entries.append(token)
+    return entries
+
+
+def _audit_compile_inputs(configuration_path: Path, output_dir: Path) -> Dict[str, Any]:
+    cfg = Path(configuration_path)
+    subdir_vars = cfg / "subdir_vars.mk"
+    expected = _collect_generated_c_basenames(output_dir)
+    expected_set = set(expected)
+    if not subdir_vars.exists():
+        return {
+            "exact_match": False,
+            "reason": "missing_subdir_vars_mk",
+            "expected_c_stems": expected,
+            "actual_c_stems": [],
+            "missing_generated": expected,
+            "unexpected_non_generated": [],
+        }
+
+    text = subdir_vars.read_text(encoding="utf-8", errors="ignore")
+    entries = _parse_var_block_entries(text, "C_SRCS")
+    actual_stems: set[str] = set()
+    for entry in entries:
+        token = str(entry).strip().strip('"').replace("\\", "/")
+        if not token.lower().endswith(".c"):
+            continue
+        stem = Path(token).name[:-2]
+        if stem:
+            actual_stems.add(stem)
+
+    missing = sorted(expected_set - actual_stems)
+    unexpected = sorted(actual_stems - expected_set)
+    return {
+        "exact_match": len(missing) == 0 and len(unexpected) == 0,
+        "reason": "",
+        "expected_c_stems": sorted(expected_set),
+        "actual_c_stems": sorted(actual_stems),
+        "missing_generated": missing,
+        "unexpected_non_generated": unexpected,
+    }
+
+
 def _reconcile_generated_make_refs(configuration_path: Path, output_dir: Path) -> int:
     """
     Ensure CCS auto-generated makefiles include generated C sources/objects.
@@ -522,32 +626,32 @@ def _reconcile_generated_make_refs(configuration_path: Path, output_dir: Path) -
         text = subdir_vars.read_text(encoding="utf-8", errors="ignore")
         newline = _preferred_newline(text)
         updated = text
-        updated = _ensure_var_block_entries(
+        updated = _replace_var_block_entries(
             updated,
             "C_SRCS",
             [f"../{stem}.c" for stem in stems],
         )
-        updated = _ensure_var_block_entries(
+        updated = _replace_var_block_entries(
             updated,
             "C_DEPS",
             [f"./{stem}.d" for stem in stems],
         )
-        updated = _ensure_var_block_entries(
+        updated = _replace_var_block_entries(
             updated,
             "OBJS",
             [f"./{stem}.obj" for stem in stems],
         )
-        updated = _ensure_var_block_entries(
+        updated = _replace_var_block_entries(
             updated,
             "C_SRCS__QUOTED",
             [f'"../{stem}.c"' for stem in stems],
         )
-        updated = _ensure_var_block_entries(
+        updated = _replace_var_block_entries(
             updated,
             "C_DEPS__QUOTED",
             [f'"{stem}.d"' for stem in stems],
         )
-        updated = _ensure_var_block_entries(
+        updated = _replace_var_block_entries(
             updated,
             "OBJS__QUOTED",
             [f'"{stem}.obj"' for stem in stems],
@@ -560,7 +664,7 @@ def _reconcile_generated_make_refs(configuration_path: Path, output_dir: Path) -
     if makefile.exists():
         text = makefile.read_text(encoding="utf-8", errors="ignore")
         newline = _preferred_newline(text)
-        updated = _ensure_ordered_objs_entries(text, [f'"./{stem}.obj"' for stem in stems])
+        updated = _replace_ordered_objs_entries(text, [f'"./{stem}.obj"' for stem in stems])
         if updated != text:
             makefile.write_text(updated, encoding="utf-8", newline=newline)
             touched += 1
@@ -622,6 +726,32 @@ def _ensure_var_block_entries(text: str, var_name: str, entries: list[str]) -> s
     return newline.join(lines) + newline
 
 
+def _replace_var_block_entries(text: str, var_name: str, entries: list[str]) -> str:
+    newline = _preferred_newline(text)
+    lines = text.splitlines()
+    start = -1
+    for idx, line in enumerate(lines):
+        if line.strip().startswith(f"{var_name} +="):
+            start = idx
+            break
+    if start < 0:
+        return text
+
+    end = start + 1
+    while end < len(lines) and lines[end].strip() != "":
+        end += 1
+
+    insertion: list[str] = []
+    for idx, entry in enumerate(entries):
+        token = entry.strip()
+        if idx < len(entries) - 1:
+            insertion.append(f"{token} \\")
+        else:
+            insertion.append(token)
+    lines[start + 1 : end] = insertion
+    return newline.join(lines) + newline
+
+
 def _ensure_ordered_objs_entries(text: str, entries: list[str]) -> str:
     newline = _preferred_newline(text)
     lines = text.splitlines()
@@ -652,6 +782,28 @@ def _ensure_ordered_objs_entries(text: str, entries: list[str]) -> str:
 
     insertion = [f"{entry} \\" for entry in to_add]
     lines[end:end] = insertion
+    return newline.join(lines) + newline
+
+
+def _replace_ordered_objs_entries(text: str, entries: list[str]) -> str:
+    newline = _preferred_newline(text)
+    lines = text.splitlines()
+    start = -1
+    for idx, line in enumerate(lines):
+        if line.strip().startswith("ORDERED_OBJS +="):
+            start = idx
+            break
+    if start < 0:
+        return text
+
+    end = start + 1
+    while end < len(lines):
+        stripped = lines[end].strip()
+        if stripped.startswith("$(GEN_CMDS__FLAG)") or stripped.startswith("-lrts"):
+            break
+        end += 1
+
+    lines[start + 1 : end] = [f"{entry} \\" for entry in entries]
     return newline.join(lines) + newline
 
 

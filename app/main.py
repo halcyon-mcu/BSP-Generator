@@ -26,6 +26,7 @@ from modules.utils.utils import _read, extract_text_from_bedrock_response, _now_
 from modules.generation.prompt import (
     build_clock_prompt,
     invoke_model,
+    invoke_model_sync,
     Model,
     build_system_prompt,
     build_user_prompt,            # peripheral driver prompt
@@ -46,6 +47,8 @@ from modules.contracts.api_contract_manifest import (
 from modules.contracts.contract_checker import (
     check_generated_module_contract,
     check_bsp_validate_contract,
+    check_app_intent_init_before_use,
+    summarize_api_status,
 )
 from modules.contracts.contract_autofix import (
     autofix_bsp_validate,
@@ -54,11 +57,17 @@ from modules.build.ccs_build_gate import (
     gate_should_fail_run,
     run_ccs_build_gate,
 )
+from modules.build.workspace_sync import (
+    resolve_workspace_layout,
+    sync_generated_to_project,
+)
 from modules.build.ti_diagnostics import apply_deterministic_fixes
 from modules.intent.board_capabilities import (
     build_board_capability_header,
     build_board_capability_manifest,
     format_allowed_references_for_console,
+    validate_led_alias_macro_consistency,
+    validate_led_alias_bindings_with_pinmux,
     validate_intent_references,
 )
 from modules.intent.post_generation_prompt import build_post_generation_firmware_prompt
@@ -66,7 +75,14 @@ from modules.intent.app_intent_api_reuse import (
     build_app_intent_api_recipe_text,
     lint_app_intent_api_reuse,
     resolve_app_intent_api_reuse_recipe,
+    resolve_app_intent_init_gate_contract,
     sanitize_app_intent_generated_source,
+    validate_intent_behavior_alignment,
+)
+from modules.intent.app_intent_timing_recipe import (
+    build_app_intent_timing_recipe_text,
+    resolve_app_intent_timing_recipe,
+    validate_rti_vim_wiring_in_app_intent,
 )
 from modules.validation.startup_contract_validator import validate_startup_contract
 from modules.validation.register_parity_guard import (
@@ -199,7 +215,7 @@ def _install_colored_print() -> None:
 DEFAULT_GENERATION_PROFILE = {
     "target_board": "LAUNCHXL2-TMS57012-RM46",
     "modules": {
-        "enabled": ["SCI", "GIO", "LIN", "PLL", "IOMM", "PCR", "SYSTEM", "VIM"]
+        "enabled": ["SCI", "GIO", "LIN", "RTI", "PLL", "IOMM", "PCR", "SYSTEM", "VIM"]
     },
     "sci": {"default_baud": 9600},
     "pins": {"lock_board_mapping": True},
@@ -600,6 +616,36 @@ def _resolve_action_from_args(args: argparse.Namespace) -> str:
     return "generate"
 
 
+def _run_api_preflight_check(*, model_name: str, max_tokens: int, mock_mode: bool = False) -> int:
+    """
+    Perform a lightweight Bedrock/API preflight check for generation readiness.
+    """
+    if mock_mode:
+        os.environ["BSP_MOCK_MODE"] = "1"
+
+    try:
+        model = Model(model_name)
+    except Exception:
+        print(f"[error] Unknown model for API check: {model_name}")
+        return 2
+
+    probe_tokens = max(16, min(int(max_tokens or 32), 64))
+    probe_messages = [{"role": "user", "content": "Reply with exactly: OK"}]
+
+    print(f"[info] API preflight: probing model {model.value} ({model.get_model_id()})")
+    try:
+        response = invoke_model_sync(model, probe_tokens, probe_messages)
+        text = str(extract_text_from_bedrock_response(response) or "").strip()
+        if not text:
+            print("[error] API preflight failed: empty model response.")
+            return 2
+        print(f"[ok] API preflight passed. Probe response: {text[:80]}")
+        return 0
+    except Exception as exc:
+        print(f"[error] API preflight failed: {exc}")
+        return 2
+
+
 def _resolve_optional_path(path_value: Optional[str], yaml_root: Path) -> Optional[Path]:
     if not isinstance(path_value, str) or not path_value.strip():
         return None
@@ -912,14 +958,29 @@ def _sync_validation_report_build_evidence(
         return False
 
 
-def _emit_board_capability_manifest(out_dir: Path, board_data: Dict[str, Any]) -> Dict[str, Any]:
-    manifest = build_board_capability_manifest(board_data or {})
+def _emit_board_capability_manifest(
+    out_dir: Path,
+    board_data: Dict[str, Any],
+    *,
+    pinmux_data: Optional[Dict[str, Any]] = None,
+    bringup_contract: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    manifest = build_board_capability_manifest(
+        board_data or {},
+        pinmux_data=pinmux_data,
+        bringup_contract=bringup_contract,
+    )
     manifest_path = Path(out_dir) / "board_capability_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     include_dir = Path(out_dir) / "include"
     include_dir.mkdir(parents=True, exist_ok=True)
     header_path = include_dir / "board_capabilities.h"
-    header_content = build_board_capability_header(board_data or {}, capability_manifest=manifest)
+    header_content = build_board_capability_header(
+        board_data or {},
+        capability_manifest=manifest,
+        pinmux_data=pinmux_data,
+        bringup_contract=bringup_contract,
+    )
     header_path.write_text(
         normalize_generated_text(header_content, header_path),
         encoding="utf-8",
@@ -956,7 +1017,7 @@ def _run_post_generation_intent_prompt(
 
     non_interactive = bool(initial_intent.strip())
     prompt = (
-        "\n[user] Enter app intent (for example: 'blink LED2 and print S3 presses over terminal'): "
+        "\n[user] Enter app intent (for example: 'blink LED A and print S3 presses over terminal'): "
     )
     intent_text = initial_intent.strip()
     cancelled = False
@@ -1073,6 +1134,7 @@ def _build_driver_headers_context(
         "gio_driver.h",
         "lin_driver.h",
         "sci_driver.h",
+        "rti_driver.h",
         "vim_driver.h",
     ]
     sections: List[str] = []
@@ -1118,6 +1180,7 @@ def _extract_driver_source_symbols(out_dir: Path) -> Dict[str, List[str]]:
     source_files = [
         "lin_driver.c",
         "sci_driver.c",
+        "rti_driver.c",
         "gio_driver.c",
         "iomm_driver.c",
         "pll_driver.c",
@@ -1130,7 +1193,7 @@ def _extract_driver_source_symbols(out_dir: Path) -> Dict[str, List[str]]:
         r"^\s*(?!static\b)[A-Za-z_][\w\s\*]*?\s+([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{",
         re.MULTILINE,
     )
-    keep_prefixes = ("LIN_", "SCI_", "GIO_", "IOMM_", "PLL_", "PCR_", "system_", "vim_")
+    keep_prefixes = ("LIN_", "SCI_", "RTI_", "GIO_", "IOMM_", "PLL_", "PCR_", "system_", "vim_")
 
     for filename in source_files:
         path = source_dir / filename
@@ -1156,7 +1219,7 @@ def _build_post_gen_contract_slice(api_contract_manifest: Optional[Dict[str, Any
     if not isinstance(modules, dict):
         return {}
 
-    keep_modules = {"SYSTEM", "PLL", "PCR", "IOMM", "VIM", "GIO", "LIN", "SCI"}
+    keep_modules = {"SYSTEM", "PLL", "PCR", "IOMM", "VIM", "GIO", "LIN", "SCI", "RTI"}
     sliced_modules = {
         name: value
         for name, value in modules.items()
@@ -1243,6 +1306,9 @@ async def _run_post_generation_firmware_pass(
     generation_profile: Dict[str, Any],
     api_contract_manifest: Optional[Dict[str, Any]],
     bringup_contract: Optional[Dict[str, Any]],
+    board_data: Optional[Dict[str, Any]],
+    pinmux_data: Optional[Dict[str, Any]],
+    irq_data: Optional[Dict[str, Any]],
     task_library_path: Optional[Path],
     token_allocator=None,
     progress_manager=None,
@@ -1294,11 +1360,41 @@ async def _run_post_generation_firmware_pass(
         driver_source_symbols=driver_source_symbols,
     )
     api_reuse_recipe_text = build_app_intent_api_recipe_text(api_reuse_recipe)
+    timing_recipe = resolve_app_intent_timing_recipe(
+        bringup_contract=bringup_contract,
+        api_contract_manifest=api_contract_manifest,
+        driver_source_symbols=driver_source_symbols,
+        irq_data=irq_data,
+    )
+    timing_recipe_text = build_app_intent_timing_recipe_text(timing_recipe)
+    init_gate_contract = resolve_app_intent_init_gate_contract(
+        bringup_contract=bringup_contract,
+        api_contract_manifest=api_contract_manifest,
+        timing_recipe=timing_recipe,
+    )
+    if str(timing_recipe.get("selected_source", "")).strip().lower() == "hardware_timer" and not timing_recipe_text.strip():
+        return {
+            "enabled": True,
+            "success": False,
+            "reason": "missing_timing_recipe_block",
+            "written_files": [],
+        }
 
     main_c_text = ""
     main_c_path = Path(out_dir) / "main.c"
     if main_c_path.exists():
         main_c_text = main_c_path.read_text(encoding="utf-8", errors="ignore")
+
+    wiring_req = timing_recipe.get("wiring_requirements", {}) if isinstance(timing_recipe.get("wiring_requirements", {}), dict) else {}
+    rti_irq_context = "\n".join(
+        [
+            f"rti_irq_name: {wiring_req.get('rti_irq_name') or '<missing>'}",
+            f"rti_irq_number: {wiring_req.get('rti_irq_number') if wiring_req.get('rti_irq_number') is not None else '<missing>'}",
+            f"rti_enable_interrupt_api: {wiring_req.get('rti_enable_interrupt_api') or '<optional>'}",
+            f"vim_register_isr_api: {wiring_req.get('vim_register_isr_api') or '<optional>'}",
+            f"vim_enable_irq_api: {wiring_req.get('vim_enable_irq_api') or '<optional>'}",
+        ]
+    )
 
     user_prompt = build_post_generation_firmware_prompt(
         intent_text=str(intent_report.get("intent_text", "")),
@@ -1309,6 +1405,8 @@ async def _run_post_generation_firmware_pass(
         existing_main_c=main_c_text,
         driver_headers_context=driver_headers_context,
         app_intent_api_usage_recipe=api_reuse_recipe_text,
+        app_intent_timing_recipe=timing_recipe_text,
+        rti_irq_context=rti_irq_context,
         task_library_text=task_library_text,
         task_library_source=str(task_library_path) if isinstance(task_library_path, Path) else "",
     )
@@ -1337,12 +1435,71 @@ async def _run_post_generation_firmware_pass(
     if main_wired:
         print(f"[ok] Wired APP_INTENT hooks into {Path(out_dir) / 'main.c'}")
 
+    post_gen_workspace_sync: Dict[str, Any] = {
+        "attempted": False,
+        "success": False,
+        "reason": "disabled_or_unconfigured",
+        "copied_files": 0,
+        "removed_files": 0,
+    }
+    try:
+        build_gate_cfg = generation_profile.get("build_gate", {}) if isinstance(generation_profile, dict) else {}
+        if isinstance(build_gate_cfg, dict) and bool(build_gate_cfg.get("enabled", False)):
+            workspace = str(build_gate_cfg.get("external_workspace_path", "")).strip()
+            project = str(build_gate_cfg.get("project_name", "")).strip()
+            config = str(build_gate_cfg.get("configuration", "Debug")).strip() or "Debug"
+            clean_stale = bool(build_gate_cfg.get("clean_stale_project_files", True))
+            if workspace and project:
+                layout = resolve_workspace_layout(
+                    external_workspace_path=workspace,
+                    project_name=project,
+                    configuration=config,
+                )
+                sync_result = sync_generated_to_project(
+                    Path(out_dir),
+                    layout.project_path,
+                    clean_stale_generated_files=clean_stale,
+                )
+                post_gen_workspace_sync = {
+                    "attempted": True,
+                    "success": True,
+                    "reason": "",
+                    "copied_files": len(sync_result.get("copied_files", [])),
+                    "removed_files": len(sync_result.get("removed_files", [])),
+                    "fingerprint": dict(sync_result.get("fingerprint", {}) or {}),
+                }
+                print(
+                    f"[ok] Post-gen workspace sync: copied {post_gen_workspace_sync['copied_files']} files "
+                    f"to {layout.project_path}"
+                )
+            else:
+                post_gen_workspace_sync = {
+                    "attempted": False,
+                    "success": False,
+                    "reason": "workspace_or_project_not_set",
+                    "copied_files": 0,
+                    "removed_files": 0,
+                }
+    except Exception as sync_exc:
+        post_gen_workspace_sync = {
+            "attempted": True,
+            "success": False,
+            "reason": str(sync_exc),
+            "copied_files": 0,
+            "removed_files": 0,
+        }
+        print(f"[warn] Post-gen workspace sync failed: {sync_exc}")
+
     api_reuse_warnings: List[str] = []
     api_reuse_fix_actions: List[str] = []
+    init_gate_actions: List[str] = []
+    init_gate_failures: List[str] = []
     app_intent_source_path = Path(out_dir) / "source" / "app_intent.c"
     api_reuse_policy_mode = str((api_reuse_recipe.get("policy") or {}).get("mode", "warn_only"))
+    app_intent_text_runtime = ""
     if app_intent_source_path.exists() and api_reuse_policy_mode != "prompt_only":
         app_intent_text = app_intent_source_path.read_text(encoding="utf-8", errors="ignore")
+        app_intent_text_runtime = app_intent_text
         gio_header_path = Path(out_dir) / "include" / "gio_driver.h"
         gio_header_text = gio_header_path.read_text(encoding="utf-8", errors="ignore") if gio_header_path.exists() else ""
 
@@ -1351,24 +1508,43 @@ async def _run_post_generation_firmware_pass(
             app_intent_text=app_intent_text,
             driver_source_symbols=driver_source_symbols,
             gio_header_text=gio_header_text,
+            module_init_contract=init_gate_contract,
         )
         api_reuse_fix_actions = list(sanitize_result.get("actions", []))
+        init_gate_actions = list(sanitize_result.get("init_gate_actions", []))
+        init_gate_failures = list(sanitize_result.get("init_gate_failures", []))
         if bool(sanitize_result.get("changed", False)):
             app_intent_text = str(sanitize_result.get("text", app_intent_text))
             app_intent_source_path.write_text(
                 normalize_generated_text(app_intent_text, app_intent_source_path),
                 encoding="utf-8",
             )
+            app_intent_text_runtime = app_intent_text
             for action in api_reuse_fix_actions:
                 print(f"[info] Post-gen API reuse fix: {action}")
+            for action in init_gate_actions:
+                print(f"[info] Post-gen init gate fix: {action}")
+        else:
+            app_intent_text_runtime = str(sanitize_result.get("text", app_intent_text))
 
         api_reuse_warnings = lint_app_intent_api_reuse(
-            app_intent_text,
+            app_intent_text_runtime,
             api_reuse_recipe,
             gio_header_text=gio_header_text,
+            board_capabilities_header_text=board_header_text,
+            timing_recipe=timing_recipe,
         )
         for warning in api_reuse_warnings:
             print(f"[warn] Post-gen API reuse: {warning}")
+
+        init_gate_check = check_app_intent_init_before_use(
+            app_intent_source_path,
+            init_gate_contract.get("modules", {}) if isinstance(init_gate_contract, dict) else {},
+        )
+        init_gate_failures.extend(list(init_gate_check.get("errors", [])))
+        init_gate_failures = sorted(set(init_gate_failures))
+        for failure in init_gate_failures:
+            print(f"[error] Post-gen init gate: {failure}")
 
     app_intent_forward_decls_added = [
         action
@@ -1409,22 +1585,120 @@ async def _run_post_generation_firmware_pass(
     driver_header_sync_actions: List[str] = []
     driver_header_sync_failures = _collect_driver_header_parity_failures_for_report(Path(out_dir))
 
+    led_alias_binding = {}
+    for alias_name in ("LED_A", "LED_B"):
+        macro = alias_name.upper()
+        src_match = re.search(
+            rf'#define\s+BOARD_USER_{macro}_SOURCE\s+"([^"]*)"',
+            board_header_text,
+        )
+        present_match = re.search(
+            rf"#define\s+BOARD_USER_{macro}_PRESENT\s+([01])U",
+            board_header_text,
+        )
+        active_low_match = re.search(
+            rf"#define\s+BOARD_USER_{macro}_ACTIVE_LOW\s+([01])U",
+            board_header_text,
+        )
+        led_alias_binding[alias_name] = {
+            "source": src_match.group(1) if src_match else "",
+            "present": bool(present_match and present_match.group(1) == "1"),
+            "active_low": bool(active_low_match and active_low_match.group(1) == "1"),
+        }
+
+    led_binding_validation = validate_led_alias_bindings_with_pinmux(
+        board_data or {},
+        pinmux_data=pinmux_data,
+        bringup_contract=bringup_contract,
+    )
+    led_alias_consistency_validation = validate_led_alias_macro_consistency(
+        board_header_text,
+        board_data or {},
+        bringup_contract=bringup_contract,
+    )
+    intent_behavior_validation = validate_intent_behavior_alignment(
+        intent_text=str(intent_report.get("intent_text", "")),
+        app_intent_c_text=app_intent_text_runtime,
+        board_capabilities_header_text=board_header_text,
+    )
+    polarity_issues = [
+        warning for warning in api_reuse_warnings if "polarity" in str(warning).lower()
+    ]
+    polarity_validation = {
+        "passed": len(polarity_issues) == 0,
+        "issues": polarity_issues,
+    }
+    rti_vim_wiring_status = validate_rti_vim_wiring_in_app_intent(
+        app_intent_text_runtime,
+        timing_recipe,
+    )
+
+    init_gate_mode = str(
+        ((init_gate_contract if isinstance(init_gate_contract, dict) else {}).get("policy") or {}).get(
+            "mode", "auto_fix_then_fail"
+        )
+    ).strip().lower()
+    strict_invariants = init_gate_mode in {"auto_fix_then_fail", "hard_fail"}
+    invariant_failures: List[str] = []
+    invariant_failures.extend(init_gate_failures)
+    if strict_invariants and not bool(led_binding_validation.get("passed", True)):
+        invariant_failures.extend(list(led_binding_validation.get("conflicts", [])))
+    if strict_invariants and not bool(led_alias_consistency_validation.get("passed", True)):
+        invariant_failures.extend(list(led_alias_consistency_validation.get("failures", [])))
+    if strict_invariants and not bool(polarity_validation.get("passed", True)):
+        invariant_failures.extend([f"Polarity invariant: {msg}" for msg in polarity_issues])
+    if strict_invariants and not bool(intent_behavior_validation.get("passed", True)):
+        invariant_failures.extend(list(intent_behavior_validation.get("failures", [])))
+    if strict_invariants and bool(rti_vim_wiring_status.get("required", False)) and not bool(
+        rti_vim_wiring_status.get("passed", False)
+    ):
+        invariant_failures.extend(list(rti_vim_wiring_status.get("failures", [])))
+    invariant_failures = sorted(set(invariant_failures))
+
+    api_status_blockers: List[str] = []
+    api_status_blockers.extend(missing_expected)
+    api_status_blockers.extend(init_gate_failures)
+    api_status_blockers.extend(driver_header_sync_failures)
+    api_status_blockers.extend(invariant_failures)
+    api_status = summarize_api_status(
+        blocking_errors=api_status_blockers,
+        warnings=api_reuse_warnings,
+    )
+
     report = {
         "enabled": True,
-        "success": len(missing_expected) == 0 and len(written_files or []) > 0,
-        "reason": "" if len(missing_expected) == 0 else "missing_expected_files",
+        "success": len(missing_expected) == 0 and len(written_files or []) > 0 and len(invariant_failures) == 0,
+        "reason": (
+            "invariant_validation_failed"
+            if invariant_failures
+            else ("" if len(missing_expected) == 0 else "missing_expected_files")
+        ),
         "written_files": [str(path) for path in (written_files or [])],
         "missing_expected_files": missing_expected,
         "main_hook_injected": main_wired,
+        "post_gen_workspace_sync": post_gen_workspace_sync,
         "expected_files": sorted(str(path) for path in expected),
         "max_tokens": int(max_tokens),
         "api_reuse_policy_mode": api_reuse_policy_mode,
         "api_reuse_fix_actions": api_reuse_fix_actions,
         "api_reuse_warnings": api_reuse_warnings,
+        "init_gate_actions": init_gate_actions,
+        "init_gate_failures": init_gate_failures,
         "driver_header_sync_actions": driver_header_sync_actions,
         "driver_header_sync_failures": driver_header_sync_failures,
         "app_intent_forward_decls_added": app_intent_forward_decls_added,
         "app_intent_forward_decls_added_count": len(app_intent_forward_decls_added),
+        "led_alias_binding": led_alias_binding,
+        "led_binding_validation": led_binding_validation,
+        "led_alias_consistency_validation": led_alias_consistency_validation,
+        "intent_behavior_validation": intent_behavior_validation,
+        "polarity_validation": polarity_validation,
+        "rti_vim_wiring_status": rti_vim_wiring_status,
+        "invariant_failures": invariant_failures,
+        "timing_source_selected": timing_recipe.get("selected_source"),
+        "timing_fallback_used": bool(timing_recipe.get("fallback_used", False)),
+        "api_status_ready": bool(api_status.get("ready", False)),
+        "api_status": api_status,
     }
     report_path = Path(out_dir) / "post_gen_firmware_report.json"
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -2409,10 +2683,6 @@ async def _run_validation_only(args) -> int:
         if app_intent_task_library_path is None:
             print(f"[warn] app_intent.task_library_path not found: {configured_task_library}")
 
-    board_capability_manifest = _emit_board_capability_manifest(out_dir, board_data)
-    print(f"[ok] Board capability manifest written: {out_dir / 'board_capability_manifest.json'}")
-    print(f"[ok] Board capability header written: {out_dir / 'include' / 'board_capabilities.h'}")
-
     bringup_cfg = generation_profile.get("bringup", {}) if isinstance(generation_profile.get("bringup", {}), dict) else {}
     bringup_mode = str(bringup_cfg.get("mode", "strict")).strip().lower()
     if bringup_mode not in {"strict", "relaxed"}:
@@ -2458,6 +2728,15 @@ async def _run_validation_only(args) -> int:
     if bringup_contract_path is not None:
         bringup_contract = load_bringup_contract(bringup_contract_path)
         print(f"[info] Loaded bringup contract: {bringup_contract_path}")
+
+    board_capability_manifest = _emit_board_capability_manifest(
+        out_dir,
+        board_data,
+        pinmux_data=pinmux_data,
+        bringup_contract=bringup_contract,
+    )
+    print(f"[ok] Board capability manifest written: {out_dir / 'board_capability_manifest.json'}")
+    print(f"[ok] Board capability header written: {out_dir / 'include' / 'board_capabilities.h'}")
 
     strict_validation_enabled = bool(generation_profile.get("strict_validation", False))
     contract_mode = str(generation_profile.get("contract_mode", "auto_fix_then_fail"))
@@ -2904,6 +3183,9 @@ async def _run_validation_only(args) -> int:
                 generation_profile=generation_profile,
                 api_contract_manifest=api_contract_manifest,
                 bringup_contract=bringup_contract,
+                board_data=board_data,
+                pinmux_data=pinmux_data,
+                irq_data=irq_data,
                 task_library_path=app_intent_task_library_path,
                 token_allocator=None,
                 progress_manager=None,
@@ -3039,6 +3321,11 @@ async def main():
         help="List the most recent output folders and exit.",
     )
     parser.add_argument(
+        "--check-api",
+        action="store_true",
+        help="Run API preflight check for generation readiness and exit.",
+    )
+    parser.add_argument(
         "--output-index",
         type=int,
         default=None,
@@ -3146,6 +3433,12 @@ async def main():
     if args.list_outputs:
         _print_recent_outputs(limit=10)
         return 0
+    if args.check_api:
+        return _run_api_preflight_check(
+            model_name=str(args.model),
+            max_tokens=int(args.max_tokens),
+            mock_mode=bool(args.mock),
+        )
 
     if args.output_index is not None and not args.output_dir:
         picked = _resolve_output_dir_from_index(int(args.output_index), limit=10)
@@ -3298,10 +3591,6 @@ async def main():
         if app_intent_task_library_path is None:
             print(f"[warn] app_intent.task_library_path not found: {configured_task_library}")
 
-    board_capability_manifest = _emit_board_capability_manifest(out_dir, board_data)
-    print(f"[ok] Board capability manifest written: {out_dir / 'board_capability_manifest.json'}")
-    print(f"[ok] Board capability header written: {out_dir / 'include' / 'board_capabilities.h'}")
-
     bringup_cfg = generation_profile.get("bringup", {}) if isinstance(generation_profile.get("bringup", {}), dict) else {}
     bringup_mode = str(bringup_cfg.get("mode", "strict")).strip().lower()
     if bringup_mode not in {"strict", "relaxed"}:
@@ -3358,6 +3647,15 @@ async def main():
     if bringup_contract_path is not None:
         bringup_contract = load_bringup_contract(bringup_contract_path)
         print(f"[info] Loaded bringup contract: {bringup_contract_path}")
+
+    board_capability_manifest = _emit_board_capability_manifest(
+        out_dir,
+        board_data,
+        pinmux_data=pinmux_data,
+        bringup_contract=bringup_contract,
+    )
+    print(f"[ok] Board capability manifest written: {out_dir / 'board_capability_manifest.json'}")
+    print(f"[ok] Board capability header written: {out_dir / 'include' / 'board_capabilities.h'}")
 
     strict_validation_enabled = bool(generation_profile.get("strict_validation", False))
     contract_mode = str(generation_profile.get("contract_mode", "auto_fix_then_fail"))
@@ -4525,6 +4823,9 @@ async def main():
                 generation_profile=generation_profile,
                 api_contract_manifest=api_contract_manifest,
                 bringup_contract=bringup_contract,
+                board_data=board_data,
+                pinmux_data=pinmux_data,
+                irq_data=irq_data,
                 task_library_path=app_intent_task_library_path,
                 token_allocator=token_allocator,
                 progress_manager=progress_manager,

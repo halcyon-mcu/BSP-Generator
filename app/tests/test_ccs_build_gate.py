@@ -1,11 +1,14 @@
 from pathlib import Path
 
 from modules.build.ccs_build_gate import (
+    _audit_compile_inputs,
     _ensure_ordered_objs_entries,
     _ensure_var_block_entries,
     _is_benign_missing_bsp_validate_target,
     _prune_stale_bsp_validate_make_refs,
     _reconcile_generated_make_refs,
+    _replace_ordered_objs_entries,
+    _replace_var_block_entries,
     gate_should_fail_run,
     run_ccs_build_gate,
 )
@@ -145,6 +148,38 @@ def test_ensure_ordered_objs_entries_inserts_before_gen_cmds():
     assert updated.index('"./app_intent.obj" \\') < updated.index("$(GEN_CMDS__FLAG) \\")
 
 
+def test_replace_var_block_entries_rewrites_exact_set():
+    text = "\n".join(
+        [
+            "C_SRCS += \\",
+            "../entry.c \\",
+            "../old.c \\",
+            "",
+        ]
+    )
+    updated = _replace_var_block_entries(text, "C_SRCS", ["../entry.c", "../app_intent.c"])
+    assert "../entry.c" in updated
+    assert "../app_intent.c" in updated
+    assert "../old.c" not in updated
+
+
+def test_replace_ordered_objs_entries_rewrites_exact_set():
+    text = "\n".join(
+        [
+            "ORDERED_OBJS += \\",
+            "\"./entry.obj\" \\",
+            "\"./old.obj\" \\",
+            "$(GEN_CMDS__FLAG) \\",
+            "-lrtsv7R4_T_le_v3D16_eabi.lib \\",
+            "",
+        ]
+    )
+    updated = _replace_ordered_objs_entries(text, ['"./entry.obj"', '"./app_intent.obj"'])
+    assert '"./entry.obj" \\' in updated
+    assert '"./app_intent.obj" \\' in updated
+    assert '"./old.obj" \\' not in updated
+
+
 def test_reconcile_generated_make_refs_adds_app_intent_entries(tmp_path: Path):
     out_dir = tmp_path / "out"
     (out_dir / "source").mkdir(parents=True, exist_ok=True)
@@ -158,12 +193,15 @@ def test_reconcile_generated_make_refs_adds_app_intent_entries(tmp_path: Path):
             [
                 "C_SRCS += \\",
                 "../entry.c \\",
+                "../old.c \\",
                 "",
                 "C_DEPS += \\",
                 "./entry.d \\",
+                "./old.d \\",
                 "",
                 "OBJS += \\",
                 "./entry.obj \\",
+                "./old.obj \\",
                 "",
                 "C_SRCS__QUOTED += \\",
                 "\"../entry.c\" \\",
@@ -197,4 +235,31 @@ def test_reconcile_generated_make_refs_adds_app_intent_entries(tmp_path: Path):
     makefile = (cfg / "makefile").read_text(encoding="utf-8")
     assert "../app_intent.c" in subdir_vars
     assert "./app_intent.obj" in subdir_vars
+    assert "../old.c" not in subdir_vars
+    assert "./old.obj" not in subdir_vars
     assert '"./app_intent.obj" \\' in makefile
+
+
+def test_audit_compile_inputs_reports_missing_and_unexpected(tmp_path: Path):
+    out_dir = tmp_path / "out"
+    (out_dir / "source").mkdir(parents=True, exist_ok=True)
+    (out_dir / "source" / "entry.c").write_text("int x;\n", encoding="utf-8")
+    (out_dir / "source" / "app_intent.c").write_text("int y;\n", encoding="utf-8")
+
+    cfg = tmp_path / "Debug"
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "subdir_vars.mk").write_text(
+        "\n".join(
+            [
+                "C_SRCS += \\",
+                "../entry.c \\",
+                "../stale.c",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    audit = _audit_compile_inputs(cfg, out_dir)
+    assert audit["exact_match"] is False
+    assert "app_intent" in audit["missing_generated"]
+    assert "stale" in audit["unexpected_non_generated"]

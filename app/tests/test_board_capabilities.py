@@ -2,6 +2,8 @@ from modules.intent.board_capabilities import (
     build_board_capability_header,
     build_board_capability_manifest,
     format_allowed_references_for_console,
+    validate_led_alias_macro_consistency,
+    validate_led_alias_bindings_with_pinmux,
     validate_intent_references,
 )
 
@@ -9,7 +11,22 @@ from modules.intent.board_capabilities import (
 def _sample_board() -> dict:
     return {
         "leds": [
-            {"designator": "LED2", "function": "USER LED", "color": "GRN", "active_state": "LOW", "gpio": "GIOB[2]"},
+            {
+                "designator": "LED2",
+                "function": "USER LED",
+                "color": "GRN",
+                "active_state": "LOW",
+                "gpio": "GIOB[2]",
+                "mcu_pin": 55,
+            },
+            {
+                "designator": "LED3",
+                "function": "HEARTBEAT LED",
+                "color": "BLU",
+                "active_state": "LOW",
+                "gpio": "GIOB[1]",
+                "mcu_pin": 133,
+            },
             {"designator": "LED1", "function": "ERROR LED", "color": "RED", "active_state": "LOW"},
         ],
         "buttons": [
@@ -42,6 +59,17 @@ def _sample_board() -> dict:
                 }
             },
         },
+    }
+
+
+def _sample_bringup_contract() -> dict:
+    return {
+        "app_intent": {
+            "led_aliases": {
+                "LED_A": {"source": "LED2", "active_low_override": None},
+                "LED_B": {"source": "LED3", "active_low_override": None},
+            }
+        }
     }
 
 
@@ -105,8 +133,15 @@ def test_console_format_lists_proven_and_non_proven_sections():
 
 
 def test_build_board_capability_header_contains_terminal_uart_and_led_macros():
-    manifest = build_board_capability_manifest(_sample_board())
-    header = build_board_capability_header(_sample_board(), capability_manifest=manifest)
+    manifest = build_board_capability_manifest(
+        _sample_board(),
+        bringup_contract=_sample_bringup_contract(),
+    )
+    header = build_board_capability_header(
+        _sample_board(),
+        capability_manifest=manifest,
+        bringup_contract=_sample_bringup_contract(),
+    )
 
     assert "#define BOARD_TERMINAL_UART_OVER_LIN 1U" in header
     assert "#define BOARD_TERMINAL_UART_MODE_SCI 1U" in header
@@ -114,3 +149,89 @@ def test_build_board_capability_header_contains_terminal_uart_and_led_macros():
     assert "#define BOARD_LED2_GIO_PORT 'B'" in header
     assert "#define BOARD_LED2_GIO_PORT_INDEX 1U" in header
     assert "#define BOARD_LED2_GIO_PIN 2U" in header
+    assert "#define BOARD_USER_LED_A_SOURCE \"LED2\"" in header
+    assert "#define BOARD_USER_LED_A_ACTIVE_LOW 1U" in header
+    assert "#define BOARD_USER_LED_A_GIO_PORT 'B'" in header
+    assert "#define BOARD_USER_LED_A_GIO_PIN 2U" in header
+    assert "#define BOARD_USER_LED_A_MCU_PIN 55U" in header
+    assert "#define BOARD_USER_LED_B_SOURCE \"LED3\"" in header
+    assert "#define BOARD_USER_LED_B_GIO_PORT 'B'" in header
+    assert "#define BOARD_USER_LED_B_GIO_PIN 1U" in header
+    assert "#define BOARD_USER_LED_B_MCU_PIN 133U" in header
+    assert "#define BOARD_USER_LED_B_ACTIVE_LOW 1U" in header
+
+
+def test_manifest_includes_led_alias_references():
+    manifest = build_board_capability_manifest(
+        _sample_board(),
+        bringup_contract=_sample_bringup_contract(),
+    )
+    allowed_ids = {entry["canonical_id"] for entry in manifest["allowed_references"]}
+    aliases = manifest["reference_aliases"]
+
+    assert "LED_A" in allowed_ids
+    assert "LED_B" in allowed_ids
+    assert "led a" in aliases
+    assert "LED_A" in aliases["led a"]
+
+
+def test_led_alias_validation_detects_pinmux_conflict():
+    board = _sample_board()
+    board["leds"][0]["mcu_pin"] = 99
+    pinmux = {
+        "pins": [
+            {"package_pin": 55, "functions": [{"signal": "GIOB[2]"}]},
+            {"package_pin": 133, "functions": [{"signal": "GIOB[1]"}]},
+        ]
+    }
+    result = validate_led_alias_bindings_with_pinmux(
+        board,
+        pinmux_data=pinmux,
+        bringup_contract={"app_intent": {"led_aliases": {"LED_A": {"source": "LED2"}, "LED_B": {"source": "LED3"}}}},
+    )
+    assert result["passed"] is False
+    assert any("LED_A" in msg for msg in result["conflicts"])
+
+
+def test_led_alias_macro_consistency_passes_for_locked_mapping():
+    board = _sample_board()
+    manifest = build_board_capability_manifest(
+        board,
+        bringup_contract=_sample_bringup_contract(),
+    )
+    header = build_board_capability_header(
+        board,
+        capability_manifest=manifest,
+        bringup_contract=_sample_bringup_contract(),
+    )
+    result = validate_led_alias_macro_consistency(
+        header,
+        board,
+        bringup_contract=_sample_bringup_contract(),
+    )
+    assert result["passed"] is True
+    assert result["failures"] == []
+
+
+def test_led_alias_macro_consistency_detects_alias_gpio_swap():
+    board = _sample_board()
+    manifest = build_board_capability_manifest(
+        board,
+        bringup_contract=_sample_bringup_contract(),
+    )
+    header = build_board_capability_header(
+        board,
+        capability_manifest=manifest,
+        bringup_contract=_sample_bringup_contract(),
+    )
+    broken = header.replace(
+        "#define BOARD_USER_LED_A_GIO_PIN 2U",
+        "#define BOARD_USER_LED_A_GIO_PIN 1U",
+    )
+    result = validate_led_alias_macro_consistency(
+        broken,
+        board,
+        bringup_contract=_sample_bringup_contract(),
+    )
+    assert result["passed"] is False
+    assert any("LED_A" in msg and "GPIO pin mismatch" in msg for msg in result["failures"])

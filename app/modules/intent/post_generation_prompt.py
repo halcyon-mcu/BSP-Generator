@@ -19,6 +19,8 @@ def build_post_generation_firmware_prompt(
     task_library_source: str = "",
     driver_headers_context: str = "",
     app_intent_api_usage_recipe: str = "",
+    app_intent_timing_recipe: str = "",
+    rti_irq_context: str = "",
 ) -> str:
     """
     Build a deterministic firmware-generation prompt from app intent.
@@ -35,6 +37,8 @@ def build_post_generation_firmware_prompt(
     task_source = str(task_library_source or "").strip()
     header_ctx = str(driver_headers_context or "").strip()
     api_recipe = str(app_intent_api_usage_recipe or "").strip()
+    timing_recipe = str(app_intent_timing_recipe or "").strip()
+    rti_irq = str(rti_irq_context or "").strip()
 
     api_shortlist_lines = _extract_api_shortlist(contract_json)
 
@@ -60,6 +64,7 @@ def build_post_generation_firmware_prompt(
         "- Do NOT include reg_* headers and do NOT access peripheral registers directly.",
         "- Do NOT invent new peripheral API names; only call functions that exist in provided contract/header context.",
         "- Use exact symbol names from API/header/source-symbol context; do NOT synthesize compound helper names (e.g., IOMM_LINEnablePins).",
+        "- No peripheral API use is allowed before the corresponding module init call in APP_INTENT_Init.",
         "- APP_INTENT_Step must be non-blocking (no delay loops / no infinite TX wait loops).",
         "- For terminal output path, use the provided driver API route (LIN-vs-SCI) from board macros.",
         "- If BOARD_TERMINAL_UART_OVER_LIN == 1 and BOARD_TERMINAL_UART_MODE_SCI == 1 and LIN_MODE_SCI exists, configure LIN with LIN_MODE_SCI (not LIN_MODE_LIN).",
@@ -72,6 +77,15 @@ def build_post_generation_firmware_prompt(
         "- If recipe provides preferred tx_buffer API, do NOT implement manual per-byte string loops via tx_byte.",
         "- If recipe shows <MODULE>_EnablePins, call it before <MODULE>_Init for that module.",
         "- Use direct IOMM pin configuration only when no module-level EnablePins API is available.",
+        "- User-facing LED naming must use LED A / LED B semantics when alias macros are available.",
+        "- For LED operations, prefer BOARD_USER_LED_A_* / BOARD_USER_LED_B_* macros instead of BOARD_LED2_* / BOARD_LED3_*.",
+        "- ON/OFF semantics must respect alias polarity macros (BOARD_USER_LED_*_ACTIVE_LOW / ACTIVE_HIGH).",
+        "- Keep terminal command grammar intent-defined; do not force a global parser shape not requested by intent.",
+        "- Do not enforce a fixed command grammar; derive interaction model directly from the user intent text.",
+        "- Follow APP_INTENT_TIMING_RECIPE as authoritative timing-source guidance when provided.",
+        "- If timing recipe selects hardware timer APIs (for example RTI), use that timing path instead of loop-rate assumptions.",
+        "- If hardware timer mode is selected, include complete RTI->VIM->IRQ wiring using resolved APIs/IRQ mapping.",
+        "- If timing recipe selects software_divider fallback, use conservative divider constants and keep step non-blocking.",
         "- Do NOT define or redefine any function whose name appears in DRIVER_SOURCE_SYMBOLS; call existing driver APIs directly.",
         "- If a symbol appears in DRIVER_SOURCE_SYMBOLS but is missing from headers, add only a forward declaration (extern prototype), never a local stub implementation.",
         "- BOARD_*_GIO_PORT is a character code and BOARD_*_GIO_PORT_INDEX is numeric (A=0, B=1). Match the GIO API signature: use index for uint8_t port APIs, and use GIO_PORT_A/GIO_PORT_B for gio_port_t APIs.",
@@ -162,6 +176,26 @@ def build_post_generation_firmware_prompt(
             ]
         )
 
+    if timing_recipe:
+        lines.extend(
+            [
+                "",
+                "===== BEGIN APP_INTENT_TIMING_RECIPE =====",
+                timing_recipe,
+                "===== END APP_INTENT_TIMING_RECIPE =====",
+            ]
+        )
+
+    if rti_irq:
+        lines.extend(
+            [
+                "",
+                "===== BEGIN RTI_IRQ_CONTEXT =====",
+                rti_irq,
+                "===== END RTI_IRQ_CONTEXT =====",
+            ]
+        )
+
     if tasks:
         lines.extend(
             [
@@ -190,7 +224,7 @@ def _extract_api_shortlist(contract_json: str) -> list[str]:
     if not isinstance(modules, dict):
         return []
 
-    priority = ["SYSTEM", "PCR", "IOMM", "PLL", "VIM", "SCI", "GIO", "LIN"]
+    priority = ["SYSTEM", "PCR", "IOMM", "PLL", "RTI", "VIM", "SCI", "GIO", "LIN"]
     ordered = [name for name in priority if name in modules]
     ordered.extend(name for name in modules.keys() if name not in ordered)
 

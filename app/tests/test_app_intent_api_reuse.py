@@ -4,8 +4,10 @@ from modules.intent.app_intent_api_reuse import (
     build_app_intent_api_recipe_text,
     inject_driver_usage_recipe_comment,
     lint_app_intent_api_reuse,
+    resolve_app_intent_init_gate_contract,
     resolve_app_intent_api_reuse_recipe,
     sanitize_app_intent_generated_source,
+    validate_intent_behavior_alignment,
 )
 
 
@@ -295,3 +297,200 @@ void APP_INTENT_Step(void)
 """
     warnings = lint_app_intent_api_reuse(app_intent_text, recipe)
     assert not any("no visible timing gate" in item for item in warnings)
+
+
+def test_lint_warns_on_direct_led2_led3_macros_when_user_aliases_exist():
+    recipe = resolve_app_intent_api_reuse_recipe(
+        bringup_contract=_bringup_contract(),
+        api_contract_manifest=_api_contract(),
+        driver_source_symbols={},
+    )
+    app_intent_text = """
+void APP_INTENT_Step(void)
+{
+    if (BOARD_LED2_PRESENT) {
+        GIO_WritePin(BOARD_LED2_GIO_PORT_INDEX, BOARD_LED2_GIO_PIN, true);
+    }
+}
+"""
+    board_header = """
+#define BOARD_USER_LED_A_PRESENT 1U
+#define BOARD_USER_LED_B_PRESENT 1U
+"""
+    warnings = lint_app_intent_api_reuse(
+        app_intent_text,
+        recipe,
+        board_capabilities_header_text=board_header,
+    )
+    assert any("BOARD_LED2_/BOARD_LED3_" in item for item in warnings)
+
+
+def test_lint_warns_when_alias_polarity_macros_not_used():
+    recipe = resolve_app_intent_api_reuse_recipe(
+        bringup_contract=_bringup_contract(),
+        api_contract_manifest=_api_contract(),
+        driver_source_symbols={},
+    )
+    app_intent_text = """
+void APP_INTENT_Step(void)
+{
+    GIO_WritePin(BOARD_USER_LED_A_GIO_PORT_INDEX, BOARD_USER_LED_A_GIO_PIN, true);
+}
+"""
+    board_header = """
+#define BOARD_USER_LED_A_PRESENT 1U
+#define BOARD_USER_LED_B_PRESENT 1U
+"""
+    warnings = lint_app_intent_api_reuse(
+        app_intent_text,
+        recipe,
+        board_capabilities_header_text=board_header,
+    )
+    assert any("ignore alias polarity" in item for item in warnings)
+
+
+def test_lint_warns_when_hardware_timer_recipe_selected_without_timer_api_calls():
+    recipe = resolve_app_intent_api_reuse_recipe(
+        bringup_contract=_bringup_contract(),
+        api_contract_manifest=_api_contract(),
+        driver_source_symbols={},
+    )
+    app_intent_text = """
+void APP_INTENT_Step(void)
+{
+    static uint32_t heartbeat_ticks = 0U;
+    heartbeat_ticks++;
+    if (heartbeat_ticks > 1000U) {
+        heartbeat_ticks = 0U;
+        GIO_TogglePin(1U, 2U);
+    }
+}
+"""
+    timing_recipe = {
+        "selected_source": "hardware_timer",
+        "selected_apis": {
+            "get_tick": "RTI_GetTickCount",
+            "get_time_ms": "RTI_GetTimeMs",
+        },
+    }
+    warnings = lint_app_intent_api_reuse(
+        app_intent_text,
+        recipe,
+        timing_recipe=timing_recipe,
+    )
+    assert any("selected hardware timer source" in item for item in warnings)
+
+
+def test_sanitize_inserts_gio_init_before_use_when_missing(tmp_path: Path):
+    out_dir = tmp_path
+    source_dir = out_dir / "source"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    app_text = """
+void APP_INTENT_Init(void)
+{
+    GIO_WritePin(1U, 2U, true);
+}
+"""
+    init_gate = {
+        "policy": {"mode": "auto_fix_then_fail", "enforce_pre_use_init": True},
+        "modules": {"GIO": {"init": "GIO_Init", "arity": 0}},
+    }
+    result = sanitize_app_intent_generated_source(
+        out_dir=out_dir,
+        app_intent_text=app_text,
+        driver_source_symbols={},
+        module_init_contract=init_gate,
+    )
+    assert "GIO_Init();" in str(result["text"])
+    assert not result.get("init_gate_failures")
+
+
+def test_sanitize_allows_init_after_use_in_app_intent_init(tmp_path: Path):
+    out_dir = tmp_path
+    source_dir = out_dir / "source"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    app_text = """
+void APP_INTENT_Init(void)
+{
+    GIO_WritePin(1U, 2U, true);
+    GIO_Init();
+}
+"""
+    init_gate = {
+        "policy": {"mode": "auto_fix_then_fail", "enforce_pre_use_init": True},
+        "modules": {"GIO": {"init": "GIO_Init", "arity": 0}},
+    }
+    result = sanitize_app_intent_generated_source(
+        out_dir=out_dir,
+        app_intent_text=app_text,
+        driver_source_symbols={},
+        module_init_contract=init_gate,
+    )
+    assert result.get("init_gate_failures") == []
+
+
+def test_sanitize_accepts_init_call_outside_app_intent_init(tmp_path: Path):
+    out_dir = tmp_path
+    source_dir = out_dir / "source"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    app_text = """
+static void setup_all(void)
+{
+    RTI_Init();
+}
+
+void APP_INTENT_Init(void)
+{
+    setup_all();
+    RTI_EnableNotification(0U);
+}
+"""
+    init_gate = {
+        "policy": {"mode": "auto_fix_then_fail", "enforce_pre_use_init": True},
+        "modules": {"RTI": {"init": "RTI_Init", "arity": 0}},
+    }
+    result = sanitize_app_intent_generated_source(
+        out_dir=out_dir,
+        app_intent_text=app_text,
+        driver_source_symbols={},
+        module_init_contract=init_gate,
+    )
+    assert result.get("init_gate_failures") == []
+    assert "Inserted missing RTI_Init() in APP_INTENT_Init." not in result.get("init_gate_actions", [])
+
+
+def test_init_gate_contract_resolver_includes_timing_module():
+    contract = {
+        "modules": {
+            "GIO": {"capabilities": {"init": "GIO_Init"}, "functions": {"GIO_Init": {"arity": 0}}},
+            "RTI": {"capabilities": {"init": "RTI_Init"}, "functions": {"RTI_Init": {"arity": 0}}},
+        }
+    }
+    recipe = resolve_app_intent_init_gate_contract(
+        bringup_contract={"app_intent": {"init_gate": {"mode": "auto_fix_then_fail"}}},
+        api_contract_manifest=contract,
+        timing_recipe={"selected_module": "RTI"},
+    )
+    assert recipe["modules"]["GIO"]["init"] == "GIO_Init"
+    assert recipe["modules"]["RTI"]["init"] == "RTI_Init"
+
+
+def test_validate_intent_behavior_alignment_uses_aliases():
+    intent = "Toggle LED A and keep LED B heartbeat blinking"
+    app_text = """
+void APP_INTENT_Step(void)
+{
+    GIO_TogglePin(BOARD_USER_LED_A_GIO_PORT_INDEX, BOARD_USER_LED_A_GIO_PIN);
+    GIO_TogglePin(BOARD_USER_LED_B_GIO_PORT_INDEX, BOARD_USER_LED_B_GIO_PIN);
+}
+"""
+    header = """
+#define BOARD_USER_LED_A_PRESENT 1U
+#define BOARD_USER_LED_B_PRESENT 1U
+"""
+    status = validate_intent_behavior_alignment(
+        intent_text=intent,
+        app_intent_c_text=app_text,
+        board_capabilities_header_text=header,
+    )
+    assert status["passed"] is True

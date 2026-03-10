@@ -328,7 +328,20 @@ class TestBringupContractSchema:
                         "forbid_manual_byte_loop_when_tx_buffer_exists": True,
                         "forbid_busy_wait_loops_in_step_path": True,
                     },
-                }
+                },
+                "led_aliases": {
+                    "LED_A": {"source": "LED2", "active_low_override": None},
+                    "LED_B": {"source": "LED3", "active_low_override": True},
+                    "default_roles": {"LED_A": "command", "LED_B": "heartbeat"},
+                },
+                "timing": {
+                    "prefer_hardware_timer": True,
+                    "preferred_module": "RTI",
+                    "fallback": "software_divider",
+                    "heartbeat_hz": 1.0,
+                    "blink_on_ms": 120,
+                    "blink_off_ms": 180,
+                },
             },
         }
         is_valid, errors = validate_yaml_schema(data, BringupContractYAML)

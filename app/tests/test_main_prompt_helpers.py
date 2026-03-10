@@ -12,6 +12,7 @@ from main import (
     _derive_validation_status,
     _load_profile_data,
     _prompt_for_ccs_workspace_project,
+    _run_api_preflight_check,
     _resolve_action_from_args,
     _resolve_output_dir_from_index,
     _should_open_auto_menu,
@@ -379,6 +380,24 @@ def test_derive_validation_status_pass_when_clean():
         }
     )
     assert status == "PASS"
+
+
+def test_run_api_preflight_check_passes_with_nonempty_response(monkeypatch):
+    import main
+
+    monkeypatch.setattr(main, "invoke_model_sync", lambda model, max_tokens, messages: {"ok": True})
+    monkeypatch.setattr(main, "extract_text_from_bedrock_response", lambda response: "OK")
+    rc = _run_api_preflight_check(model_name="sonnet4.5", max_tokens=32, mock_mode=False)
+    assert rc == 0
+
+
+def test_run_api_preflight_check_fails_on_empty_response(monkeypatch):
+    import main
+
+    monkeypatch.setattr(main, "invoke_model_sync", lambda model, max_tokens, messages: {"ok": True})
+    monkeypatch.setattr(main, "extract_text_from_bedrock_response", lambda response: "")
+    rc = _run_api_preflight_check(model_name="sonnet4.5", max_tokens=32, mock_mode=False)
+    assert rc == 2
 
 
 def test_colorize_prefixed_log_message_colors_warn_error_ok():

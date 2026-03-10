@@ -1,8 +1,10 @@
 from pathlib import Path
 
 from modules.contracts.contract_checker import (
+    check_app_intent_init_before_use,
     check_bsp_validate_contract,
     check_generated_module_contract,
+    summarize_api_status,
 )
 
 
@@ -233,3 +235,89 @@ def test_contract_checker_flags_source_defined_public_function_missing_in_header
     result = check_generated_module_contract("LIN", header, source, contract)
     assert result["passed"] is False
     assert any("LIN_EnablePins" in err and "missing declaration" in err for err in result["errors"])
+
+
+def test_check_app_intent_init_before_use_detects_missing_init(tmp_path: Path):
+    app_intent = _write(
+        tmp_path / "app_intent.c",
+        """
+        void APP_INTENT_Init(void)
+        {
+            GIO_WritePin(1U, 2U, true);
+        }
+        """,
+    )
+    result = check_app_intent_init_before_use(
+        app_intent,
+        {"GIO": {"init": "GIO_Init", "arity": 0}},
+    )
+    assert result["passed"] is False
+    assert any("GIO_Init" in err for err in result["errors"])
+
+
+def test_check_app_intent_init_before_use_allows_init_after_use(tmp_path: Path):
+    app_intent = _write(
+        tmp_path / "app_intent.c",
+        """
+        void APP_INTENT_Init(void)
+        {
+            GIO_WritePin(1U, 2U, true);
+            GIO_Init();
+        }
+        """,
+    )
+    result = check_app_intent_init_before_use(
+        app_intent,
+        {"GIO": {"init": "GIO_Init", "arity": 0}},
+    )
+    assert result["passed"] is True
+    assert result["errors"] == []
+
+
+def test_check_app_intent_init_before_use_accepts_init_outside_app_intent_init(tmp_path: Path):
+    app_intent = _write(
+        tmp_path / "app_intent.c",
+        """
+        static void init_drivers(void)
+        {
+            LIN_Init();
+        }
+
+        void APP_INTENT_Init(void)
+        {
+            init_drivers();
+            LIN_Send((const uint8_t*)0, 0U);
+        }
+        """,
+    )
+    result = check_app_intent_init_before_use(
+        app_intent,
+        {"LIN": {"init": "LIN_Init", "arity": 1}},
+    )
+    assert result["passed"] is True
+    assert result["errors"] == []
+
+
+def test_summarize_api_status_ready_when_no_blockers():
+    status = summarize_api_status(
+        blocking_errors=[],
+        warnings=["LIN: inferred tx_buffer symbol used"],
+    )
+    assert status["ready"] is True
+    assert status["blocking_count"] == 0
+    assert status["warning_count"] == 1
+
+
+def test_summarize_api_status_not_ready_with_blockers():
+    status = summarize_api_status(
+        blocking_errors=[
+            "APP_INTENT: missing GIO_Init() while GIO_* APIs are used.",
+            "APP_INTENT: missing GIO_Init() while GIO_* APIs are used.",
+        ],
+        warnings=[],
+    )
+    assert status["ready"] is False
+    assert status["blocking_count"] == 1
+    assert status["blocking_errors"] == [
+        "APP_INTENT: missing GIO_Init() while GIO_* APIs are used."
+    ]

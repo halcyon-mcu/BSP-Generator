@@ -93,3 +93,23 @@ app_intent:
       fallback_capability: tx_byte
       forbid_manual_byte_loop_when_tx_buffer_exists: true
       forbid_busy_wait_loops_in_step_path: true
+  led_aliases:
+    LED_A:
+      source: LED2
+      active_low_override:
+    LED_B:
+      source: LED3
+      active_low_override:
+    default_roles:
+      LED_A: command
+      LED_B: heartbeat
+  timing:
+    prefer_hardware_timer: true
+    preferred_module: RTI
+    fallback: software_divider
+    heartbeat_hz: 1.0
+    blink_on_ms: 150
+    blink_off_ms: 150
+  init_gate:
+    mode: auto_fix_then_fail
+    enforce_pre_use_init: true

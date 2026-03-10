@@ -398,3 +398,76 @@ def check_bsp_validate_contract(
         "errors": errors,
         "warnings": warnings,
     }
+
+
+def check_app_intent_init_before_use(
+    app_intent_path: Path,
+    module_init_map: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Validate that MODULE_* APIs used by app_intent.c have corresponding init calls present.
+    """
+    if not app_intent_path.exists():
+        return {
+            "module": "APP_INTENT",
+            "passed": False,
+            "errors": [f"APP_INTENT: missing file {app_intent_path.name}"],
+            "warnings": [],
+        }
+
+    text = app_intent_path.read_text(encoding="utf-8", errors="ignore")
+    text_no_comments = _strip_comments(text)
+    init_block = _extract_function_block(text_no_comments, "APP_INTENT_Init")
+    init_body = str(init_block.get("body") or "")
+
+    errors: List[str] = []
+    warnings: List[str] = []
+    for module_name, cfg in (module_init_map or {}).items():
+        if not isinstance(cfg, dict):
+            continue
+        init_fn = str(cfg.get("init") or "").strip()
+        if not init_fn:
+            continue
+        prefix = f"{str(module_name).upper()}_"
+        module_calls = list(re.finditer(rf"\b({re.escape(prefix)}[A-Za-z_]\w*)\s*\(", text_no_comments))
+        module_calls = [match for match in module_calls if str(match.group(1)) != init_fn]
+        if not module_calls:
+            continue
+
+        if not init_body:
+            errors.append(
+                f"APP_INTENT: {prefix}* APIs used but APP_INTENT_Init body is missing."
+            )
+            continue
+
+        init_call = re.search(rf"\b{re.escape(init_fn)}\s*\(", text_no_comments)
+        if not init_call:
+            errors.append(
+                f"APP_INTENT: missing {init_fn}() while {prefix}* APIs are used."
+            )
+
+    return {
+        "module": "APP_INTENT",
+        "passed": len(errors) == 0,
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def summarize_api_status(
+    *,
+    blocking_errors: List[str] | None = None,
+    warnings: List[str] | None = None,
+) -> Dict[str, Any]:
+    """
+    Build a deterministic API readiness summary.
+    """
+    blocking = sorted({str(item).strip() for item in (blocking_errors or []) if str(item).strip()})
+    warns = sorted({str(item).strip() for item in (warnings or []) if str(item).strip()})
+    return {
+        "ready": len(blocking) == 0,
+        "blocking_count": len(blocking),
+        "warning_count": len(warns),
+        "blocking_errors": blocking,
+        "warnings": warns,
+    }

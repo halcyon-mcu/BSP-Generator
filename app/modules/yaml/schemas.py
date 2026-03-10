@@ -604,11 +604,71 @@ class BringupAppIntentApiReusePolicy(BaseModel):
     tx_string: BringupAppIntentTxStringPolicy = Field(default_factory=BringupAppIntentTxStringPolicy)
 
 
+class BringupAppIntentLedAliasEntry(BaseModel):
+    """User-facing LED alias binding configuration."""
+    model_config = ConfigDict(extra='allow')
+
+    source: str
+    active_low_override: Optional[bool] = None
+
+    @field_validator('source')
+    @classmethod
+    def validate_source(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("source must be a non-empty LED designator")
+        return v.strip().upper()
+
+
+class BringupAppIntentLedAliasesPolicy(BaseModel):
+    """LED alias policy for user-facing app-intent flows."""
+    model_config = ConfigDict(extra='allow')
+
+    LED_A: BringupAppIntentLedAliasEntry = Field(
+        default_factory=lambda: BringupAppIntentLedAliasEntry(source="LED2")
+    )
+    LED_B: BringupAppIntentLedAliasEntry = Field(
+        default_factory=lambda: BringupAppIntentLedAliasEntry(source="LED3")
+    )
+    default_roles: Dict[str, str] = Field(
+        default_factory=lambda: {"LED_A": "command", "LED_B": "heartbeat"}
+    )
+
+
+class BringupAppIntentTimingPolicy(BaseModel):
+    """App-intent timing source and cadence policy."""
+    model_config = ConfigDict(extra='allow')
+
+    prefer_hardware_timer: bool = True
+    preferred_module: str = "RTI"
+    fallback: Literal["software_divider", "none"] = "software_divider"
+    heartbeat_hz: float = Field(default=1.0, gt=0.0)
+    blink_on_ms: int = Field(default=150, ge=1)
+    blink_off_ms: int = Field(default=150, ge=1)
+
+    @field_validator('preferred_module')
+    @classmethod
+    def validate_preferred_module(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("preferred_module must be a non-empty module name")
+        return v.strip().upper()
+
+
+class BringupAppIntentInitGatePolicy(BaseModel):
+    """App-intent module init-before-use enforcement policy."""
+    model_config = ConfigDict(extra='allow')
+
+    mode: Literal["auto_fix_then_fail", "hard_fail", "warn_only"] = "auto_fix_then_fail"
+    enforce_pre_use_init: bool = True
+
+
 class BringupAppIntentContract(BaseModel):
     """App-intent bring-up constraints."""
     model_config = ConfigDict(extra='allow')
 
     api_reuse: BringupAppIntentApiReusePolicy = Field(default_factory=BringupAppIntentApiReusePolicy)
+    led_aliases: BringupAppIntentLedAliasesPolicy = Field(default_factory=BringupAppIntentLedAliasesPolicy)
+    timing: BringupAppIntentTimingPolicy = Field(default_factory=BringupAppIntentTimingPolicy)
+    init_gate: BringupAppIntentInitGatePolicy = Field(default_factory=BringupAppIntentInitGatePolicy)
 
 
 class BringupContractYAML(BaseModel):

@@ -4,6 +4,7 @@ modules:
   - SCI
   - GIO
   - LIN
+  - RTI
   - PLL
   - IOMM
   - PCR

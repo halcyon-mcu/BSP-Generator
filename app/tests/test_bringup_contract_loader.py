@@ -41,6 +41,19 @@ app_intent:
       fallback_capability: tx_byte
       forbid_manual_byte_loop_when_tx_buffer_exists: true
       forbid_busy_wait_loops_in_step_path: true
+  led_aliases:
+    LED_A:
+      source: LED2
+    LED_B:
+      source: LED3
+      active_low_override: true
+  timing:
+    prefer_hardware_timer: true
+    preferred_module: RTI
+    fallback: software_divider
+    heartbeat_hz: 1.0
+    blink_on_ms: 120
+    blink_off_ms: 180
 """.strip()
         + "\n",
         encoding="utf-8",
@@ -51,6 +64,8 @@ app_intent:
     assert data["serial"]["primary_tx_only"] == "LIN"
     assert data["lin"]["required_registers"]["SCIPIO0"]["required_value"] == "0x00000006"
     assert data["app_intent"]["api_reuse"]["mode"] == "warn_only"
+    assert data["app_intent"]["led_aliases"]["LED_A"]["source"] == "LED2"
+    assert data["app_intent"]["timing"]["preferred_module"] == "RTI"
 
 
 def test_load_generation_profile_with_bringup_options(tmp_path: Path):
