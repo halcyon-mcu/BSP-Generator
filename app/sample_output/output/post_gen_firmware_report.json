@@ -1,0 +1,190 @@
+{
+  "enabled": true,
+  "success": true,
+  "reason": "",
+  "written_files": [
+    "C:\\Users\\dovyd\\Documents\\GitHub\\BSP-Generator\\app\\output_20260304_232329\\include\\app_intent.h",
+    "C:\\Users\\dovyd\\Documents\\GitHub\\BSP-Generator\\app\\output_20260304_232329\\source\\app_intent.c"
+  ],
+  "missing_expected_files": [],
+  "main_hook_injected": true,
+  "post_gen_workspace_sync": {
+    "attempted": true,
+    "success": true,
+    "reason": "",
+    "copied_files": 31,
+    "removed_files": 0,
+    "fingerprint": {
+      "algorithm": "sha256",
+      "source_aggregate": "ec20fad0c7c9cf0fe0c24c6d0795ce0cae80af84b3e21fd5ccad7ffb08c3d1bf",
+      "dest_aggregate": "ec20fad0c7c9cf0fe0c24c6d0795ce0cae80af84b3e21fd5ccad7ffb08c3d1bf",
+      "matches": true,
+      "mismatch_files": [],
+      "file_count": 31
+    }
+  },
+  "expected_files": [
+    "output_20260304_232329\\include\\app_intent.h",
+    "output_20260304_232329\\source\\app_intent.c"
+  ],
+  "max_tokens": 8000,
+  "api_reuse_policy_mode": "warn_only",
+  "api_reuse_fix_actions": [
+    "Inserted missing IOMM_Init() in APP_INTENT_Init."
+  ],
+  "api_reuse_warnings": [
+    "LIN: direct IOMM pin configuration detected without LIN_EnablePins call."
+  ],
+  "init_gate_actions": [
+    "Inserted missing IOMM_Init() in APP_INTENT_Init."
+  ],
+  "init_gate_failures": [],
+  "driver_header_sync_actions": [],
+  "driver_header_sync_failures": [],
+  "app_intent_forward_decls_added": [],
+  "app_intent_forward_decls_added_count": 0,
+  "led_alias_binding": {
+    "LED_A": {
+      "source": "LED2",
+      "present": true,
+      "active_low": true
+    },
+    "LED_B": {
+      "source": "LED3",
+      "present": true,
+      "active_low": true
+    }
+  },
+  "led_binding_validation": {
+    "passed": true,
+    "checks": [
+      {
+        "alias": "LED_A",
+        "source": "LED2",
+        "gpio_signal": "GIOB[2]",
+        "board_pin": 55,
+        "pinmux_signal_pins": [
+          55
+        ],
+        "signal_matches_board_pin": true,
+        "board_pin_exposes_signal": true
+      },
+      {
+        "alias": "LED_B",
+        "source": "LED3",
+        "gpio_signal": "GIOB[1]",
+        "board_pin": 133,
+        "pinmux_signal_pins": [
+          133
+        ],
+        "signal_matches_board_pin": true,
+        "board_pin_exposes_signal": true
+      }
+    ],
+    "conflicts": []
+  },
+  "led_alias_consistency_validation": {
+    "passed": true,
+    "checks": [
+      {
+        "alias": "LED_A",
+        "expected_source": "LED2",
+        "header_source": "LED2",
+        "alias_present": 1,
+        "alias_gpio_port": "B",
+        "alias_gpio_pin": 2,
+        "alias_mcu_pin": 55,
+        "source_gpio_port": "B",
+        "source_gpio_pin": 2,
+        "source_mcu_pin": 55
+      },
+      {
+        "alias": "LED_B",
+        "expected_source": "LED3",
+        "header_source": "LED3",
+        "alias_present": 1,
+        "alias_gpio_port": "B",
+        "alias_gpio_pin": 1,
+        "alias_mcu_pin": 133,
+        "source_gpio_port": "B",
+        "source_gpio_pin": 1,
+        "source_mcu_pin": 133
+      }
+    ],
+    "failures": [],
+    "bindings": {
+      "LED_A": {
+        "alias": "LED_A",
+        "source": "LED2",
+        "resolved": true,
+        "role": "command",
+        "active_low": true,
+        "source_entry": {
+          "designator": "LED2",
+          "function": "USER LED",
+          "color": "GRN",
+          "mcu_pin": 55,
+          "gpio": "GIOB[2]",
+          "net_name": "GIOB_2",
+          "series_resistor": "2.2k\u03a9",
+          "connection": "+3V3",
+          "active_state": "LOW"
+        }
+      },
+      "LED_B": {
+        "alias": "LED_B",
+        "source": "LED3",
+        "resolved": true,
+        "role": "heartbeat",
+        "active_low": true,
+        "source_entry": {
+          "designator": "LED3",
+          "function": "USER LED",
+          "color": "GRN",
+          "mcu_pin": 133,
+          "gpio": "GIOB[1]",
+          "net_name": "GIOB_1",
+          "series_resistor": "2.2k\u03a9",
+          "connection": "+3V3",
+          "active_state": "LOW"
+        }
+      }
+    }
+  },
+  "intent_behavior_validation": {
+    "requested_aliases": [
+      "LED_A",
+      "LED_B"
+    ],
+    "used_aliases": [
+      "LED_A",
+      "LED_B"
+    ],
+    "passed": true,
+    "failures": [],
+    "warnings": []
+  },
+  "polarity_validation": {
+    "passed": true,
+    "issues": []
+  },
+  "rti_vim_wiring_status": {
+    "required": false,
+    "passed": true,
+    "failures": [],
+    "checks": []
+  },
+  "invariant_failures": [],
+  "timing_source_selected": "software_divider",
+  "timing_fallback_used": true,
+  "api_status_ready": true,
+  "api_status": {
+    "ready": true,
+    "blocking_count": 0,
+    "warning_count": 1,
+    "blocking_errors": [],
+    "warnings": [
+      "LIN: direct IOMM pin configuration detected without LIN_EnablePins call."
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+var searchData=
+[
+  ['get_5factive_5fghv_5fsource_0',['get_active_ghv_source',['../pll__driver_8c.html#ae07b7039627b731e06f407ea3bc15369',1,'pll_driver.c']]],
+  ['gio_5fclearinterruptflag_1',['GIO_ClearInterruptFlag',['../gio__driver_8h.html#a1c45dc93ac5f422a5db4e77080c97297',1,'GIO_ClearInterruptFlag(gio_port_t port, uint8_t pin):&#160;gio_driver.c'],['../gio__driver_8c.html#a1c45dc93ac5f422a5db4e77080c97297',1,'GIO_ClearInterruptFlag(gio_port_t port, uint8_t pin):&#160;gio_driver.c']]],
+  ['gio_5fconfigureinterrupt_2',['GIO_ConfigureInterrupt',['../gio__driver_8h.html#a2fc502bf739d6d5db7d3c40aab1066f6',1,'GIO_ConfigureInterrupt(const gio_interrupt_config_t *config):&#160;gio_driver.c'],['../gio__driver_8c.html#a2fc502bf739d6d5db7d3c40aab1066f6',1,'GIO_ConfigureInterrupt(const gio_interrupt_config_t *config):&#160;gio_driver.c']]],
+  ['gio_5fconfigurepin_3',['GIO_ConfigurePin',['../gio__driver_8h.html#a6a982e8cc76bef7dbacaf69ac395f9a6',1,'GIO_ConfigurePin(const gio_pin_config_t *config):&#160;gio_driver.c'],['../gio__driver_8c.html#a6a982e8cc76bef7dbacaf69ac395f9a6',1,'GIO_ConfigurePin(const gio_pin_config_t *config):&#160;gio_driver.c']]],
+  ['gio_5fdisableinterrupt_4',['GIO_DisableInterrupt',['../gio__driver_8h.html#a1d534798a7326ac0da4da703db4f8b41',1,'GIO_DisableInterrupt(gio_port_t port, uint8_t pin):&#160;gio_driver.c'],['../gio__driver_8c.html#a1d534798a7326ac0da4da703db4f8b41',1,'GIO_DisableInterrupt(gio_port_t port, uint8_t pin):&#160;gio_driver.c']]],
+  ['gio_5fenableinterrupt_5',['GIO_EnableInterrupt',['../gio__driver_8h.html#ab2960eaa2ffd860b44ca01523274d18a',1,'GIO_EnableInterrupt(gio_port_t port, uint8_t pin):&#160;gio_driver.c'],['../gio__driver_8c.html#ab2960eaa2ffd860b44ca01523274d18a',1,'GIO_EnableInterrupt(gio_port_t port, uint8_t pin):&#160;gio_driver.c']]],
+  ['gio_5fenablepins_6',['GIO_EnablePins',['../gio__driver_8h.html#af741c8fa4efe3f8707e00636d6134f99',1,'GIO_EnablePins(void):&#160;gio_driver.c'],['../gio__driver_8c.html#af741c8fa4efe3f8707e00636d6134f99',1,'GIO_EnablePins(void):&#160;gio_driver.c']]],
+  ['gio_5fgetdclrreg_7',['GIO_GetDclrReg',['../gio__driver_8c.html#abb41d2224d8e53098ddea6076b619da3',1,'gio_driver.c']]],
+  ['gio_5fgetdinreg_8',['GIO_GetDinReg',['../gio__driver_8c.html#a7165dc94d20400f581b3d55c0307f2ca',1,'gio_driver.c']]],
+  ['gio_5fgetdirreg_9',['GIO_GetDirReg',['../gio__driver_8c.html#a34e10ca5a3dbcabaa78d3cdc993fc9cf',1,'gio_driver.c']]],
+  ['gio_5fgetdoutreg_10',['GIO_GetDoutReg',['../gio__driver_8c.html#a9eaf4cd91d08c3379004e96af293d01f',1,'gio_driver.c']]],
+  ['gio_5fgetdsetreg_11',['GIO_GetDsetReg',['../gio__driver_8c.html#a10df4109811bcb8da78cdba411d59e9d',1,'gio_driver.c']]],
+  ['gio_5fgetinterruptstatus_12',['GIO_GetInterruptStatus',['../gio__driver_8h.html#ac8869d79403123af68a9ced3fad4cbe0',1,'GIO_GetInterruptStatus(gio_port_t port):&#160;gio_driver.c'],['../gio__driver_8c.html#ac8869d79403123af68a9ced3fad4cbe0',1,'GIO_GetInterruptStatus(gio_port_t port):&#160;gio_driver.c']]],
+  ['gio_5fgetpdrreg_13',['GIO_GetPdrReg',['../gio__driver_8c.html#a48acbecc0d32932a7e8ca6f6682cd461',1,'gio_driver.c']]],
+  ['gio_5fgetpslreg_14',['GIO_GetPslReg',['../gio__driver_8c.html#a6787f1c2b92acc26e32e381cbd6dd135',1,'gio_driver.c']]],
+  ['gio_5fgetpuldisreg_15',['GIO_GetPuldisReg',['../gio__driver_8c.html#a934e12fb425f201d0799b4e9bd779848',1,'gio_driver.c']]],
+  ['gio_5finit_16',['GIO_Init',['../gio__driver_8h.html#a0e72c6b31dd609c8b47f89b0b1e0911f',1,'GIO_Init(void):&#160;gio_driver.c'],['../gio__driver_8c.html#a0e72c6b31dd609c8b47f89b0b1e0911f',1,'GIO_Init(void):&#160;gio_driver.c']]],
+  ['gio_5freadpin_17',['GIO_ReadPin',['../gio__driver_8h.html#a83e128dad583d70b25e1fd0187dbbed7',1,'GIO_ReadPin(gio_port_t port, uint8_t pin):&#160;gio_driver.c'],['../gio__driver_8c.html#a83e128dad583d70b25e1fd0187dbbed7',1,'GIO_ReadPin(gio_port_t port, uint8_t pin):&#160;gio_driver.c']]],
+  ['gio_5freadport_18',['GIO_ReadPort',['../gio__driver_8h.html#a5894ee9d11182fb09043dfc06a75faf6',1,'GIO_ReadPort(gio_port_t port):&#160;gio_driver.c'],['../gio__driver_8c.html#a5894ee9d11182fb09043dfc06a75faf6',1,'GIO_ReadPort(gio_port_t port):&#160;gio_driver.c']]],
+  ['gio_5ftogglepin_19',['GIO_TogglePin',['../gio__driver_8h.html#a0ecc79a84b0df38e52cec97f2679a33e',1,'GIO_TogglePin(gio_port_t port, uint8_t pin):&#160;gio_driver.c'],['../gio__driver_8c.html#a0ecc79a84b0df38e52cec97f2679a33e',1,'GIO_TogglePin(gio_port_t port, uint8_t pin):&#160;gio_driver.c']]],
+  ['gio_5fwritepin_20',['GIO_WritePin',['../gio__driver_8h.html#a95ca950cd04e829a4f5945f4280607dc',1,'GIO_WritePin(gio_port_t port, uint8_t pin, bool value):&#160;gio_driver.c'],['../gio__driver_8c.html#a95ca950cd04e829a4f5945f4280607dc',1,'GIO_WritePin(gio_port_t port, uint8_t pin, bool value):&#160;gio_driver.c']]],
+  ['gio_5fwriteport_21',['GIO_WritePort',['../gio__driver_8h.html#a207fad11a897aebdd41ae853052673f6',1,'GIO_WritePort(gio_port_t port, uint32_t value):&#160;gio_driver.c'],['../gio__driver_8c.html#a207fad11a897aebdd41ae853052673f6',1,'GIO_WritePort(gio_port_t port, uint32_t value):&#160;gio_driver.c']]]
+];

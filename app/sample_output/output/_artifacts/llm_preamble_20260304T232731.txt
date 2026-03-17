@@ -1,0 +1,3 @@
+===== FACTS MIRROR =====
+(no hardware register facts required for this file)
+===== END FACTS MIRROR =====

@@ -1,0 +1,246 @@
+===== FACTS MIRROR =====
+SYSTEM.BASE_ADDRESS = 0xFFFFFF00
+PCR.BASE_ADDRESS = 0xFFFFE000
+SYSTEM.MINITGCR.OFFSET = 0x5C
+SYSTEM.MSINENA.OFFSET = 0x60
+SYSTEM.MSTCGSTAT.OFFSET = 0x68
+SYSTEM.CSVSTAT.OFFSET = 0x54
+SYSTEM.SYSESR.OFFSET = 0xE4
+SYSTEM.SYSECR.OFFSET = 0xE0
+SYSTEM.DEVID.OFFSET = 0xF0
+PCR.PSPWRDWNCLR0.OFFSET = 0xA0
+PCR.PSPWRDWNCLR1.OFFSET = 0xA4
+PCR.PSPWRDWNCLR2.OFFSET = 0xA8
+PCR.PSPWRDWNCLR3.OFFSET = 0xAC
+PCR.PCSPWRDWNCLR0.OFFSET = 0x70
+PCR.PCSPWRDWNCLR1.OFFSET = 0x74
+INIT.MINITGCR.SET_BITS = 0x0000000A
+INIT.MSINENA.WRITE = 0xFFFFFFFF
+INIT.MSTCGSTAT.WRITE = 0x00000100
+INIT.MINITGCR.CLEAR_BITS = 0x00000005
+INIT.CSVSTAT.WRITE = 0x00000000
+INIT.PSPWRDWNCLR0.SET_BITS = 0xFFFFFFFF
+INIT.PSPWRDWNCLR1.SET_BITS = 0xFFFFFFFF
+INIT.PSPWRDWNCLR2.SET_BITS = 0xFFFFFFFF
+INIT.PSPWRDWNCLR3.SET_BITS = 0xFFFFFFFF
+INIT.PCSPWRDWNCLR0.SET_BITS = 0xFFFFFFFF
+INIT.PCSPWRDWNCLR1.SET_BITS = 0xFFFFFFFF
+FLASH.FRDCNTL = 0xFFF87000
+FLASH.FRDCNTL.VALUE = 0x00000311
+FLASH.FBFALLBACK = 0xFFF87040
+FLASH.FBFALLBACK.VALUE = 0x00000000
+FLASH.FSMWRENA = 0xFFF87288
+FLASH.FSMWRENA.VALUE1 = 0x00000005
+FLASH.FSMWRENA.VALUE2 = 0x0000000A
+FLASH.EEPROMCONFIG = 0xFFF872B8
+FLASH.EEPROMCONFIG.VALUE = 0x00030002
+SYSECR.RESET_BIT = 0x8000
+===== END FACTS MIRROR =====
+
+===== FILE: include/system.h =====
+/**
+ * @file system.h
+ * @brief TI RM46 System Initialization and Control
+ */
+
+#ifndef SYSTEM_H
+#define SYSTEM_H
+
+#include <stdint.h>
+
+/**
+ * @defgroup BSP_SYSTEM System Initialization and Control
+ * @brief System-level initialization and device control APIs for TI RM46
+ * @{
+ */
+
+/**
+ * @brief Initialize the system (chip bring-up sequence)
+ * @ingroup BSP_SYSTEM
+ *
+ * Performs the complete chip bring-up sequence:
+ * 1. PCR power domain initialization
+ * 2. Flash wait-state configuration
+ * 3. Memory initialization and self-test setup
+ * 4. PLL configuration and activation
+ *
+ * This function MUST be called before main() and before any peripheral use.
+ * The entry.c Reset_Handler_C will call this automatically.
+ *
+ * @note This function does NOT configure PLL multiplier/divider settings.
+ *       PLL_Init() is called internally with default safe settings.
+ *       For custom clock frequencies, call PLL_Configure* APIs in main().
+ *
+ * @warning Do NOT call this function more than once.
+ */
+void system_init(void);
+
+/**
+ * @brief Get the reset cause from the System Exception Status Register
+ * @ingroup BSP_SYSTEM
+ *
+ * Reads the SYSESR register to determine the reason for the last reset.
+ * Possible flags include:
+ * - Bit 15: Power-On Reset
+ * - Bit 14: Oscillator Fail / PLL Slip Reset
+ * - Bit 13: Watchdog Reset
+ * - Bit 5: CPU Reset
+ * - Bit 4: Software Reset
+ * - Bit 3: External Reset
+ *
+ * @return uint32_t SYSESR register value containing reset cause flags
+ *
+ * @note Call system_clear_status_flags() after reading to clear the flags.
+ */
+uint32_t system_get_reset_cause(void);
+
+/**
+ * @brief Trigger a software reset of the device
+ * @ingroup BSP_SYSTEM
+ *
+ * Writes the SYSECR register to request a system-wide reset.
+ * This function will not return.
+ *
+ * @warning All volatile state will be lost.
+ */
+void system_soft_reset(void);
+
+/**
+ * @brief Get the device identification value
+ * @ingroup BSP_SYSTEM
+ *
+ * Reads the DEVID register which contains device-specific information:
+ * - Platform ID
+ * - Device version
+ * - Feature flags (ECC, parity, etc.)
+ * - Unique device ID
+ *
+ * @return uint32_t DEVID register value
+ */
+uint32_t system_get_device_id(void);
+
+/**
+ * @brief Clear system exception status flags
+ * @ingroup BSP_SYSTEM
+ *
+ * Writes the SYSESR register back to itself to clear all status flags.
+ * This is a write-1-to-clear operation.
+ *
+ * @note Should be called after reading reset cause with system_get_reset_cause().
+ */
+void system_clear_status_flags(void);
+
+/** @} */ /* end of BSP_SYSTEM */
+
+#endif /* SYSTEM_H */
+
+===== FILE: source/system.c =====
+/**
+ * @file system.c
+ * @brief TI RM46 System Initialization Implementation
+ */
+
+#include <stdint.h>
+#include "system.h"
+#include "reg_system.h"
+#include "reg_pcr.h"
+#include "pll_driver.h"
+
+/* Forward declarations of external PCR APIs */
+extern void PCR_Init(void);
+extern void PCR_EnableAllPeripherals(void);
+
+/* SYSTEM register base pointer */
+static SYSTEM_REG_MAP_t * const SYS = (SYSTEM_REG_MAP_t *)0xFFFFFF00u;
+
+/* PCR register base pointer */
+static PCR_REG_MAP_t * const PCR = (PCR_REG_MAP_t *)0xFFFFE000u;
+
+/* Flash control register addresses (not in struct-based headers) */
+#define FLASH_FRDCNTL_REG     (*(volatile uint32_t *)0xFFF87000u)
+#define FLASH_FBFALLBACK_REG  (*(volatile uint32_t *)0xFFF87040u)
+#define FLASH_FSMWRENA_REG    (*(volatile uint32_t *)0xFFF87288u)
+#define FLASH_EEPROMCONFIG_REG (*(volatile uint32_t *)0xFFF872B8u)
+
+/**
+ * @brief Configure flash wait states and EEPROM timing
+ *
+ * Programs flash controller registers with HAL-aligned values for RM46.
+ * This MUST be called before PLL handoff to ensure safe flash access
+ * at higher clock frequencies.
+ */
+static void system_setup_flash_waitstates(void)
+{
+    /* [prov] bringup_contract.yaml:flash.FLASH_FRDCNTL_REG */
+    FLASH_FRDCNTL_REG = 0x00000311u;
+
+    /* [prov] bringup_contract.yaml:flash.FLASH_FSMWRENA_REG (unlock) */
+    FLASH_FSMWRENA_REG = 0x00000005u;
+
+    /* [prov] bringup_contract.yaml:flash.FLASH_EEPROMCONFIG_REG */
+    FLASH_EEPROMCONFIG_REG = 0x00030002u;
+
+    /* [prov] bringup_contract.yaml:flash.FLASH_FSMWRENA_REG (lock) */
+    FLASH_FSMWRENA_REG = 0x0000000Au;
+
+    /* [prov] bringup_contract.yaml:flash.FLASH_FBFALLBACK_REG */
+    FLASH_FBFALLBACK_REG = 0x00000000u;
+}
+
+void system_init(void)
+{
+    /* Step 1: PCR initialization - MANDATORY first for RM46 bring-up stability */
+    PCR_Init();
+    PCR_EnableAllPeripherals();
+
+    /* Step 2: Flash wait-state configuration before PLL handoff */
+    system_setup_flash_waitstates();
+
+    /* Step 3: Apply SYSTEM.x-ext.init register operations */
+
+    /* [prov] regs.yaml:SYSTEM.MINITGCR (set_bits 0x0000000A) */
+    SYS->MINITGCR |= 0x0000000Au;
+
+    /* [prov] regs.yaml:SYSTEM.MSINENA (write 0xFFFFFFFF) */
+    SYS->MSINENA = 0xFFFFFFFFu;
+
+    /* [prov] regs.yaml:SYSTEM.MSTCGSTAT (write 0x00000100) */
+    SYS->MSTCGSTAT = 0x00000100u;
+
+    /* [prov] regs.yaml:SYSTEM.MINITGCR (clear_bits 0x00000005) */
+    SYS->MINITGCR &= ~0x00000005u;
+
+    /* [prov] regs.yaml:SYSTEM.CSVSTAT (write 0x00000000) */
+    SYS->CSVSTAT = 0x00000000u;
+
+    /* Step 4: Call PLL_Init() to configure and activate PLL + clock tree */
+    /* MANDATORY - entry.c does NOT call PLL_Init() separately */
+    PLL_Init();
+
+    /* Clock configuration (PLL multiplier/dividers/mux) is application-owned;
+     * see PLL_Configure* APIs in pll_driver.h (do not call here). */
+}
+
+uint32_t system_get_reset_cause(void)
+{
+    /* [prov] regs.yaml:SYSTEM.SYSESR */
+    return SYS->SYSESR;
+}
+
+void system_soft_reset(void)
+{
+    /* [prov] regs.yaml:SYSTEM.SYSECR (bit 15 = SW reset) */
+    SYS->SYSECR = 0x8000u;
+}
+
+uint32_t system_get_device_id(void)
+{
+    /* [prov] regs.yaml:SYSTEM.DEVID */
+    return SYS->DEVID;
+}
+
+void system_clear_status_flags(void)
+{
+    /* [prov] regs.yaml:SYSTEM.SYSESR (write-1-to-clear) */
+    SYS->SYSESR = SYS->SYSESR;
+}
