@@ -1,0 +1,2256 @@
+
+    REGISTER ACCESS (MANDATORY - CRITICAL FOR COMPILATION):
+    -------------------------------------------------------
+    You MUST use register headers generated in Pass 1 (Discovery) for all register access.
+
+    REQUIRED INCLUDES in system.c:
+    - #include "reg_system.h"   (for SYSTEM registers)
+    - #include "reg_pcr.h"      (for PCR registers, only when SYSTEM.x-ext.init contains PCR.* operations)
+
+    REGISTER TYPEDEF NAME (FROM PASS 1 - USE EXACTLY AS SHOWN):
+    - SYSTEM register struct typedef: SYSTEM_REG_MAP_t
+    - PCR register struct typedef (only if PCR pointer is needed): PCR_REG_MAP_t
+
+    REQUIRED PATTERN for declaring register pointers:
+    ```c
+    static SYSTEM_REG_MAP_t * const SYS = (SYSTEM_REG_MAP_t *)0xFFFFFF00u;
+    ```
+
+    CRITICAL: You MUST use this EXACT typedef name. It comes from Pass 1 generated header.
+    DO NOT guess, modify, or assume a different typedef name - use this name EXACTLY.
+
+    NOTE: This header contains TWO register structures:
+    - SYSTEM_REG_MAP_t at 0xFFFFFF00 (primary SYSTEM registers)
+    - SYSTEM2_REG_MAP_t at 0xFFFFE100 (secondary SYSTEM2 registers)
+
+    For system initialization, you MUST use SYSTEM_REG_MAP_t for the primary SYSTEM registers.
+    Do NOT use SYSTEM2_REG_MAP_t unless accessing SYSTEM2-specific registers at 0xFFFFE100.
+
+    DO NOT use inline #define macros for register access:
+    ```c
+    // WRONG - Do not do this:
+    #define SYSTEM_BASE 0xFFFFFF00u
+    #define REG32(addr) (*(volatile uint32_t *)(addr))
+    ```
+    
+    You are generating low-level embedded C startup code for a TI Hercules RM46-like MCU.
+
+You MUST obey the global FACTS POLICY, HARD OUTPUT CONTRACT, and CODING RULES from the system prompt.
+
+You will be given:
+- A slice of soc.yaml describing SYSTEM and PCR peripherals.
+- A slice of regs.yaml describing the SYSTEM and PCR register blocks.
+
+The YAML follows this schema:
+
+- soc.yaml:
+  - soc.peripherals is an array of peripherals.
+  - Each peripheral has:
+      name: string, e.g. "SYSTEM", "PCR"
+      regs_ref: string key that matches peripherals.<name> in regs.yaml
+      clock_ref: string (you do not need to use it in this task)
+      x-ext: optional object for extra metadata
+
+  - For SYSTEM, x-ext.init is a list of initialization operations.
+    Each op has:
+      reg: "<PERIPHERAL>.<REGISTER>", e.g. "PCR.PSPWRDWNCLR0"
+      op:  "set_bits", "clear_bits", or "write"
+      value: 32-bit hex string like "0xFFFFFFFF"
+
+  - For SYSTEM, OPTIONAL x-ext.base_clock_refs is a list of clock references to enable
+    at boot as "base clocks" (minimal safe bring-up). Each entry is a string matching
+    the clock domain naming used by the PLL module (clock_domain_t values), e.g.:
+      x-ext.base_clock_refs: ["HCLK", "VCLK", "HF_LPO", "LF_LPO"]
+    If x-ext.base_clock_refs is absent, do not enable any clocks implicitly in system_init.
+
+  - clock_domain_t follow the following naming convention:
+      - Normalize enum names deterministically:
+      CLOCKDOMAIN_<UPPERCASE_REF>
+      - Replace non-alphanumeric with underscore
+
+- regs.yaml:
+  - peripherals.<name>.base_address is the base address as a hex string.
+  - peripherals.<name>.registers.<reg_name>.offset is the offset as a hex string.
+
+CLOCK MODULE INTEGRATION (MANDATORY)
+------------------------------------
+- The PLL module (pll_driver.c / pll_driver.h) provides clock services:
+
+    typedef enum clock_domain_t clock_domain_t;
+    int PLL_EnableClock(clock_domain_t domain);
+
+- system.c MUST include "pll_driver.h" to call PLL_EnableClock().
+
+- system_init() MUST perform ONLY the following clock-related work:
+  1) Enable base clocks listed in SYSTEM.x-ext.base_clock_refs by calling PLL_EnableClock(domain).
+  2) MUST NOT configure/modify clock dividers, PLLs, or muxes here.
+  3) MUST NOT call any clock configuration/modification APIs
+     (PLL_Configure*, PLL_Set*, etc.).
+     Those are APPLICATION-ONLY and must be called by developer code in main.c if desired.
+
+- Peripheral drivers will call PLL_EnableClock() for their own clock_ref(s). system_init
+  should only ensure minimal base clocks are enabled.
+
+SYSTEM MODULE SCOPE (MANDATORY CONSTRAINTS)
+-------------------------------------------
+system.c owns chip bring-up ONLY. It MUST NOT touch PLL configuration registers.
+
+FORBIDDEN in system.c (these belong exclusively to pll_driver.c):
+  - SYS->PLLCTL1, SYS->PLLCTL2, SYS->PLLCTL3  — PLL multiplier/divider config
+  - SYS->CSDIS, SYS->CSDISSET, SYS->CSDISCLR  — clock source disable/enable
+  - SYS->CDDIS, SYS->CDDISSET, SYS->CDDISCLR  — clock domain disable/enable
+  - SYS->GHVSRC                                 — GCLK/HCLK/VCLK source mux
+  - SYS->CLKCNTL (VCLKR, VCLK2R divider fields) — domain frequency dividers
+
+If SYSTEM.x-ext.init contains any of the above register names, SKIP those entries with a comment:
+    /* Skipped: PLLCTL1/CSDIS/GHVSRC/etc. are owned by pll_driver.c */
+
+PERMITTED in system.c:
+  - SYS->CLKCNTL CLKENA bit (oscillator enable) — only if in x-ext.init
+  - PCR power-down clear registers (PCR.PSPWRDWNCLR*)
+  - SYS->MINITGCR, SYS->MSIENA — memory init trigger if in x-ext.init
+  - Any other SYSTEM register NOT in the forbidden list above
+
+Your task:
+- Generate two files: system.h and system.c.
+- These files must be self-contained and ISO C90 compatible:
+  - Do NOT declare variables inside for loops.
+  - Declare all local variables at the top of a block, before any statements.
+- Ensure BOTH generated files end with a trailing newline.
+
+FACTS MIRROR REQUIREMENTS (MANDATORY)
+-------------------------------------
+Before emitting any files, you MUST populate a FACTS MIRROR with every numeric constant you will use,
+pulled directly from YAML:
+- Base addresses
+- Register offsets
+- Values written from SYSTEM.x-ext.init
+
+You MUST NOT invent numeric values.
+
+If required numeric data is missing for any register access:
+- Add TODO entries to the FACTS MIRROR
+- STOP after the FACTS MIRROR (do NOT emit files)
+
+NOTE: PLL_EnableClock() calls do not require mirroring numeric constants here, since those are handled
+inside the PLL module.
+
+Requirements:
+
+1) system.h
+-----------
+- Provide an include guard.
+- Include <stdint.h>.
+- Declare the following functions (all of these are REQUIRED):
+    void     system_init(void);
+    uint32_t system_get_reset_cause(void);   /* Returns SYS->SYSESR reset status register value */
+    void     system_soft_reset(void);        /* Writes SYS->SYSECR to trigger a software reset */
+    uint32_t system_get_device_id(void);     /* Returns SYS->DEVID device identification value */
+    void     system_clear_status_flags(void); /* Clears SYS->SYSESR by writing it back to itself */
+
+2) system.c
+-----------
+- Include <stdint.h>, "system.h", "reg_system.h", and "pll_driver.h".
+- Include "reg_pcr.h" if PCR register access is needed for x-ext.init operations.
+
+- Declare register base pointers using struct-based access (as shown in REGISTER ACCESS section):
+    static {system_typedef} * const SYS = ({system_typedef} *)0xFFFFFF00u;
+    static <PCR_TYPEDEF_FROM_PASS1> * const PCR = (<PCR_TYPEDEF_FROM_PASS1> *)0xFFFFE000u;  /* only if needed */
+  IMPORTANT: If no SYSTEM.x-ext.init operation targets PCR.*, do not declare PCR pointer at all.
+
+- For SYSTEM.x-ext.init operations:
+    - Parse each "reg" field to determine peripheral (SYSTEM or PCR) and register name
+    - Access registers through the struct pointer, e.g.:
+        SYS->CLKCNTL |= value;    /* for set_bits */
+        SYS->CLKCNTL &= ~value;   /* for clear_bits */
+        SYS->CLKCNTL = value;     /* for write */
+        PCR->PSPWRDWNCLR0 = value; /* for PCR registers */
+
+- You MUST use the EXACT register member names from the Pass 1 generated headers.
+- The base addresses MUST come from regs.yaml.
+
+- Implement void system_init(void) that performs, in this exact order:
+  1) Call PCR_Init(); then PCR_EnableAllPeripherals(); before any SYSTEM/PLL-sensitive register writes.
+     This ordering is mandatory for RM46 bring-up stability.
+  2) Configure flash wait-state and EEPROM timing registers before any PLL handoff.
+     - Emit a helper like system_setup_flash_waitstates() and call it here.
+     - Program HAL-aligned sequence (RM46):
+         FRDCNTL = (3 << 8) | (1 << 4) | 1
+         FSMWRENA = 0x5; EEPROMCONFIG = 0x00000002 | (3 << 16); FSMWRENA = 0xA
+         FBFALLBACK = 0x00000000
+  3) Apply SYSTEM.x-ext.init register operations in order using struct member access as shown above.
+     (Skip any forbidden PLL-owned registers per SYSTEM MODULE SCOPE constraints above.)
+  4) Call PLL_Init() to configure the PLL and activate the complete clock tree.
+     This is MANDATORY — entry.c calls system_init() and then main(); it does NOT call PLL_Init()
+     separately. Without this call the device runs unconfigured on OSCIN only.
+  5) Enable additional base clocks (optional):
+     - If SYSTEM.x-ext.base_clock_refs exists, call PLL_EnableClock() for each listed ref, in order.
+     - If absent, skip this step (PLL_Init() already enables the core domains).
+
+- The effective behavior MUST match exactly:
+  - PCR_Init() and PCR_EnableAllPeripherals() executed before PLL_Init()
+  - flash wait-state helper/register programming executed before PLL_Init()
+  - The provided SYSTEM.x-ext.init list (minus forbidden PLL registers)
+  - A call to PLL_Init() after the register operations
+  - The provided SYSTEM.x-ext.base_clock_refs list (if present, called after PLL_Init)
+
+- You MAY add a comment such as:
+    /* Clock configuration (PLL/dividers/mux) is application-owned; see PLL_Configure* APIs in pll_driver.h (do not call here). */
+
+- Also implement the following utility functions (use register member names from reg_system.h):
+    uint32_t system_get_reset_cause(void)  { return SYS->SYSESR; }
+    void     system_soft_reset(void)       { SYS->SYSECR = 0x8000u; }  /* bit 15 = SW reset */
+    uint32_t system_get_device_id(void)    { return SYS->DEVID; }
+    void     system_clear_status_flags(void) { SYS->SYSESR = SYS->SYSESR; }  /* write-1-to-clear */
+  CRITICAL: Look up the exact register member names from reg_system.h (provided in regs.yaml input).
+  Use ONLY member names that exist in the register struct. If a register is not present, add a TODO.
+
+3) Assumptions:
+---------------
+- The linker script and assembly startup (Reset_Handler, stack pointer setup) are handled elsewhere in start.s and linker.cmd.
+- Reset_Handler_C (in entry.c) will call system_init() before main().
+
+OUTPUT CONTRACT
+---------------
+After the FACTS MIRROR, output exactly:
+  ===== FILE: include/system.h =====
+  ===== FILE: source/system.c =====
+
+No other files may be emitted.
+
+Here is soc.yaml (relevant slice):
+
+ir_schema_version: 1.1.0
+chip: RM46L852
+vendor: Texas Instruments
+family: Hercules RM46
+revision: Rev B
+soc:
+  cpu:
+    cores:
+    - name: Cortex-R4F
+      arch: armv7-r
+      endianness: little
+      word_size_bits: 32
+      fpu: VFPv3-D16
+  peripherals:
+  - name: SYSTEM
+    type: system
+    instance: 1
+    regs_ref: SYSTEM
+    clock_ref: VCLK
+    x-ext:
+      init:
+      - reg: MINITGCR
+        op: set_bits
+        value: '0x0000000A'
+      - reg: MSINENA
+        op: write
+        value: '0xFFFFFFFF'
+      - reg: MSTCGSTAT
+        op: write
+        value: '0x00000100'
+      - reg: MINITGCR
+        op: clear_bits
+        value: '0x00000005'
+      - reg: CSVSTAT
+        op: write
+        value: '0x00000000'
+      base_address:
+        base: '0xFFFFFF00'
+        size: '0x100'
+        x-source:
+          pdf: RM46_datasheet.pdf
+          pages:
+          - 81
+          - 85
+          confidence: high
+      x-source:
+        pdf: 2_Architecture.pdf
+        pages:
+        - 1
+        - 2
+        - 101
+        - 102
+        - 105
+        - 117
+        - 120
+        - 130
+        confidence: high
+  - name: PCR
+    type: power
+    instance: 1
+    regs_ref: PCR
+    clock_ref: VCLK
+    x-ext:
+      init_note: PCR_Init is a power-up init path; use CLR registers to bring domains
+        up. DO NOT initialize with PSPWRDWNSET* or PCSPWRDWNSET*. DO NOT REFERNCE
+        THESE REGISTERS IF NOT DEFINED.
+      init:
+      - reg: PSPWRDWNCLR0
+        op: set_bits
+        value: '0xFFFFFFFF'
+      - reg: PSPWRDWNCLR1
+        op: set_bits
+        value: '0xFFFFFFFF'
+      - reg: PSPWRDWNCLR2
+        op: set_bits
+        value: '0xFFFFFFFF'
+      - reg: PSPWRDWNCLR3
+        op: set_bits
+        value: '0xFFFFFFFF'
+      - reg: PCSPWRDWNCLR0
+        op: set_bits
+        value: '0xFFFFFFFF'
+      - reg: PCSPWRDWNCLR1
+        op: set_bits
+        value: '0xFFFFFFFF'
+      base_address:
+        base: '0xFFFFE000'
+        size: '0x100'
+        x-source:
+          pdf: RM46_datasheet.pdf
+          pages:
+          - 81
+          - 85
+          confidence: high
+
+
+Here is regs.yaml (relevant slice):
+
+ir_schema_version: 1.1.0
+peripherals:
+  SYSTEM:
+    base_address: '0xFFFFFF00'
+    desc: Primary System Control Registers (SYS). Controls clocks, resets, and global
+      system configurations.
+    registers:
+      SYSPC1:
+        offset: '0x00'
+        access: RW
+        reset: '0x00000000'
+        desc: SYS Pin Control Register 1. Controls ECLK pin function.
+        fields:
+        - name: ECPCLKFUN
+          bit: 0
+          access: RW
+          desc: 'ECLK function. 0: GIO mode, 1: Functional mode (clock output).'
+      SYSPC2:
+        offset: '0x04'
+        access: RW
+        reset: '0x00000000'
+        desc: SYS Pin Control Register 2. Controls ECLK direction in GIO mode.
+        fields:
+        - name: ECPCLKDIR
+          bit: 0
+          access: RW
+          desc: 'ECLK direction. 0: Input, 1: Output.'
+      SYSPC3:
+        offset: '0x08'
+        access: RO
+        reset: '0x00000000'
+        desc: SYS Pin Control Register 3. ECLK input data.
+        fields:
+        - name: ECPCLKDIN
+          bit: 0
+          access: RO
+          desc: ECLK data input. Reads the logic state of the ECLK pin.
+      SYSPC4:
+        offset: '0x0C'
+        access: RW
+        reset: '0x00000000'
+        desc: SYS Pin Control Register 4. ECLK output data.
+        fields:
+        - name: ECPCLKDOUT
+          bit: 0
+          access: RW
+          desc: 'ECLK data output. 0: Drive low, 1: Drive high.'
+      SYSPC5:
+        offset: '0x10'
+        access: RW
+        reset: '0x00000000'
+        desc: SYS Pin Control Register 5. ECLK output set.
+        fields:
+        - name: ECPCLKSET
+          bit: 0
+          access: RW
+          desc: ECLK data set. Writing 1 drives pin high.
+      SYSPC6:
+        offset: '0x14'
+        access: RW
+        reset: '0x00000000'
+        desc: SYS Pin Control Register 6. ECLK output clear.
+        fields:
+        - name: ECPCLKCLR
+          bit: 0
+          access: RW
+          desc: ECLK data clear. Writing 1 drives pin low.
+      SYSPC7:
+        offset: '0x18'
+        access: RW
+        reset: '0x00000000'
+        desc: SYS Pin Control Register 7. ECLK open drain enable.
+        fields:
+        - name: ECPCLKODE
+          bit: 0
+          access: RW
+          desc: 'ECLK open drain enable. 0: Push/pull, 1: Open drain.'
+      SYSPC8:
+        offset: '0x1C'
+        access: RW
+        reset: '0x00000000'
+        desc: SYS Pin Control Register 8. ECLK pull enable.
+        fields:
+        - name: ECPCLKPUE
+          bit: 0
+          access: RW
+          desc: 'ECLK pull enable. 0: Enabled, 1: Disabled.'
+      SYSPC9:
+        offset: '0x20'
+        access: RW
+        reset: '0x00000000'
+        desc: SYS Pin Control Register 9. ECLK pull select.
+        fields:
+        - name: ECPCLKPS
+          bit: 0
+          access: RW
+          desc: 'ECLK pull select. 0: Pull down, 1: Pull up.'
+      CSDIS:
+        offset: '0x30'
+        access: RW
+        reset: '0x00000000'
+        desc: Clock Source Disable Register.
+        fields:
+        - name: CLKSR7OFF
+          bit: 7
+          access: RW
+          desc: Disable Clock Source 7 (EXTCLKIN2).
+        - name: CLKSR6OFF
+          bit: 6
+          access: RW
+          desc: Disable Clock Source 6 (PLL2).
+        - name: CLKSR5OFF
+          bit: 5
+          access: RW
+          desc: Disable Clock Source 5 (High Freq LPO).
+        - name: CLKSR4OFF
+          bit: 4
+          access: RW
+          desc: Disable Clock Source 4 (Low Freq LPO).
+        - name: CLKSR3OFF
+          bit: 3
+          access: RW
+          desc: Disable Clock Source 3 (EXTCLKIN1).
+        - name: CLKSR1OFF
+          bit: 1
+          access: RW
+          desc: Disable Clock Source 1 (PLL1).
+        - name: CLKSR0OFF
+          bit: 0
+          access: RW
+          desc: Disable Clock Source 0 (Oscillator).
+      CSDISSET:
+        offset: '0x34'
+        access: RW
+        reset: '0x00000000'
+        desc: Clock Source Disable Set Register. Writing 1 disables the clock source.
+        fields:
+        - name: SETCLKSR7OFF
+          bit: 7
+          access: RW
+          desc: Set disable for Clock Source 7.
+        - name: SETCLKSR6OFF
+          bit: 6
+          access: RW
+          desc: Set disable for Clock Source 6.
+        - name: SETCLKSR5OFF
+          bit: 5
+          access: RW
+          desc: Set disable for Clock Source 5.
+        - name: SETCLKSR4OFF
+          bit: 4
+          access: RW
+          desc: Set disable for Clock Source 4.
+        - name: SETCLKSR3OFF
+          bit: 3
+          access: RW
+          desc: Set disable for Clock Source 3.
+        - name: SETCLKSR1OFF
+          bit: 1
+          access: RW
+          desc: Set disable for Clock Source 1.
+        - name: SETCLKSR0OFF
+          bit: 0
+          access: RW
+          desc: Set disable for Clock Source 0.
+      CSDISCLR:
+        offset: '0x38'
+        access: RW
+        reset: '0x00000000'
+        desc: Clock Source Disable Clear Register. Writing 1 enables the clock source.
+        fields:
+        - name: CLRCLKSR7OFF
+          bit: 7
+          access: RW
+          desc: Clear disable (enable) for Clock Source 7.
+        - name: CLRCLKSR6OFF
+          bit: 6
+          access: RW
+          desc: Clear disable (enable) for Clock Source 6.
+        - name: CLRCLKSR5OFF
+          bit: 5
+          access: RW
+          desc: Clear disable (enable) for Clock Source 5.
+        - name: CLRCLKSR4OFF
+          bit: 4
+          access: RW
+          desc: Clear disable (enable) for Clock Source 4.
+        - name: CLRCLKSR3OFF
+          bit: 3
+          access: RW
+          desc: Clear disable (enable) for Clock Source 3.
+        - name: CLRCLKSR1OFF
+          bit: 1
+          access: RW
+          desc: Clear disable (enable) for Clock Source 1.
+        - name: CLRCLKSR0OFF
+          bit: 0
+          access: RW
+          desc: Clear disable (enable) for Clock Source 0.
+      CDDIS:
+        offset: '0x3C'
+        access: RW
+        reset: '0x00000000'
+        desc: Clock Domain Disable Register.
+        fields:
+        - name: VCLKA4OFF
+          bit: 11
+          access: RW
+          desc: VCLKA4 domain off.
+        - name: VCLKA3OFF
+          bit: 10
+          access: RW
+          desc: VCLKA3 domain off.
+        - name: VCLK4OFF
+          bit: 9
+          access: RW
+          desc: VCLK4 domain off.
+        - name: VCLK3OFF
+          bit: 8
+          access: RW
+          desc: VCLK3 domain off.
+        - name: RTICLK1OFF
+          bit: 6
+          access: RW
+          desc: RTICLK1 domain off.
+        - name: VCLKA1OFF
+          bit: 4
+          access: RW
+          desc: VCLKA1 domain off.
+        - name: VCLK2OFF
+          bit: 3
+          access: RW
+          desc: VCLK2 domain off.
+        - name: VCLKPOFF
+          bit: 2
+          access: RW
+          desc: VCLK_periph domain off.
+        - name: HCLKOFF
+          bit: 1
+          access: RW
+          desc: HCLK and VCLK_sys domains off.
+        - name: GCLKOFF
+          bit: 0
+          access: RW
+          desc: GCLK domain off.
+      CDDISSET:
+        offset: '0x40'
+        access: RW
+        reset: '0x00000000'
+        desc: Clock Domain Disable Set Register. Writing 1 disables the clock domain.
+        fields:
+        - name: SETVCLKA4OFF
+          bit: 11
+          access: RW
+          desc: Set disable for VCLKA4 domain.
+        - name: SETVCLKA3OFF
+          bit: 10
+          access: RW
+          desc: Set disable for VCLKA3 domain.
+        - name: SETVCLK4OFF
+          bit: 9
+          access: RW
+          desc: Set disable for VCLK4 domain.
+        - name: SETVCLK3OFF
+          bit: 8
+          access: RW
+          desc: Set disable for VCLK3 domain.
+        - name: SETRTI1CLKOFF
+          bit: 6
+          access: RW
+          desc: Set disable for RTICLK1 domain.
+        - name: SETVCLKA1OFF
+          bit: 4
+          access: RW
+          desc: Set disable for VCLKA1 domain.
+        - name: SETVCLK2OFF
+          bit: 3
+          access: RW
+          desc: Set disable for VCLK2 domain.
+        - name: SETVCLKPOFF
+          bit: 2
+          access: RW
+          desc: Set disable for VCLK_periph domain.
+        - name: SETHCLKOFF
+          bit: 1
+          access: RW
+          desc: Set disable for HCLK domain.
+        - name: SETGCLKOFF
+          bit: 0
+          access: RW
+          desc: Set disable for GCLK domain.
+      CDDISCLR:
+        offset: '0x44'
+        access: RW
+        reset: '0x00000000'
+        desc: Clock Domain Disable Clear Register. Writing 1 enables the clock domain.
+        fields:
+        - name: CLRVCLKA4OFF
+          bit: 11
+          access: RW
+          desc: Clear disable for VCLKA4 domain.
+        - name: CLRVCLKA3OFF
+          bit: 10
+          access: RW
+          desc: Clear disable for VCLKA3 domain.
+        - name: CLRVCLK4OFF
+          bit: 9
+          access: RW
+          desc: Clear disable for VCLK4 domain.
+        - name: CLRVCLK3OFF
+          bit: 8
+          access: RW
+          desc: Clear disable for VCLK3 domain.
+        - name: CLRRTI1CLKOFF
+          bit: 6
+          access: RW
+          desc: Clear disable for RTICLK1 domain.
+        - name: CLRVCLKA1OFF
+          bit: 4
+          access: RW
+          desc: Clear disable for VCLKA1 domain.
+        - name: CLRVCLK2OFF
+          bit: 3
+          access: RW
+          desc: Clear disable for VCLK2 domain.
+        - name: CLRVCLKPOFF
+          bit: 2
+          access: RW
+          desc: Clear disable for VCLK_periph domain.
+        - name: CLRHCLKOFF
+          bit: 1
+          access: RW
+          desc: Clear disable for HCLK domain.
+        - name: CLRGCLKOFF
+          bit: 0
+          access: RW
+          desc: Clear disable for GCLK domain.
+      GHVSRC:
+        offset: '0x48'
+        access: RW
+        reset: '0x00000000'
+        desc: GCLK, HCLK, VCLK, and VCLK2 Source Register.
+        fields:
+        - name: GHVWAKE
+          msb: 27
+          lsb: 24
+          access: RW
+          desc: 'Source on wakeup. 0: Osc, 1: PLL1, 4: LF LPO, 5: HF LPO, 6: PLL2.'
+        - name: HVLPM
+          msb: 19
+          lsb: 16
+          access: RW
+          desc: 'Source when GCLK off. 0: Osc, 1: PLL1, 4: LF LPO, 5: HF LPO, 6: PLL2.'
+        - name: GHVSRC
+          msb: 3
+          lsb: 0
+          access: RW
+          desc: 'Current source. 0: Osc, 1: PLL1, 4: LF LPO, 5: HF LPO, 6: PLL2.'
+      VCLKASRC:
+        offset: '0x4C'
+        access: RW
+        reset: '0x00000000'
+        desc: Peripheral Asynchronous Clock Source Register.
+        fields:
+        - name: VCLKA1S
+          msb: 3
+          lsb: 0
+          access: RW
+          desc: 'VCLKA1 Source. 0: Osc, 1: PLL1, 2: Reserved, 3: EXTCLKIN1, 4: LF
+            LPO, 5: HF LPO, 6: PLL2, 7: EXTCLKIN2, 8+: VCLK.'
+      RCLKSRC:
+        offset: '0x50'
+        access: RW
+        reset: '0x00000000'
+        desc: RTI Clock Source Register.
+        fields:
+        - name: RTI1DIV
+          msb: 9
+          lsb: 8
+          access: RW
+          desc: 'RTI1 Clock Divider. 0: /1, 1: /2, 2: /4, 3: /8.'
+        - name: RTI1SRC
+          msb: 3
+          lsb: 0
+          access: RW
+          desc: 'RTI1 Source. 0: Osc, 1: PLL1, 2: Reserved, 3: EXTCLKIN1, 4: LF LPO,
+            5: HF LPO, 6: PLL2, 7: EXTCLKIN2, 8+: VCLK.'
+      CSVSTAT:
+        offset: '0x54'
+        access: RO
+        reset: '0x00000000'
+        desc: Clock Source Valid Status Register.
+        fields:
+        - name: CLKSR7V
+          bit: 7
+          access: RO
+          desc: Clock Source 7 (EXTCLKIN2) valid.
+        - name: CLKSR6V
+          bit: 6
+          access: RO
+          desc: Clock Source 6 (PLL2) valid.
+        - name: CLKSR5V
+          bit: 5
+          access: RO
+          desc: Clock Source 5 (HF LPO) valid.
+        - name: CLKSR4V
+          bit: 4
+          access: RO
+          desc: Clock Source 4 (LF LPO) valid.
+        - name: CLKSR3V
+          bit: 3
+          access: RO
+          desc: Clock Source 3 (EXTCLKIN1) valid.
+        - name: CLKSR1V
+          bit: 1
+          access: RO
+          desc: Clock Source 1 (PLL1) valid.
+        - name: CLKSR0V
+          bit: 0
+          access: RO
+          desc: Clock Source 0 (Oscillator) valid.
+      MSTGCR:
+        offset: '0x58'
+        access: RW
+        reset: '0x00000000'
+        desc: Memory Self-Test Global Control Register.
+        fields:
+        - name: MBIST_ALGSEL
+          msb: 23
+          lsb: 16
+          access: RW
+          desc: 'Algorithm select. 1: Checkerboard, 2: March13N (0/1), 4: March11N
+            (5/A), 8: March13N (3/C/F/0/6/9).'
+        - name: ROM_DIV
+          msb: 9
+          lsb: 8
+          access: RW
+          desc: 'ROM Clock Divider. 0: /1, 1: /2, 2: /4, 3: /8.'
+        - name: MSTGENA
+          msb: 3
+          lsb: 0
+          access: RW
+          desc: 'Global Enable Key. 0xA: Enabled, Others: Disabled.'
+      MINITGCR:
+        offset: '0x5C'
+        access: RW
+        reset: '0x00000000'
+        desc: Memory Hardware Initialization Global Control Register.
+        fields:
+        - name: MINITGENA
+          msb: 3
+          lsb: 0
+          access: RW
+          desc: 'Global Enable Key. 0xA: Enabled, Others: Disabled.'
+      MSINENA:
+        offset: '0x60'
+        access: RW
+        reset: '0x00000000'
+        desc: Memory Self-Test/Initialization Enable Register.
+        fields:
+        - name: MSIENA
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: Enable bits for each memory module (bit definition in Table 2-5).
+      MSTFAIL:
+        offset: '0x64'
+        access: RW
+        reset: '0x00000000'
+        desc: Memory Self-Test Fail Status Register.
+        fields:
+        - name: MSTF
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: Fail status for each memory module. Write 1 to clear.
+      MSTCGSTAT:
+        offset: '0x68'
+        access: RW
+        reset: '0x00000000'
+        desc: MSTC Global Status Register.
+        fields:
+        - name: MINIDONE
+          bit: 8
+          access: RW
+          desc: Memory initialization done. Write 1 to clear.
+        - name: MSTDONE
+          bit: 0
+          access: RW
+          desc: Memory self-test done. Write 1 to clear.
+      MINISTAT:
+        offset: '0x6C'
+        access: RW
+        reset: '0x00000000'
+        desc: Memory Hardware Initialization Status Register.
+        fields:
+        - name: MIDONE
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: Initialization done status for each memory module. Write 1 to clear.
+      PLLCTL1:
+        offset: '0x70'
+        access: RW
+        reset: '0x00000000'
+        desc: PLL Control Register 1.
+        fields:
+        - name: ROS
+          bit: 31
+          access: RW
+          desc: 'Reset on Slip. 1: Reset system on PLL slip.'
+        - name: MASK_SLIP
+          msb: 30
+          lsb: 29
+          access: RW
+          desc: 'Slip Mask. 0x2: Disable Bypass on Slip, Others: Enable Bypass on
+            Slip.'
+        - name: PLLDIV
+          msb: 28
+          lsb: 24
+          access: RW
+          desc: PLL Output Divider (R). R = PLLDIV + 1.
+        - name: ROF
+          bit: 23
+          access: RW
+          desc: 'Reset on Oscillator Fail. 1: Reset system.'
+        - name: REFCLKDIV
+          msb: 21
+          lsb: 16
+          access: RW
+          desc: Reference Clock Divider (NR). NR = REFCLKDIV + 1.
+        - name: PLLMUL
+          msb: 15
+          lsb: 0
+          access: RW
+          desc: PLL Multiplier (NF). NF = (PLLMUL / 256) + 1.
+      PLLCTL2:
+        offset: '0x74'
+        access: RW
+        reset: '0x00000000'
+        desc: PLL Control Register 2.
+        fields:
+        - name: FMENA
+          bit: 31
+          access: RW
+          desc: 'Frequency Modulation Enable. 1: Enable.'
+        - name: SPREADINGRATE
+          msb: 30
+          lsb: 22
+          access: RW
+          desc: Spreading Rate (NS). NS = SPREADINGRATE + 1.
+        - name: MULMOD
+          msb: 20
+          lsb: 12
+          access: RW
+          desc: Multiplier Correction. Delta NF = MULMOD / 256.
+        - name: ODPLL
+          msb: 11
+          lsb: 9
+          access: RW
+          desc: Internal Output Divider (OD). OD = ODPLL + 1.
+        - name: SPR_AMOUNT
+          msb: 8
+          lsb: 0
+          access: RW
+          desc: Spreading Amount (NV). NV = (SPR_AMOUNT + 1) / 2048.
+      SYSPC10:
+        offset: '0x78'
+        access: RW
+        reset: '0x00000000'
+        desc: SYS Pin Control Register 10.
+        fields:
+        - name: ECPCLK_SLEW
+          bit: 0
+          access: RW
+          desc: 'ECLK Slew Rate. 0: Fast, 1: Slow.'
+      DIEIDL:
+        offset: '0x7C'
+        access: RO
+        reset: '0x00000000'
+        desc: Die Identification Register Lower Word.
+        fields:
+        - name: WAFER_NUM
+          msb: 31
+          lsb: 24
+          access: RO
+          desc: Wafer Number.
+        - name: Y_COORD
+          msb: 23
+          lsb: 12
+          access: RO
+          desc: Y Wafer Coordinate.
+        - name: X_COORD
+          msb: 11
+          lsb: 0
+          access: RO
+          desc: X Wafer Coordinate.
+      DIEIDH:
+        offset: '0x80'
+        access: RO
+        reset: '0x00000000'
+        desc: Die Identification Register Upper Word.
+        fields:
+        - name: LOT_NUM
+          msb: 23
+          lsb: 0
+          access: RO
+          desc: Lot Number.
+      LPOMONCTL:
+        offset: '0x88'
+        access: RW
+        reset: '0x00000000'
+        desc: LPO/Clock Monitor Control Register.
+        fields:
+        - name: BIAS_ENABLE
+          bit: 24
+          access: RW
+          desc: 'LPO Bias Enable. 1: Enabled.'
+        - name: OSCFRQCONFIGCNT
+          bit: 16
+          access: RW
+          desc: 'Oscillator Frequency Range. 0: <= 20MHz, 1: > 20MHz.'
+        - name: HFTRIM
+          msb: 12
+          lsb: 8
+          access: RW
+          desc: HF LPO Trim.
+        - name: LFTRIM
+          msb: 4
+          lsb: 0
+          access: RW
+          desc: LF LPO Trim.
+      CLKTEST:
+        offset: '0x8C'
+        access: RW
+        reset: '0x00000000'
+        desc: Clock Test Register.
+        fields:
+        - name: ALTLIMPCLOCKENABLE
+          bit: 26
+          access: RW
+          desc: Alternate Limp Clock Enable (GIOB[0]).
+        - name: RANGEDETCTRL
+          bit: 25
+          access: RW
+          desc: Range Detection Control.
+        - name: RANGEDETENASSEL
+          bit: 24
+          access: RW
+          desc: Range Detection Enable Select.
+        - name: CLK_TEST_EN
+          msb: 19
+          lsb: 16
+          access: RW
+          desc: 'Clock Test Enable. 0x5: Enabled.'
+        - name: SEL_GIO_PIN
+          msb: 11
+          lsb: 8
+          access: RW
+          desc: GIOB[0] Clock Source Select.
+        - name: SEL_ECP_PIN
+          msb: 3
+          lsb: 0
+          access: RW
+          desc: ECLK Clock Source Select.
+      DFTCTRLREG:
+        offset: '0x90'
+        access: RW
+        reset: '0x00000000'
+        desc: DFT Control Register.
+        fields:
+        - name: DFTWRITE
+          msb: 13
+          lsb: 12
+          access: RW
+          desc: DFT Logic Write Access.
+        - name: DFTREAD
+          msb: 9
+          lsb: 8
+          access: RW
+          desc: DFT Logic Read Access.
+        - name: TEST_MODE_KEY
+          msb: 3
+          lsb: 0
+          access: RW
+          desc: 'Test Mode Key. 0xA: Enable.'
+      DFTCTRLREG2:
+        offset: '0x94'
+        access: RW
+        reset: '0x00000000'
+        desc: DFT Control Register 2.
+        fields:
+        - name: IMPDF
+          msb: 31
+          lsb: 4
+          access: RW
+          desc: Implementation Defined.
+        - name: TEST_MODE_KEY
+          msb: 3
+          lsb: 0
+          access: RW
+          desc: 'Test Mode Key. 0xA: Enable.'
+      GPREG1:
+        offset: '0xA0'
+        access: RW
+        reset: '0x00000000'
+        desc: General Purpose Register 1.
+        fields:
+        - name: EMIF_FUNC
+          bit: 31
+          access: RW
+          desc: Enable EMIF output functions.
+        - name: PLL1_FBSLIP_FILTER_COUNT
+          msb: 25
+          lsb: 20
+          access: RW
+          desc: FBSLIP Filter Count.
+        - name: PLL1_FBSLIP_FILTER_KEY
+          msb: 19
+          lsb: 16
+          access: RW
+          desc: 'FBSLIP Filter Key. 0x5: Enable.'
+        - name: OUTPUT_BUFFER_LOW_EMI_MODE
+          msb: 15
+          lsb: 0
+          access: RW
+          desc: Low EMI Mode for Output Buffers.
+      IMPFASTS:
+        offset: '0xA8'
+        access: RW
+        reset: '0x00000000'
+        desc: Imprecise Fault Status Register.
+        fields:
+        - name: MASTERID
+          msb: 23
+          lsb: 16
+          access: RW
+          desc: Master ID responsible for abort.
+        - name: EMIFA
+          bit: 10
+          access: RW
+          desc: EMIF Abort Flag.
+        - name: NCBA
+          bit: 9
+          access: RW
+          desc: Non-cacheable Bufferable Abort Flag.
+        - name: VBUSA
+          bit: 8
+          access: RW
+          desc: VBUS Abort Flag.
+        - name: ATYPE
+          bit: 0
+          access: RW
+          desc: 'Abort Type. 0: Precise, 1: Imprecise.'
+      IMPFTADD:
+        offset: '0xAC'
+        access: RO
+        reset: '0x00000000'
+        desc: Imprecise Fault Write Address Register.
+        fields:
+        - name: IMPFTADD
+          msb: 31
+          lsb: 0
+          access: RO
+          desc: Fault Address.
+      SSIR1:
+        offset: '0xB0'
+        access: RW
+        reset: '0x00000000'
+        desc: System Software Interrupt Request 1.
+        fields:
+        - name: SSKEY1
+          msb: 15
+          lsb: 8
+          access: RW
+          desc: Key (0x75) to trigger interrupt.
+        - name: SSDATA1
+          msb: 7
+          lsb: 0
+          access: RW
+          desc: Data associated with interrupt.
+      SSIR2:
+        offset: '0xB4'
+        access: RW
+        reset: '0x00000000'
+        desc: System Software Interrupt Request 2.
+        fields:
+        - name: SSKEY2
+          msb: 15
+          lsb: 8
+          access: RW
+          desc: Key (0x84) to trigger interrupt.
+        - name: SSDATA2
+          msb: 7
+          lsb: 0
+          access: RW
+          desc: Data associated with interrupt.
+      SSIR3:
+        offset: '0xB8'
+        access: RW
+        reset: '0x00000000'
+        desc: System Software Interrupt Request 3.
+        fields:
+        - name: SSKEY3
+          msb: 15
+          lsb: 8
+          access: RW
+          desc: Key (0x93) to trigger interrupt.
+        - name: SSDATA3
+          msb: 7
+          lsb: 0
+          access: RW
+          desc: Data associated with interrupt.
+      SSIR4:
+        offset: '0xBC'
+        access: RW
+        reset: '0x00000000'
+        desc: System Software Interrupt Request 4.
+        fields:
+        - name: SSKEY4
+          msb: 15
+          lsb: 8
+          access: RW
+          desc: Key (0xA2) to trigger interrupt.
+        - name: SSDATA4
+          msb: 7
+          lsb: 0
+          access: RW
+          desc: Data associated with interrupt.
+      RAMGCR:
+        offset: '0xC0'
+        access: RW
+        reset: '0x00000000'
+        desc: RAM Control Register.
+        fields:
+        - name: RAM_DFT_EN
+          msb: 19
+          lsb: 16
+          access: RW
+          desc: RAM DFT Enable (TI Internal).
+        - name: WST_AENA0
+          bit: 2
+          access: RW
+          desc: 'Wait state address enable. 1: +1 HCLK cycle.'
+        - name: WST_DENA0
+          bit: 0
+          access: RW
+          desc: 'Wait state data enable. 1: +1 HCLK cycle.'
+      BMMCR1:
+        offset: '0xC4'
+        access: RW
+        reset: '0x00000005'
+        desc: Bus Matrix Module Control Register 1.
+        fields:
+        - name: MEMSW
+          msb: 3
+          lsb: 0
+          access: RW
+          desc: 'Memory Swap Key. 0x5: Swapped, 0xA: Default.'
+      CPURSTCR:
+        offset: '0xCC'
+        access: RW
+        reset: '0x00000000'
+        desc: CPU Reset Control Register.
+        fields:
+        - name: CPU_RESET
+          bit: 0
+          access: RW
+          desc: CPU Reset. Write to toggle.
+      CLKCNTL:
+        offset: '0xD0'
+        access: RW
+        reset: '0x00000000'
+        desc: Clock Control Register.
+        fields:
+        - name: VCLK2R
+          msb: 27
+          lsb: 24
+          access: RW
+          desc: 'VCLK2 Ratio. 0: /1 ... F: /16.'
+        - name: VCLKR
+          msb: 19
+          lsb: 16
+          access: RW
+          desc: 'VCLK Ratio. 0: /1 ... F: /16.'
+        - name: PENA
+          bit: 8
+          access: RW
+          desc: 'Peripheral Enable. 1: Peripherals out of reset.'
+      ECPCNTL:
+        offset: '0xD4'
+        access: RW
+        reset: '0x00000000'
+        desc: ECP Control Register.
+        fields:
+        - name: ECPSSEL
+          bit: 24
+          access: RW
+          desc: 'Clock Source Select. 0: VCLK, 1: OSCIN.'
+        - name: ECPCOS
+          bit: 23
+          access: RW
+          desc: 'Continue On Suspend. 1: Continue.'
+        - name: ECPINSEL
+          msb: 17
+          lsb: 16
+          access: RW
+          desc: 'Input Source Select. 1: HCLK, 2: External.'
+        - name: ECPDIV
+          msb: 15
+          lsb: 0
+          access: RW
+          desc: Clock Divider. Output = Input / (ECPDIV + 1).
+      DEVCR1:
+        offset: '0xDC'
+        access: RW
+        reset: '0x00000000'
+        desc: DEV Parity Control Register 1.
+        fields:
+        - name: DEVPARSEL
+          msb: 3
+          lsb: 0
+          access: RW
+          desc: 'Parity Select. 0x5: Odd, 0xA: Even.'
+      SYSECR:
+        offset: '0xE0'
+        access: RW
+        reset: '0x00000000'
+        desc: System Exception Control Register.
+        fields:
+        - name: RESET
+          msb: 15
+          lsb: 14
+          access: RW
+          desc: 'Software Reset. 10: Reset.'
+      SYSESR:
+        offset: '0xE4'
+        access: RW
+        reset: '0x00000000'
+        desc: System Exception Status Register. Write 1 to clear flags.
+        fields:
+        - name: PORST
+          bit: 15
+          access: RW
+          desc: Power-On Reset Flag.
+        - name: OSCRST
+          bit: 14
+          access: RW
+          desc: Oscillator Fail/PLL Slip Reset Flag.
+        - name: WDRST
+          bit: 13
+          access: RW
+          desc: Watchdog Reset Flag.
+        - name: CPURST
+          bit: 5
+          access: RW
+          desc: CPU Reset Flag.
+        - name: SWRST
+          bit: 4
+          access: RW
+          desc: Software Reset Flag.
+        - name: EXTRST
+          bit: 3
+          access: RW
+          desc: External Reset Flag.
+      SYSTASR:
+        offset: '0xE8'
+        access: RW
+        reset: '0x00000000'
+        desc: System Test Abort Status Register.
+        fields:
+        - name: EFUSE_Abort
+          msb: 4
+          lsb: 0
+          access: RW
+          desc: EFUSE Abort Status.
+      GLBSTAT:
+        offset: '0xEC'
+        access: RW
+        reset: '0x00000000'
+        desc: Global Status Register. Write 1 to clear flags.
+        fields:
+        - name: FBSLIP
+          bit: 9
+          access: RW
+          desc: PLL Feedback Slip Flag.
+        - name: RFSLIP
+          bit: 8
+          access: RW
+          desc: PLL Reference Slip Flag.
+        - name: OSCFAIL
+          bit: 0
+          access: RW
+          desc: Oscillator Fail Flag.
+      DEVID:
+        offset: '0xF0'
+        access: RO
+        reset: '0x00000000'
+        desc: Device Identification Register.
+        fields:
+        - name: CP15
+          bit: 31
+          access: RO
+          desc: 'CP15 Present. 1: Yes.'
+        - name: UNIQUE_ID
+          msb: 30
+          lsb: 17
+          access: RO
+          desc: Unique Device ID.
+        - name: TECH
+          msb: 16
+          lsb: 13
+          access: RO
+          desc: Process Technology.
+        - name: IO_VOLTAGE
+          bit: 12
+          access: RO
+          desc: 'I/O Voltage. 0: 3.3V, 1: 5V.'
+        - name: PERIPHERAL_PARITY
+          bit: 11
+          access: RO
+          desc: Peripheral Parity Present.
+        - name: FLASH_ECC
+          bit: 10
+          access: RO
+          desc: Flash ECC Present.
+        - name: RAM_ECC
+          bit: 9
+          access: RO
+          desc: RAM ECC Present.
+        - name: VERSION
+          msb: 8
+          lsb: 3
+          access: RO
+          desc: Device Version.
+        - name: PLATFORM_ID
+          msb: 2
+          lsb: 0
+          access: RO
+          desc: Platform ID.
+      SSIVEC:
+        offset: '0xF4'
+        access: RO
+        reset: '0x00000000'
+        desc: Software Interrupt Vector Register.
+        fields:
+        - name: SSIDATA
+          msb: 15
+          lsb: 8
+          access: RO
+          desc: SSI Data from request.
+        - name: SSIVECT
+          msb: 7
+          lsb: 0
+          access: RO
+          desc: SSI Vector (1-4).
+      SSIF:
+        offset: '0xF8'
+        access: RW
+        reset: '0x00000000'
+        desc: System Software Interrupt Flag Register. Write 1 to clear.
+        fields:
+        - name: SSI_FLAG4
+          bit: 3
+          access: RW
+          desc: SSI 4 Flag.
+        - name: SSI_FLAG3
+          bit: 2
+          access: RW
+          desc: SSI 3 Flag.
+        - name: SSI_FLAG2
+          bit: 1
+          access: RW
+          desc: SSI 2 Flag.
+        - name: SSI_FLAG1
+          bit: 0
+          access: RW
+          desc: SSI 1 Flag.
+  PCR:
+    base_address: '0xFFFFE000'
+    desc: Peripheral Central Resource (PCR) Controller
+    registers:
+      PMPROTSET0:
+        offset: '0x00'
+        access: RW
+        reset: '0x00000000'
+        desc: Peripheral Memory Protection Set Register 0
+        fields:
+        - name: MP_PROTSET
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Memory protection set. 0: No effect/Unprotected, 1: Set protection/Protected.'
+      PMPROTSET1:
+        offset: '0x04'
+        access: RW
+        reset: '0x00000000'
+        desc: Peripheral Memory Protection Set Register 1
+        fields:
+        - name: MP_PROTSET
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Memory protection set. 0: No effect/Unprotected, 1: Set protection/Protected.'
+      PMPROTCLR0:
+        offset: '0x10'
+        access: RW
+        reset: '0x00000000'
+        desc: Peripheral Memory Protection Clear Register 0
+        fields:
+        - name: MP_PROTCLR
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Memory protection clear. 0: No effect/Unprotected, 1: Clear protection/Protected.'
+      PMPROTCLR1:
+        offset: '0x14'
+        access: RW
+        reset: '0x00000000'
+        desc: Peripheral Memory Protection Clear Register 1
+        fields:
+        - name: MP_PROTCLR
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Memory protection clear. 0: No effect/Unprotected, 1: Clear protection/Protected.'
+      PPROTSET0:
+        offset: '0x20'
+        access: RW
+        reset: '0x00000000'
+        desc: Peripheral Protection Set Register 0
+        fields:
+        - name: P_PROTSET
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral protection set for PS[7:0]. 0: No effect/Unprotected,
+            1: Set protection/Protected.'
+      PPROTSET1:
+        offset: '0x24'
+        access: RW
+        reset: '0x00000000'
+        desc: Peripheral Protection Set Register 1
+        fields:
+        - name: P_PROTSET
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral protection set for PS[15:8]. 0: No effect/Unprotected,
+            1: Set protection/Protected.'
+      PPROTSET2:
+        offset: '0x28'
+        access: RW
+        reset: '0x00000000'
+        desc: Peripheral Protection Set Register 2
+        fields:
+        - name: P_PROTSET
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral protection set for PS[23:16]. 0: No effect/Unprotected,
+            1: Set protection/Protected.'
+      PPROTSET3:
+        offset: '0x2C'
+        access: RW
+        reset: '0x00000000'
+        desc: Peripheral Protection Set Register 3
+        fields:
+        - name: P_PROTSET
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral protection set for PS[31:24]. 0: No effect/Unprotected,
+            1: Set protection/Protected.'
+      PPROTCLR0:
+        offset: '0x40'
+        access: RW
+        reset: '0x00000000'
+        desc: Peripheral Protection Clear Register 0
+        fields:
+        - name: P_PROTCLR
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral protection clear for PS[7:0]. 0: No effect/Unprotected,
+            1: Clear protection/Protected.'
+      PPROTCLR1:
+        offset: '0x44'
+        access: RW
+        reset: '0x00000000'
+        desc: Peripheral Protection Clear Register 1
+        fields:
+        - name: P_PROTCLR
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral protection clear for PS[15:8]. 0: No effect/Unprotected,
+            1: Clear protection/Protected.'
+      PPROTCLR2:
+        offset: '0x48'
+        access: RW
+        reset: '0x00000000'
+        desc: Peripheral Protection Clear Register 2
+        fields:
+        - name: P_PROTCLR
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral protection clear for PS[23:16]. 0: No effect/Unprotected,
+            1: Clear protection/Protected.'
+      PPROTCLR3:
+        offset: '0x4C'
+        access: RW
+        reset: '0x00000000'
+        desc: Peripheral Protection Clear Register 3
+        fields:
+        - name: P_PROTCLR
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral protection clear for PS[31:24]. 0: No effect/Unprotected,
+            1: Clear protection/Protected.'
+      PCSPWRDWNSET0:
+        offset: '0x60'
+        access: RW
+        reset: '0xFFFFFFFF'
+        desc: Peripheral Memory Power-Down Set Register 0
+        fields:
+        - name: PCSPWRDWNSET
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral memory power-down set for PCS[31:0]. 0: Active/No effect,
+            1: Inactive/Set power-down.'
+      PCSPWRDWNSET1:
+        offset: '0x64'
+        access: RW
+        reset: '0xFFFFFFFF'
+        desc: Peripheral Memory Power-Down Set Register 1
+        fields:
+        - name: PCSPWRDWNSET
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral memory power-down set for PCS[63:32]. 0: Active/No effect,
+            1: Inactive/Set power-down.'
+      PCSPWRDWNCLR0:
+        offset: '0x70'
+        access: RW
+        reset: '0xFFFFFFFF'
+        desc: Peripheral Memory Power-Down Clear Register 0
+        fields:
+        - name: PCSPWRDWNCLR
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral memory power-down clear for PCS[31:0]. 0: Active/No effect,
+            1: Inactive/Clear power-down.'
+      PCSPWRDWNCLR1:
+        offset: '0x74'
+        access: RW
+        reset: '0xFFFFFFFF'
+        desc: Peripheral Memory Power-Down Clear Register 1
+        fields:
+        - name: PCSPWRDWNCLR
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral memory power-down clear for PCS[63:32]. 0: Active/No effect,
+            1: Inactive/Clear power-down.'
+      PSPWRDWNSET0:
+        offset: '0x80'
+        access: RW
+        reset: '0xFFFFFFFF'
+        desc: Peripheral Power-Down Set Register 0
+        fields:
+        - name: PSPWRDWNSET
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral power-down set for PS[7:0]. 0: Active/No effect, 1: Inactive/Set
+            power-down.'
+      PSPWRDWNSET1:
+        offset: '0x84'
+        access: RW
+        reset: '0xFFFFFFFF'
+        desc: Peripheral Power-Down Set Register 1
+        fields:
+        - name: PSPWRDWNSET
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral power-down set for PS[15:8]. 0: Active/No effect, 1: Inactive/Set
+            power-down.'
+      PSPWRDWNSET2:
+        offset: '0x88'
+        access: RW
+        reset: '0xFFFFFFFF'
+        desc: Peripheral Power-Down Set Register 2
+        fields:
+        - name: PSPWRDWNSET
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral power-down set for PS[23:16]. 0: Active/No effect, 1:
+            Inactive/Set power-down.'
+      PSPWRDWNSET3:
+        offset: '0x8C'
+        access: RW
+        reset: '0xFFFFFFFF'
+        desc: Peripheral Power-Down Set Register 3
+        fields:
+        - name: PSPWRDWNSET
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral power-down set for PS[31:24]. 0: Active/No effect, 1:
+            Inactive/Set power-down.'
+      PSPWRDWNCLR0:
+        offset: '0xA0'
+        access: RW
+        reset: '0xFFFFFFFF'
+        desc: Peripheral Power-Down Clear Register 0
+        fields:
+        - name: PSPWRDWNCLR
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral power-down clear for PS[7:0]. 0: Active/No effect, 1:
+            Inactive/Clear power-down.'
+      PSPWRDWNCLR1:
+        offset: '0xA4'
+        access: RW
+        reset: '0xFFFFFFFF'
+        desc: Peripheral Power-Down Clear Register 1
+        fields:
+        - name: PSPWRDWNCLR
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral power-down clear for PS[15:8]. 0: Active/No effect, 1:
+            Inactive/Clear power-down.'
+      PSPWRDWNCLR2:
+        offset: '0xA8'
+        access: RW
+        reset: '0xFFFFFFFF'
+        desc: Peripheral Power-Down Clear Register 2
+        fields:
+        - name: PSPWRDWNCLR
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral power-down clear for PS[23:16]. 0: Active/No effect, 1:
+            Inactive/Clear power-down.'
+      PSPWRDWNCLR3:
+        offset: '0xAC'
+        access: RW
+        reset: '0xFFFFFFFF'
+        desc: Peripheral Power-Down Clear Register 3
+        fields:
+        - name: PSPWRDWNCLR
+          msb: 31
+          lsb: 0
+          access: RW
+          desc: 'Peripheral power-down clear for PS[31:24]. 0: Active/No effect, 1:
+            Inactive/Clear power-down.'
+
+
+Here is bus.yaml (clock topology - sources, domains, and SYSTEM clock numbering):
+
+sources:
+- name: OSCIN
+  type: external_xtal
+  freq_hz: 16000000
+- name: PLL1
+  type: pll
+  parent: OSCIN
+  x-ext:
+    description: Main PLL with frequency modulation capability
+    pll_registers:
+      control: PLLCTL1
+      control2: PLLCTL2
+      control3: PLLCTL3
+    multiplier_field:
+      register: PLLCTL1
+      field: NF
+      bits:
+      - 8
+      - 15
+      description: Feedback multiplier
+      range:
+      - 1
+      - 255
+      formula: PLLCLK = OSCIN * NF / (NR * R)
+    ref_divider_field:
+      register: PLLCTL1
+      field: NR
+      bits:
+      - 0
+      - 5
+      description: Reference divider
+      range:
+      - 0
+      - 63
+      note: Actual divider = NR + 1
+    post_divider_field:
+      register: PLLCTL2
+      field: R
+      bits:
+      - 0
+      - 3
+      description: Post divider for spreading
+      range:
+      - 0
+      - 15
+      encoding: power_of_2
+      note: Actual divider = 2^R
+    output_divider_field:
+      register: PLLCTL2
+      field: ODPLL
+      bits:
+      - 24
+      - 27
+      description: Output divider
+      range:
+      - 1
+      - 31
+      encoding: linear - 1
+      note: Actual divider = ODPLL (0 reserved)
+    default_config:
+      nr: 5
+      nf: 119
+      r: 0
+      odpll: 2
+      expected_output_hz: 160000000
+    rm46_bringup_profile: pll1_hal_encoded
+    pll1_encoding:
+      pllmul_register_encoding: hal_encoded
+      pllmul_hal_literal: '0xA400'
+      pllmul_effective_nf: 120
+      hal_literal_hclk_hz: 220000000
+      refclkdiv_register_value: 5
+      plldiv_register_value: 1
+      odpll_register_value: 1
+      trm_dynamic_defaults:
+        use_register_field_programming: true
+        requires_disable_before_reprogram: true
+        requires_csvstat_valid_poll: true
+        requires_glbstat_slip_clear: true
+        csvstat_required_mask: '0x00000042'
+      notes:
+      - PLLMUL can be encoded using HAL literal 0xA400 in proven working path.
+      - Frequency decode must convert encoded literal to effective NF before math
+        unless a HAL literal HCLK override is provided.
+    source_ids:
+      ghvsrc_pll1_source_id: 1
+      rclksrc_sys_source_id: 9
+      vclkasrc_sys_source_id: 9
+- name: PLL2
+  type: pll
+  parent: OSCIN
+  x-ext:
+    description: Secondary PLL without frequency modulation
+    note: Similar structure to PLL1 but uses separate control registers
+domains:
+- name: GCLK
+  parent: PLL1
+  x-ext:
+    description: CPU clock - typically no divider, direct from PLL1
+    configurable: false
+- name: HCLK
+  parent: PLL1
+  x-ext:
+    description: High-speed bus clock - typically no divider, direct from PLL1
+    configurable: false
+- name: VCLK
+  parent: HCLK
+  divider: 2
+  x-ext:
+    description: Primary peripheral clock
+    divider_register: CLKCNTL
+    divider_field: VCLKR
+    divider_bits:
+    - 16
+    - 19
+    divider_encoding: linear
+    divider_formula: VCLK = HCLK / (divider + 1)
+    divider_range:
+    - 0
+    - 15
+    divider_note: Value 0 = divide by 1, value 1 = divide by 2, etc.
+    default_divider: 1
+- name: VCLK2
+  parent: HCLK
+  divider: 2
+  x-ext:
+    description: N2HET peripheral clock
+    divider_register: CLKCNTL
+    divider_field: VCLK2R
+    divider_bits:
+    - 20
+    - 23
+    divider_encoding: linear
+    divider_formula: VCLK2 = HCLK / (divider + 1)
+    divider_range:
+    - 0
+    - 15
+    default_divider: 1
+- name: VCLK3
+  parent: HCLK
+  divider: 2
+  x-ext:
+    description: EMAC/USB/EMIF peripheral clock
+    divider_register: VCLKACON1
+    divider_field: VCLK3R
+    divider_bits:
+    - 0
+    - 3
+    divider_encoding: linear
+    divider_formula: VCLK3 = HCLK / (divider + 1)
+    divider_range:
+    - 0
+    - 15
+    default_divider: 1
+- name: VCLK4
+  parent: HCLK
+  divider: 2
+  x-ext:
+    description: ePWM/eCAP/eQEP peripheral clock
+    divider_register: VCLKACON1
+    divider_field: VCLK4R
+    divider_bits:
+    - 8
+    - 11
+    divider_encoding: linear
+    divider_formula: VCLK4 = HCLK / (divider + 1)
+    divider_range:
+    - 0
+    - 15
+    default_divider: 1
+- name: RTICLK
+  parent: VCLK
+  x-ext:
+    description: RTI timer clock - derived from VCLK
+    divider_register: RTICLKSEL
+    divider_note: RTI can select from multiple sources, divider configuration in SYSTEM
+      module
+    configurable: true
+x-ext:
+  peripheral_clocks:
+    SYSTEM:
+      vclk_source: OSCIN
+      vclk_divider: HCLK/2
+      vclk_enable_register: CLKCNTL
+      vclk_enable_bit: 8
+      vclk_ratio_field: VCLKR
+      hclk_source: OSCIN
+      gclk_source: OSCIN
+      bringup_defaults:
+        ghvsrc_source_numbers:
+          OSCIN: 0
+          PLL1: 1
+          LF_LPO: 4
+          HF_LPO: 5
+          PLL2: 6
+        rclksrc_sys_vclk_source_id: 9
+        vclkasrc_sys_vclk_source_id: 9
+        hal_aligned_values:
+          CSDIS: '0x0000008C'
+          CDDIS: '0x00000020'
+          CSVSTAT_REQUIRED_MASK: '0x00000042'
+        pll_frequency_decode:
+          allow_hal_encoded_pllmul: true
+          hal_encoded_pllmul:
+            encoded_value: '0xA400'
+            effective_multiplier: 120
+          expected_effective_hclk_hz: 80000000
+          expected_effective_vclk_hz: 80000000
+      clock_domains:
+      - name: GCLK
+        domain_number: 0
+        default_source: OSCIN
+        description: CPU clock domain used by Cortex-R4F in lockstep
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 121
+          confidence: high
+      - name: HCLK
+        domain_number: 1
+        default_source: OSCIN
+        description: 'System module clock for high-speed modules: Flash, TCRAM, ESM,
+          DMA'
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 121
+          confidence: high
+      - name: VCLK
+        domain_number: 2
+        default_source: OSCIN
+        description: Peripheral bus clock, divided from HCLK, can be HCLK/1 to HCLK/16
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 121
+          confidence: high
+      - name: VCLK2
+        domain_number: 3
+        default_source: OSCIN
+        description: Clock for N2HET1, N2HET2, HTU1, HTU2, divided from HCLK
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 121
+          confidence: high
+      - name: VCLK3
+        domain_number: 8
+        default_source: OSCIN
+        description: Clock for EMAC, USB, EMIF slave interfaces
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 121
+          confidence: high
+      - name: VCLK4
+        domain_number: 9
+        default_source: OSCIN
+        description: Clock for ePWM, eCAP, eQEP modules
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 121
+          confidence: high
+      - name: VCLKA1
+        domain_number: 4
+        default_source: VCLK
+        description: Clock for CAN controllers DCAN1, DCAN2, DCAN3 for baud-rate generation
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 121
+          - 122
+          confidence: high
+      - name: VCLKA3
+        domain_number: 10
+        default_source: VCLK
+        description: 48MHz clock for USB host and device controller
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 122
+          confidence: high
+      - name: VCLKA4
+        domain_number: 11
+        default_source: VCLK
+        description: Clock for Ethernet controller EMAC when TX/RX clocks internally
+          generated
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 122
+          confidence: high
+      - name: RTICLK
+        domain_number: 6
+        default_source: VCLK
+        description: Timebase generation clock for Real-Time Interrupt module
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 122
+          confidence: high
+      clock_sources:
+      - name: OSCIN
+        source_number: 0
+        description: Main oscillator, primary clock for microcontroller, 5-20 MHz
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 120
+          confidence: high
+      - name: PLL1
+        source_number: 1
+        description: Main PLL output, capable of frequency modulation for EMI reduction
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 120
+          confidence: high
+      - name: EXTCLKIN1
+        source_number: 3
+        description: External clock input 1
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 120
+          confidence: high
+      - name: LF_LPO
+        source_number: 4
+        description: Low-frequency LPO, typically 80 KHz, used by RTI for periodic
+          interrupts
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 120
+          confidence: high
+      - name: HF_LPO
+        source_number: 5
+        description: High-frequency LPO, typically 10 MHz, used by clock monitor as
+          reference
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 120
+          confidence: high
+      - name: PLL2
+        source_number: 6
+        description: Second PLL output, non-modulating, independent asynchronous clock
+          source
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 120
+          confidence: high
+      - name: EXTCLKIN2
+        source_number: 7
+        description: External clock input 2
+        x-source:
+          pdf: 2_Architecture.pdf
+          pages:
+          - 120
+          confidence: high
+      x-source:
+        pdf: 2_Architecture.pdf
+        pages:
+        - 120
+        - 121
+        - 122
+        - 146
+        - 176
+        confidence: high
+    PLL:
+      oscillator_frequency_range: tc(OSC)
+      oscillator_squared_frequency_range: tc(OSC_Sqr)
+      oscillator_valid_delay_cycles: 1024
+      oscillator_valid_signal: CLKSR0V
+      hf_lpo_nominal_frequency_mhz: 9.6
+      hf_lpo_frequency_range_mhz: 5.5 - 19.5
+      hf_lpo_clock_source: 5
+      lf_lpo_nominal_frequency_khz: 85
+      lf_lpo_clock_source: 4
+      pll1_clock_source: 1
+      pll2_clock_source: 6
+      pll_lock_time_formula: "TLock = (512 \xC3\u2014 TOSCIN) + (1024 \xC3\u2014 NR\
+        \ \xC3\u2014 TOSCIN)"
+      pll_enable_delay_formula: "TEnable = 6 \xC3\u2014 TOSCIN"
+      pll_disable_delay_formula: "TEnable = 150 \xC3\u2014 TOSCIN"
+      pll_odpll_gate_time_formula: "TODPLL = 3 \xC3\u2014 TOSCIN"
+      clock_detect_min_frequency_formula: OSCIN > HF_LPOmin / 4 = 5.5MHz / 4 = 1.375MHz
+      clock_detect_max_frequency_formula: "OSCIN < 4 \xC3\u2014 HF_LPOmax = 4 \xC3\
+        \u2014 19.5MHz = 78MHz"
+      x-source:
+        pdf: 10_Oscillator_and_PLL.pdf
+        pages:
+        - 4
+        - 5
+        - 6
+        - 7
+        - 8
+        - 12
+        - 13
+        - 14
+        - 18
+        confidence: high
+
+
+Here is bringup_contract.yaml (runtime invariants - authoritative when provided):
+
+{
+  "ir_schema_version": "1.0.0",
+  "target_board": "LAUNCHXL2-TMS57012-RM46",
+  "serial": {
+    "primary_path": "LIN_SCI_MODE",
+    "primary_tx_only": "LIN",
+    "baud_default": 9600,
+    "required_pins": [
+      {
+        "pin": 38,
+        "register": "PINMMR7",
+        "bit": 17,
+        "af": 1
+      },
+      {
+        "pin": 39,
+        "register": "PINMMR8",
+        "bit": 1,
+        "af": 1
+      }
+    ]
+  },
+  "lin": {
+    "required_registers": {
+      "SCIPIO0": {
+        "required_value": "0x00000006"
+      }
+    }
+  },
+  "iomm": {
+    "unlock_sequence": [
+      "0x83E70B13",
+      "0x95A4F1E0"
+    ],
+    "require_unlock_for_pin_config": true,
+    "require_lock_after_pin_config": true,
+    "configurepin_self_managed_locking": true
+  },
+  "pll": {
+    "init_profile": "rm46_hal_aligned",
+    "supported_profiles": [
+      "rm46_hal_aligned",
+      "rm46_trm_dynamic",
+      "rm46_trm_dynamic_with_hal_fallback"
+    ],
+    "required_sequence": [
+      "disable/set source bits",
+      "write PLLCTL1/PLLCTL2(/PLLCTL3 if used)",
+      "poll CSVSTAT",
+      "write CLKCNTL",
+      "write GHVSRC",
+      "write RCLKSRC",
+      "write VCLKASRC",
+      "set PENA"
+    ],
+    "frequency_decode": {
+      "allow_hal_encoded_pllmul": true,
+      "hal_literal_hclk_hz": 220000000,
+      "required_behavior": {
+        "supports_hal_encoded_pllmul_literal": true,
+        "uses_hal_literal_hclk_override": true,
+        "uses_uint64_intermediate_math": true,
+        "derives_active_source_from_ghvsrc": true,
+        "uses_trm_field_decoding": false,
+        "uses_trm_enable_disable_sequence": false
+      },
+      "required_tokens": [
+        "0xA400",
+        "uint64_t"
+      ]
+    }
+  },
+  "flash": {
+    "required_registers": {
+      "FLASH_FRDCNTL_REG": {
+        "address": "0xFFF87000",
+        "required_write_tokens": [
+          "0x00000311"
+        ]
+      },
+      "FLASH_FBFALLBACK_REG": {
+        "address": "0xFFF87040",
+        "required_write_tokens": [
+          "0x00000000"
+        ]
+      },
+      "FLASH_FSMWRENA_REG": {
+        "address": "0xFFF87288",
+        "required_write_tokens": [
+          "0x00000005",
+          "0x0000000A"
+        ]
+      },
+      "FLASH_EEPROMCONFIG_REG": {
+        "address": "0xFFF872B8",
+        "required_write_tokens": [
+          "0x00030002"
+        ]
+      }
+    }
+  },
+  "startup": {
+    "required_order": [
+      "PCR_Init",
+      "PCR_EnableAllPeripherals",
+      "flash_waitstates",
+      "PLL_Init"
+    ]
+  },
+  "app_intent": {
+    "api_reuse": {
+      "mode": "warn_only",
+      "docs_target": "both",
+      "pin_init": {
+        "prefer_enable_pins": true,
+        "call_enable_pins_before_init": true,
+        "allow_iomm_fallback": true
+      },
+      "tx_string": {
+        "prefer_capability": "tx_buffer",
+        "fallback_capability": "tx_byte",
+        "forbid_manual_byte_loop_when_tx_buffer_exists": true,
+        "forbid_busy_wait_loops_in_step_path": true
+      }
+    },
+    "led_aliases": {
+      "LED_A": {
+        "source": "LED2",
+        "active_low_override": null
+      },
+      "LED_B": {
+        "source": "LED3",
+        "active_low_override": null
+      },
+      "default_roles": {
+        "LED_A": "command",
+        "LED_B": "heartbeat"
+      }
+    },
+    "timing": {
+      "prefer_hardware_timer": true,
+      "preferred_module": "RTI",
+      "fallback": "software_divider",
+      "heartbeat_hz": 1.0,
+      "blink_on_ms": 150,
+      "blink_off_ms": 150
+    },
+    "init_gate": {
+      "mode": "auto_fix_then_fail",
+      "enforce_pre_use_init": true
+    }
+  }
+}
+
+Now, output FACTS MIRROR, then system.h followed by system.c, obeying the global HARD OUTPUT CONTRACT.
+
+
+    

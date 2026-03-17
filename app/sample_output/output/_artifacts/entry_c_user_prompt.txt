@@ -1,0 +1,102 @@
+
+    You are generating the C reset handler for a TI Hercules RM46-like MCU.
+
+Goal:
+- Generate a C file entry.c that defines Reset_Handler_C().
+- Reset_Handler_C must:
+  1. Initialize the .data section in RAM by copying from flash.
+  2. Zero the .bss section.
+  3. Call system_init() to bring up clocks/peripherals.
+  4. Call main().
+  5. End in an infinite loop if main() returns.
+
+You are targeting the TI/CCS ARM toolchain, which defaults to ISO C90/C89. Therefore:
+
+- All code MUST be ISO C90 compatible:
+  - Do NOT use `for (int i = 0; …)`; instead declare loop counters before the loop:
+      int i;
+      for (i = 0; i < n; ++i) { ... }
+  - Do NOT mix declarations and statements; declare all variables at the top of a block.
+  - Do NOT use C99-only features.
+- Ensure entry.c ends with a trailing newline character.
+
+Behavioral reference (do NOT copy verbatim, but match functionality):
+
+  // Higher level Reset Handler
+  // This exists to avoid any more assembly code than needed.
+
+  #include "util.h"
+  #include <stddef.h>
+  #include <stdint.h>
+
+  // Linker defined addresses
+  extern uint32_t start_of_data;
+  extern uint32_t end_of_data;
+
+  extern uint32_t start_of_data_in_flash;
+
+  extern uint32_t end_of_stack;
+
+  extern uint32_t start_of_bss;
+  extern uint32_t end_of_bss;
+
+  // User defined entrypoint
+  extern int main();
+
+  void Reset_Handler_C() {
+      size_t data_size = (size_t)(&end_of_data - &start_of_data);
+      memcpy(&start_of_data, &start_of_data_in_flash, data_size);
+
+      size_t bss_size = (size_t)(&end_of_bss - &start_of_bss);
+      memset(&start_of_bss, 0, bss_size);
+
+      main();
+
+      while (1) {
+          // Ensure we don't go into UB
+      }
+  }
+
+Requirements for your generated entry.c:
+----------------------------------------
+- Include headers:
+  - <stdint.h> and <stddef.h> for integer and size types.
+  - <string.h> OR a project-specific "util.h" that provides memcpy and memset.
+- Declare these linker symbols as extern (they are defined in the linker script):
+  - extern uint32_t start_of_data;
+  - extern uint32_t end_of_data;
+  - extern uint32_t start_of_data_in_flash;
+  - extern uint32_t start_of_bss;
+  - extern uint32_t end_of_bss;
+  - You may also declare extern uint32_t end_of_stack; if desired (for debugging), but you do not need to use it.
+
+- Declare:
+  - extern void system_init(void);
+  - extern int main(void);
+
+- Implement void Reset_Handler_C(void) that:
+  1. Computes the size (in bytes) of .data using start_of_data and end_of_data.
+     - Required form:
+       `data_size = (size_t)(&end_of_data - &start_of_data) * sizeof(uint32_t);`
+  2. Calls memcpy to copy initialized data from flash:
+      - Destination: &start_of_data
+      - Source:      &start_of_data_in_flash
+      - Size:        data_size
+     - Do NOT multiply by `sizeof(uint32_t)` again in memcpy.
+  3. Computes the size of .bss using start_of_bss and end_of_bss.
+     - Required form:
+       `bss_size = (size_t)(&end_of_bss - &start_of_bss) * sizeof(uint32_t);`
+  4. Calls memset to zero the entire .bss region.
+     - Use `memset(&start_of_bss, 0, bss_size);`
+     - Do NOT multiply by `sizeof(uint32_t)` again in memset.
+  5. Calls system_init();
+  6. Calls main();
+  7. If main() returns, enters an infinite loop (for (;;){}) to avoid undefined behavior.
+
+- All local variables must be declared at the top of Reset_Handler_C before any statements.
+
+Output:
+- A single FILE block for source/entry.c, nothing else (besides the FACTS MIRROR required by the system prompt).
+
+
+    

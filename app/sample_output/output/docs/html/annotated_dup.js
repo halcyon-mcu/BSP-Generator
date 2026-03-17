@@ -1,0 +1,28 @@
+var annotated_dup =
+[
+    [ "app_state_t", "structapp__state__t.html", "structapp__state__t" ],
+    [ "clock_divider_config_t", "structclock__divider__config__t.html", "structclock__divider__config__t" ],
+    [ "gio_interrupt_config_t", "structgio__interrupt__config__t.html", "structgio__interrupt__config__t" ],
+    [ "gio_pin_config_t", "structgio__pin__config__t.html", "structgio__pin__config__t" ],
+    [ "GIO_REG_MAP_t", "struct_g_i_o___r_e_g___m_a_p__t.html", "struct_g_i_o___r_e_g___m_a_p__t" ],
+    [ "iomm_pin_config_t", "structiomm__pin__config__t.html", "structiomm__pin__config__t" ],
+    [ "iomm_pin_mapping_t", "structiomm__pin__mapping__t.html", "structiomm__pin__mapping__t" ],
+    [ "IOMM_PinMapping_t", "struct_i_o_m_m___pin_mapping__t.html", "struct_i_o_m_m___pin_mapping__t" ],
+    [ "IOMM_REG_MAP_t", "struct_i_o_m_m___r_e_g___m_a_p__t.html", "struct_i_o_m_m___r_e_g___m_a_p__t" ],
+    [ "lin_config_t", "structlin__config__t.html", "structlin__config__t" ],
+    [ "lin_dma_config_t", "structlin__dma__config__t.html", "structlin__dma__config__t" ],
+    [ "lin_frame_t", "structlin__frame__t.html", "structlin__frame__t" ],
+    [ "LIN_REG_MAP_t", "struct_l_i_n___r_e_g___m_a_p__t.html", "struct_l_i_n___r_e_g___m_a_p__t" ],
+    [ "PCR_REG_MAP_t", "struct_p_c_r___r_e_g___m_a_p__t.html", "struct_p_c_r___r_e_g___m_a_p__t" ],
+    [ "PLL2_REG_MAP_t", "struct_p_l_l2___r_e_g___m_a_p__t.html", "struct_p_l_l2___r_e_g___m_a_p__t" ],
+    [ "pll_config_t", "structpll__config__t.html", "structpll__config__t" ],
+    [ "pll_lock_status_t", "structpll__lock__status__t.html", "structpll__lock__status__t" ],
+    [ "PLL_REG_MAP_t", "struct_p_l_l___r_e_g___m_a_p__t.html", "struct_p_l_l___r_e_g___m_a_p__t" ],
+    [ "sci_config_t", "structsci__config__t.html", "structsci__config__t" ],
+    [ "sci_dma_config_t", "structsci__dma__config__t.html", "structsci__dma__config__t" ],
+    [ "sci_pin_config_t", "structsci__pin__config__t.html", "structsci__pin__config__t" ],
+    [ "SCI_REG_MAP_t", "struct_s_c_i___r_e_g___m_a_p__t.html", "struct_s_c_i___r_e_g___m_a_p__t" ],
+    [ "SYSTEM2_REG_MAP_t", "struct_s_y_s_t_e_m2___r_e_g___m_a_p__t.html", "struct_s_y_s_t_e_m2___r_e_g___m_a_p__t" ],
+    [ "SYSTEM_REG_MAP_t", "struct_s_y_s_t_e_m___r_e_g___m_a_p__t.html", "struct_s_y_s_t_e_m___r_e_g___m_a_p__t" ],
+    [ "VIM_REG_MAP_t", "struct_v_i_m___r_e_g___m_a_p__t.html", "struct_v_i_m___r_e_g___m_a_p__t" ]
+];

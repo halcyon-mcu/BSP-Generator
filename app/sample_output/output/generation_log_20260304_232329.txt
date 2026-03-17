@@ -1,0 +1,132 @@
+===================================================================
+BSP Generator - Generation Log
+Started: 2026-03-04 23:23:29
+===================================================================
+
+[23:23:31] [INFO] [info] Loaded token history from .token_history.json
+[23:23:46] [INFO] [info] Manifest will include 8 modules (5 core + 3 peripheral)
+[23:23:46] [INFO] [info] Will implement 6 drivers (PLL/IOMM/PCR + 3 peripherals)
+[23:23:50] [INFO] 
+[info] Starting Pass 1: Architecture Discovery...
+-------------------------------------------------------------------
+PASS 1: DISCOVERY
+Started: 23:23:50
+-------------------------------------------------------------------
+
+[23:25:39] [COMPLETE] Pass 1: Discovery finished in 109.7s
+
+[23:25:40] [INFO] 
+[info] Pass 1 Complete.
+[23:25:40] [INFO] 
+[info] Starting Pass 2: Implementation for 6 peripheral drivers...
+-------------------------------------------------------------------
+PASS 2: IMPLEMENTATION
+Started: 23:25:40
+-------------------------------------------------------------------
+
+[23:27:22] [COMPLETE] Pass 2: Implementation finished in 101.3s
+
+[23:27:23] [INFO] 
+[info] Pass 2 Complete.
+[23:27:23] [INFO] [debug] Added task: start_asm
+[23:27:23] [INFO] [debug] Added task: entry_c
+[23:27:23] [INFO] [debug] Added task: system_init
+[23:27:23] [INFO] [debug] Added task: linker
+[23:27:23] [INFO] [debug] Added task: vim_driver
+-------------------------------------------------------------------
+PASS 3: PLATFORM
+Started: 23:27:23
+-------------------------------------------------------------------
+[23:27:23] [INFO] [info] Invoking SONNET_4_5 for system_init …
+[23:27:23] [INFO] [info] Invoking SONNET_4_5 for start_asm …
+[23:27:23] [INFO] [info] Invoking SONNET_4_5 for linker …
+[23:27:23] [INFO] [info] Invoking SONNET_4_5 for entry_c …
+[23:27:23] [INFO] [info] Invoking SONNET_4_5 for vim_driver …
+[23:27:31] [INFO] [ok] linker: C:\Users\dovyd\Documents\GitHub\BSP-Generator\app\output_20260304_232329\linker.cmd
+[23:27:31] [INFO] [ok] entry_c: C:\Users\dovyd\Documents\GitHub\BSP-Generator\app\output_20260304_232329\source\entry.c
+[23:27:36] [INFO] [ok] start_asm: C:\Users\dovyd\Documents\GitHub\BSP-Generator\app\output_20260304_232329\source\start.s
+[23:27:58] [INFO] [ok] system_init: C:\Users\dovyd\Documents\GitHub\BSP-Generator\app\output_20260304_232329\include\system.h
+[23:27:58] [INFO] [ok] system_init: C:\Users\dovyd\Documents\GitHub\BSP-Generator\app\output_20260304_232329\source\system.c
+[23:28:06] [INFO] [ok] vim_driver: C:\Users\dovyd\Documents\GitHub\BSP-Generator\app\output_20260304_232329\include\vim_driver.h
+[23:28:06] [INFO] [ok] vim_driver: C:\Users\dovyd\Documents\GitHub\BSP-Generator\app\output_20260304_232329\source\vim_driver.c
+
+[23:28:06] [COMPLETE] Pass 3: Platform finished in 43.1s
+
+-------------------------------------------------------------------
+PASS 4: VALIDATION
+Started: 23:28:07
+-------------------------------------------------------------------
+[23:28:08] [INFO] [build-gate] Synced 29 files to CCS project
+[23:28:08] [INFO] [build-gate] Reconciled 2 generated source/object makefile references
+[23:28:08] [INFO] [build-gate] Round 1/5: compile
+[23:28:14] [INFO] [build-gate] Round 1 passed (errors=0, warnings=20)
+[23:28:14] [INFO] 
+[info] Generating final validation report...
+[23:28:14] [INFO] [ok] Validation report: validation_report.json
+[23:28:14] [INFO] [ok] Validation report: validation_report.md
+
+[23:28:14] [COMPLETE] Pass 4: Validation finished in 7.3s
+
+[23:28:15] [INFO] [info] Saved token history to .token_history.json
+-------------------------------------------------------------------
+PASS 5: POST-GEN INTENT
+Started: 23:28:15
+-------------------------------------------------------------------
+[23:28:15] [INFO] [info] You may reference these board components:
+[23:28:15] [INFO]   - LED1: ERROR LED, active LOW
+[23:28:15] [INFO]   - LED2: USER LED (GIOB[2]), active LOW
+[23:28:15] [INFO]   - LED3: USER LED (GIOB[1]), active LOW
+[23:28:15] [INFO]   - LED_A: User LED alias LED A mapped to LED2
+[23:28:15] [INFO]   - LED_B: User LED alias LED B mapped to LED3
+[23:28:15] [INFO]   - LIN1_SCI_PATH: Preferred terminal output path for RM46 bring-up.
+[23:28:15] [INFO]   - S3: USER button, active LOW (MIBSPI3NCS_0 / AD2EVT / GIOB_2 / EQEP1I)
+[23:28:15] [INFO]   - S4: USER button, active LOW (N2HET1_15 / MIBSPI1NCS_4 / ECAP1)
+[23:28:52] [INFO] [ok] Intent references validated: LED1, LED2, LED3, LED_A, LED_B, LIN1_SCI_PATH, S3, S4
+[23:28:52] [INFO] [ok] Post-generation firmware prompt written: output_20260304_232329\_artifacts\post_gen_firmware_prompt_20260304_232852.txt
+
+[23:28:52] [COMPLETE] Pass 5: Post-Gen Intent finished in 37.0s
+
+-------------------------------------------------------------------
+PASS 6: POST-GEN FIRMWARE
+Started: 23:28:53
+-------------------------------------------------------------------
+[23:28:53] [INFO] [info] Invoking SONNET_4_5 for post_gen_firmware …
+[23:29:22] [INFO] [ok] post_gen_firmware: C:\Users\dovyd\Documents\GitHub\BSP-Generator\app\output_20260304_232329\include\app_intent.h
+[23:29:22] [INFO] [ok] post_gen_firmware: C:\Users\dovyd\Documents\GitHub\BSP-Generator\app\output_20260304_232329\source\app_intent.c
+
+[23:29:22] [COMPLETE] Pass 6: Post-Gen Firmware finished in 29.1s
+
+-------------------------------------------------------------------
+PASS 7: POST-GEN COMPILE
+Started: 23:29:23
+-------------------------------------------------------------------
+[23:29:24] [INFO] [build-gate] Synced 31 files to CCS project
+[23:29:24] [INFO] [build-gate] Reconciled 2 generated source/object makefile references
+[23:29:24] [INFO] [build-gate] Round 1/5: compile
+[23:29:30] [INFO] [build-gate] Round 1 passed (errors=0, warnings=23)
+
+[23:29:30] [COMPLETE] Pass 7: Post-Gen Compile finished in 6.7s
+
+-------------------------------------------------------------------
+PASS 8: DOCS
+Started: 23:29:31
+-------------------------------------------------------------------
+[23:29:31] [INFO] 
+[info] Creating documentation with Doxygen
+[23:29:31] [INFO] [info] Doxyfile created at output_20260304_232329\docs\Doxyfile
+[23:29:33] [INFO] [info] Doxygen quality summary: passes=True, html=178, source_pages=29, search_files=123
+[23:29:33] [INFO] [ok] Documentation generated: 178 HTML files in output_20260304_232329\docs\html
+[23:29:33] [INFO] [info] Open documentation at: file:///C:\Users\dovyd\Documents\GitHub\BSP-Generator\app\output_20260304_232329\docs\html\index.html
+[23:29:33] [INFO] [info] Doxygen quality report: output_20260304_232329\docs\doxygen_quality_report.json
+
+[23:29:33] [COMPLETE] Pass 8: Docs finished in 2.0s
+
+[23:29:34] [INFO] Tokens: 549,054 | Cost: $3.25 | Model: SONNET_4_5
+
+===================================================================
+GENERATION COMPLETE
+Finished: 2026-03-04 23:29:35
+Total Duration: 6m 5s
+Total Tokens: 549,054
+Total Cost: $3.25
+===================================================================

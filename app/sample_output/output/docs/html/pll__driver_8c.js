@@ -1,0 +1,26 @@
+var pll__driver_8c =
+[
+    [ "HF_LPO_HZ", "pll__driver_8c.html#adf056194284840c33ae58abd5c03471c", null ],
+    [ "LF_LPO_HZ", "pll__driver_8c.html#af72111aff206cbf7d4263bda939039ce", null ],
+    [ "OSCIN_HZ", "pll__driver_8c.html#ad11c9f724bb007908ccf04b9eb8db55a", null ],
+    [ "PLL_LOCK_TIMEOUT", "pll__driver_8c.html#a173e9fa152541d042e6054e668c37af8", null ],
+    [ "calculate_hclk_frequency", "pll__driver_8c.html#a65757f3e62450d26db78815b12c19596", null ],
+    [ "get_active_ghv_source", "pll__driver_8c.html#ae07b7039627b731e06f407ea3bc15369", null ],
+    [ "PLL_ClearClockSlipStatus", "pll__driver_8c.html#a91ab518c36efa1ee96882bb69ebb4994", null ],
+    [ "PLL_ConfigurePLL", "pll__driver_8c.html#a9b8a119545cf0747e93cbefa343b70ab", null ],
+    [ "PLL_DisableClock", "pll__driver_8c.html#a39313442581b18c442fbadb870541fd0", null ],
+    [ "PLL_DisablePLL", "pll__driver_8c.html#ae0ce5f5f82c9764c4fe8bd681b85964b", null ],
+    [ "PLL_EnableClock", "pll__driver_8c.html#aac34783647e5c6088a2473fe16749032", null ],
+    [ "PLL_EnablePLL", "pll__driver_8c.html#a0aa6369a34ad837adbd04146479eaaf5", null ],
+    [ "PLL_GetFrequency", "pll__driver_8c.html#a8a61ffdd90edcbd8320c84626f809023", null ],
+    [ "PLL_GetLockStatus", "pll__driver_8c.html#af870c7e56bba48d17193ed69bf81d66e", null ],
+    [ "PLL_GetOscillatorFrequency", "pll__driver_8c.html#ae806dd879640eb659886ddb918bc0719", null ],
+    [ "PLL_Init", "pll__driver_8c.html#a53f1e60b4a581dabc1a6fd9447a3eb15", null ],
+    [ "PLL_SelectClockSource", "pll__driver_8c.html#a827fe0e0398f0383f5eaf41dbfbcf1fd", null ],
+    [ "PLL_SetClockDivider", "pll__driver_8c.html#a4c0d7ebb7158e8efd8d9b9110746f597", null ],
+    [ "PLL_WaitForLock", "pll__driver_8c.html#a7b438cd17978b5e1d8e89a43644323ef", null ],
+    [ "wait_for_pll1_lock", "pll__driver_8c.html#a61708b3fc05a7a7ad7cd57cf162ffea5", null ],
+    [ "wait_for_pll2_lock", "pll__driver_8c.html#a8dd92e3715cf32b8b7ce0c8ecbb11014", null ],
+    [ "SYSREG", "pll__driver_8c.html#a8f8c76a869ee7710b6d5426bca54db20", null ],
+    [ "SYSREG2", "pll__driver_8c.html#ae785157afe85b9f4e5eb7c5e549772d8", null ]
+];

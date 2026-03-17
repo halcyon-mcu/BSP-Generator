@@ -1,0 +1,3 @@
+===== FACTS MIRROR =====
+; No numeric facts required for this minimal startup assembly
+===== END FACTS MIRROR =====
