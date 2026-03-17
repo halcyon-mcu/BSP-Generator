@@ -1,73 +1,48 @@
+# Environment & tooling
 .venv
 .ruff_cache
-
 .env*
 !.env.example
+__pycache__
+.pytest_cache
 
-# Can ignore this to avoid commit clutter.
-# Builds should be mostly reproducible anyway.
+# Dependency lock (reproducible builds)
 uv.lock
 
-__pycache__
-
-
-# Ignore all output folders with timestamp pattern
+# Generated outputs
 app/output_*/
 output_*
 
-# Generated files in specific directories
+# Generated/intermediate directories
 app/_artifacts/
 app/board/
 app/drivers/
-app/examples/
 app/yaml_out/
+yaml_out/
+app/main_output
+
+# Reference project (large, not source)
 app/Windows_SCI_Working/
+app/examples/
 
-# Claude Code artifacts
-.claude/
+# Runtime artifacts
+.token_history.json*
+app/.token_history.json*
+*.log
+nul
 
-# Documentation files (work in progress)
-app/CLAUDE_DISCOVERY.md
-app/EXTRACTION_COMPARISON.md
-app/EXTRACTION_METHOD.md
-app/EXTRACTION_RELIABILITY_IMPROVEMENTS.md
-app/IMPROVEMENTS.md
-app/IMPROVEMENTS_V2.md
-app/IMPROVEMENTS_V3.md
-app/PDF_EXTRACTION_README.md
-app/QUICKSTART.md
-app/REGISTER_SCANNER.md
-app/USAGE.md
+# Documentation WIP (in md_files/)
+app/md_files/
 
-# Temporary analysis and intermediate documentation
-app/DATA_LOSS_ANALYSIS.md
-app/DATA_LOSS_FIXED.md
-app/EXTRACTION_ACCURACY_ANALYSIS.md
-app/EXTRACTION_ACCURACY_REPORT.md
-app/EXTRACTION_COMPLETE.md
-app/EXTRACTION_FORMAT_ANALYSIS.md
-app/EXTRACTION_GAPS_ANALYSIS.md
-app/EXTRACTION_QUICKSTART.md
-app/EXTRACTION_SCHEMA_FIX.md
-app/FINAL_TRANSFORMATION_SUMMARY.md
-app/INIT_SEQUENCES_FIXED.md
-app/IRQ_STRUCTURE_IMPROVED.md
-app/MISSING_REGISTERS_AND_SCHEMATIC_PLAN.md
-app/PRE_FLIGHT_CHECKLIST.md
-app/READY_FOR_OVERNIGHT_RUN.md
-app/SCHEMA_STRUCTURE_ANALYSIS.md
-app/SCHEMATIC_INTEGRATION_SUMMARY.md
-app/TRANSFORMATION_COMPARISON.md
-app/TRANSFORMATION_SUCCESS.md
-app/UNKNOWN_VALUES_ANNOTATED.md
-app/VALIDATION_REPORT.md
-
-# Backup directories (keep only essential)
+# Backup directories
 app/yaml_in/backup_*/
 app/yaml_in_transformed_backup/
 
-# Windows artifacts and intermediate directories
+# Test output
+test_validation_output/
+
+# Claude Code
+.claude/
+
+# Windows artifacts
 nul
-app/md_files/
-yaml_out/
-app/main_output
