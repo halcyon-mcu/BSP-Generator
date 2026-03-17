@@ -1,1 +1,0 @@
-"""BSP Generator application package."""
