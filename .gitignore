@@ -1,8 +1,10 @@
 # Ignore everything
 *
 
-# Except the Doxygen documentation and this file
+# Except the Doxygen documentation, sample output, and this file
 !docs/
 !docs/**
+!sample_output/
+!sample_output/**
 !.gitignore
 !README.md

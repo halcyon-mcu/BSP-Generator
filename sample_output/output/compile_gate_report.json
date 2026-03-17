@@ -1,0 +1,159 @@
+{
+  "mode": "strict",
+  "enabled": true,
+  "configuration": "Debug",
+  "external_workspace_path": "C:/Users/dovyd/workspace_v10",
+  "project_name": "Blinky2",
+  "max_fix_rounds": 4,
+  "allow_targeted_llm_rewrite": true,
+  "llm_rewrite": {
+    "enabled": true,
+    "scope": "top_files",
+    "top_k_files": 2,
+    "apply_policy": "diff_only",
+    "model": "inherit",
+    "max_tokens": 6000,
+    "max_attempts": 2,
+    "include_contract_context": true
+  },
+  "clean_stale_project_files": true,
+  "clean_build": true,
+  "passes": true,
+  "status": "pass",
+  "rounds": [
+    {
+      "attempt": 0,
+      "return_code": 0,
+      "diagnostics": {
+        "total": 23,
+        "errors": 0,
+        "warnings": 23,
+        "by_file": {
+          "<linker>": 5,
+          "gio_driver.c": 4,
+          "iomm_driver.c": 2,
+          "lin_driver.c": 4,
+          "main.c": 2,
+          "sci_driver.c": 4,
+          "system.c": 2
+        }
+      },
+      "fix_stage": "none",
+      "fix_actions": [],
+      "fix_files": [],
+      "llm_apply_decision": "not_applicable",
+      "llm_rejection_reason": "",
+      "log_file": "ccs_build_log_round0.txt",
+      "fatal_diagnostics": [],
+      "target_selection_reason": {
+        "ranked_error_files": [],
+        "top_diagnostic_file": ""
+      }
+    }
+  ],
+  "error_summary": {
+    "total": 23,
+    "errors": 0,
+    "warnings": 23,
+    "by_file": {
+      "<linker>": 5,
+      "gio_driver.c": 4,
+      "iomm_driver.c": 2,
+      "lin_driver.c": 4,
+      "main.c": 2,
+      "sci_driver.c": 4,
+      "system.c": 2
+    }
+  },
+  "synced_files": 31,
+  "removed_stale_files": 0,
+  "sync_fingerprint": {
+    "algorithm": "sha256",
+    "source_aggregate": "ec0ae82a2fee5fbb40c46fa02ede2b9d7345209d764c60231e0fadc2a88cf825",
+    "dest_aggregate": "ec0ae82a2fee5fbb40c46fa02ede2b9d7345209d764c60231e0fadc2a88cf825",
+    "matches": true,
+    "mismatch_files": [],
+    "file_count": 31
+  },
+  "sync_verified": true,
+  "compile_input_audit": {
+    "exact_match": true,
+    "reason": "",
+    "expected_c_stems": [
+      "app_intent",
+      "entry",
+      "gio_driver",
+      "iomm_driver",
+      "lin_driver",
+      "main",
+      "pcr_driver",
+      "pll_driver",
+      "sci_driver",
+      "system",
+      "vim_driver"
+    ],
+    "actual_c_stems": [
+      "app_intent",
+      "entry",
+      "gio_driver",
+      "iomm_driver",
+      "lin_driver",
+      "main",
+      "pcr_driver",
+      "pll_driver",
+      "sci_driver",
+      "system",
+      "vim_driver"
+    ],
+    "missing_generated": [],
+    "unexpected_non_generated": []
+  },
+  "generated_header_basenames": [
+    "app_intent",
+    "board_capabilities",
+    "gio_driver",
+    "iomm_driver",
+    "lin_driver",
+    "pcr_driver",
+    "pll_driver",
+    "reg_gio",
+    "reg_iomm",
+    "reg_lin",
+    "reg_pcr",
+    "reg_pll",
+    "reg_sci",
+    "reg_system",
+    "reg_vim",
+    "sci_driver",
+    "system",
+    "vim_driver"
+  ],
+  "llm_rewrite_attempted": false,
+  "llm_rewrite_applied": false,
+  "llm_rewrite_target_files": [],
+  "llm_rewrite_tokens": {
+    "input_tokens": 0,
+    "output_tokens": 0
+  },
+  "llm_rewrite_failure_reason": "",
+  "llm_rewrite_rounds": [],
+  "required": true,
+  "startup_contract_status": {
+    "status": "evaluated",
+    "passes": true,
+    "gate_mode": "warn",
+    "errors": [],
+    "warnings": []
+  },
+  "parity_guard_status": {
+    "status": "evaluated",
+    "passes": false,
+    "mode": "critical_only",
+    "summary": {},
+    "critical_mismatch_count": 0
+  },
+  "blocking_reasons": [],
+  "pruned_stale_make_refs": 0,
+  "reconciled_make_refs": 2,
+  "combined_log_file": "output_20260304_232329\\ccs_build_log.txt"
+}

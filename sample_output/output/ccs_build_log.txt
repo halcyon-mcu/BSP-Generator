@@ -1,0 +1,150 @@
+===== ROUND 0 =====
+[info] ccs_clean: C:\ti\ccs1040\ccs\utils\bin\gmake.exe -k clean -O
+DEL /F  "Blinky2.hex"  "Blinky2.out" 
+DEL /F "entry.obj" "gio_driver.obj" "iomm_driver.obj" "lin_driver.obj" "main.obj" "pcr_driver.obj" "pll_driver.obj" "rti_driver.obj" "sci_driver.obj" "start.obj" "system.obj" "vim_driver.obj" 
+DEL /F "entry.d" "gio_driver.d" "iomm_driver.d" "lin_driver.d" "main.d" "pcr_driver.d" "pll_driver.d" "rti_driver.d" "sci_driver.d" "system.d" "vim_driver.d" 
+DEL /F "start.d" 
+'Finished clean'
+' '
+Could Not Find C:\Users\dovyd\workspace_v10\Blinky2\Debug\entry.d
+Could Not Find C:\Users\dovyd\workspace_v10\Blinky2\Debug\start.d
+[info] ccs_build: C:\ti\ccs1040\ccs\utils\bin\gmake.exe -k -j 16 -B all -O
+'Building file: "../entry.c"'
+'Invoking: Arm Compiler'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="entry.d_raw"  "../entry.c"
+'Finished building: "../entry.c"'
+' '
+'Building file: "../app_intent.c"'
+'Invoking: Arm Compiler'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="app_intent.d_raw"  "../app_intent.c"
+'Finished building: "../app_intent.c"'
+' '
+'Building file: "../iomm_driver.c"'
+'Invoking: Arm Compiler'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="iomm_driver.d_raw"  "../iomm_driver.c"
+'Finished building: "../iomm_driver.c"'
+' '
+'Building file: "../gio_driver.c"'
+'Invoking: Arm Compiler'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="gio_driver.d_raw"  "../gio_driver.c"
+'Finished building: "../gio_driver.c"'
+' '
+'Building file: "../main.c"'
+'Invoking: Arm Compiler'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="main.d_raw"  "../main.c"
+'Finished building: "../main.c"'
+' '
+'Building file: "../lin_driver.c"'
+'Invoking: Arm Compiler'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="lin_driver.d_raw"  "../lin_driver.c"
+'Finished building: "../lin_driver.c"'
+' '
+'Building file: "../pcr_driver.c"'
+'Invoking: Arm Compiler'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="pcr_driver.d_raw"  "../pcr_driver.c"
+'Finished building: "../pcr_driver.c"'
+' '
+'Building file: "../pll_driver.c"'
+'Invoking: Arm Compiler'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="pll_driver.d_raw"  "../pll_driver.c"
+'Finished building: "../pll_driver.c"'
+' '
+'Building file: "../sci_driver.c"'
+'Invoking: Arm Compiler'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="sci_driver.d_raw"  "../sci_driver.c"
+'Finished building: "../sci_driver.c"'
+' '
+'Building file: "../system.c"'
+'Invoking: Arm Compiler'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="system.d_raw"  "../system.c"
+'Finished building: "../system.c"'
+' '
+'Building file: "../vim_driver.c"'
+'Invoking: Arm Compiler'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="vim_driver.d_raw"  "../vim_driver.c"
+'Finished building: "../vim_driver.c"'
+' '
+'Building file: "../app_intent.c"'
+'Building file: "../entry.c"'
+'Invoking: Arm Compiler'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="app_intent.d_raw"  "../app_intent.c"
+'Invoking: Arm Compiler'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="entry.d_raw"  "../entry.c"
+'Building file: "../gio_driver.c"'
+'Building file: "../iomm_driver.c"'
+'Invoking: Arm Compiler'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="gio_driver.d_raw"  "../gio_driver.c"
+'Invoking: Arm Compiler'
+'Building file: "../lin_driver.c"'
+'Finished building: "../app_intent.c"'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="iomm_driver.d_raw"  "../iomm_driver.c"
+'Finished building: "../entry.c"'
+'Invoking: Arm Compiler'
+' '
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="lin_driver.d_raw"  "../lin_driver.c"
+' '
+'Building file: "../main.c"'
+'Building file: "../pcr_driver.c"'
+'Invoking: Arm Compiler'
+'Finished building: "../iomm_driver.c"'
+'Invoking: Arm Compiler'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="main.d_raw"  "../main.c"
+'Finished building: "../gio_driver.c"'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="pcr_driver.d_raw"  "../pcr_driver.c"
+' '
+' '
+'Building file: "../pll_driver.c"'
+'Building file: "../sci_driver.c"'
+'Invoking: Arm Compiler'
+'Finished building: "../lin_driver.c"'
+'Finished building: "../main.c"'
+'Invoking: Arm Compiler'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="pll_driver.d_raw"  "../pll_driver.c"
+'Finished building: "../pcr_driver.c"'
+' '
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="sci_driver.d_raw"  "../sci_driver.c"
+' '
+' '
+'Building file: "../system.c"'
+'Building file: "../vim_driver.c"'
+'Invoking: Arm Compiler'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="system.d_raw"  "../system.c"
+'Invoking: Arm Compiler'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me --include_path="C:/Users/dovyd/workspace_v10/Blinky2" --include_path="C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi --preproc_with_compile --preproc_dependency="vim_driver.d_raw"  "../vim_driver.c"
+'Finished building: "../sci_driver.c"'
+'Finished building: "../pll_driver.c"'
+'Finished building: "../system.c"'
+' '
+'Finished building: "../vim_driver.c"'
+' '
+' '
+' '
+'Building target: "Blinky2.out"'
+'Invoking: Arm Linker'
+"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7R4 --code_state=32 --float_support=VFPv3D16 -me -g --diag_warning=225 --diag_wrap=off --display_error_number --enum_type=packed --abi=eabi -z -m"Blinky2.map" --heap_size=0x800 --stack_size=0x800 -i"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/lib" -i"C:/ti/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" --reread_libs --diag_wrap=off --display_error_number --warn_sections --xml_link_info="Blinky2_linkInfo.xml" --rom_model -o "Blinky2.out" "./app_intent.obj" "./entry.obj" "./gio_driver.obj" "./iomm_driver.obj" "./lin_driver.obj" "./main.obj" "./pcr_driver.obj" "./pll_driver.obj" "./sci_driver.obj" "./system.obj" "./vim_driver.obj"  -lrtsv7R4_T_le_v3D16_eabi.lib 
+<Linking>
+'Finished building target: "Blinky2.out"'
+' '
+"../iomm_driver.c", line 203: warning #179-D: variable "status" was declared but never referenced
+"../gio_driver.c", line 321: warning #552-D: variable "lvl_value" was set but never used
+"../gio_driver.c", line 22: warning #552-D: variable "g_interrupt_callbacks" was set but never used
+"../main.c", line 84: warning #112-D: statement is unreachable
+"../lin_driver.c", line 769: warning #552-D: variable "vec0" was set but never used
+"../lin_driver.c", line 34: warning #552-D: variable "g_dma_config" was set but never used
+"../sci_driver.c", line 22: warning #552-D: variable "g_sci_callback" was set but never used
+"../sci_driver.c", line 25: warning #552-D: variable "g_sci_config" was set but never used
+"../system.c", line 21: warning #179-D: variable "PCR" was declared but never referenced
+"../gio_driver.c", line 321: warning #552-D: variable "lvl_value" was set but never used
+"../gio_driver.c", line 22: warning #552-D: variable "g_interrupt_callbacks" was set but never used
+"../iomm_driver.c", line 203: warning #179-D: variable "status" was declared but never referenced
+"../lin_driver.c", line 769: warning #552-D: variable "vec0" was set but never used
+"../lin_driver.c", line 34: warning #552-D: variable "g_dma_config" was set but never used
+"../main.c", line 84: warning #112-D: statement is unreachable
+"../sci_driver.c", line 22: warning #552-D: variable "g_sci_callback" was set but never used
+"../sci_driver.c", line 25: warning #552-D: variable "g_sci_config" was set but never used
+"../system.c", line 21: warning #179-D: variable "PCR" was declared but never referenced
+warning #10247-D: creating output section ".text" without a SECTIONS specification
+warning #10247-D: creating output section ".const" without a SECTIONS specification
+warning #10247-D: creating output section ".data" without a SECTIONS specification
+warning #10247-D: creating output section ".bss" without a SECTIONS specification
+warning #10247-D: creating output section ".cinit" without a SECTIONS specification
